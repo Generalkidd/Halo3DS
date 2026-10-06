@@ -1,0 +1,1443 @@
+{
+  "include_dirs": [
+    "source",
+    "source/main",
+    "source/cseries",
+    "source/sound",
+    "source/bink",
+    "source/saved films",
+    "source/saved games",
+    "source/cache",
+    "source/units",
+    "source/text",
+    "source/tag_files",
+    "source/structures",
+    "source/shell",
+    "source/shaders",
+    "source/scenario",
+    "source/render",
+    "source/rasterizer",
+    "source/physics",
+    "source/objects",
+    "source/objects/widgets",
+    "source/networking",
+    "source/models",
+    "source/memory",
+    "source/memory/zlib",
+    "source/math",
+    "source/tool",
+    "source/items",
+    "source/interface",
+    "source/input",
+    "source/hs",
+    "source/game",
+    "source/effects",
+    "source/editor",
+    "source/dialogs",
+    "source/devices",
+    "source/cutscene",
+    "source/camera",
+    "source/bungie_net",
+    "source/bitmaps",
+    "source/ai"
+  ],
+  "objects": [
+    {
+      "source": "source/saved games/game_state.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "source/game/game_time.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/n3ds/src/engine_input.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "port/n3ds/tests/src/engine_input_tests.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "source/tag_files/files.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "source/tag_files/files_windows.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "source/text/international_strings.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/n3ds/src/engine_files.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/n3ds/tests/src/engine_file_tests.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "source/game/players.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "source/game/player_control.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "source/objects/objects.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "source/memory/crc.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "source/memory/data.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "source/math/integer_math.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "source/cseries/cseries.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "source/cseries/errors.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "source/rasterizer/rasterizer.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "source/rasterizer/common/rasterizer_common.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "source/bitmaps/bitmap_group.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "source/bitmaps/bitmap_utilities.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "source/effects/particles.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "port/n3ds/src/engine_rasterizer_textures.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "source/rasterizer/rasterizer_geometry.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/n3ds/src/engine_rasterizer.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "port/n3ds/tests/src/engine_render_tests.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/n3ds/tests/src/engine_bitmap_tests.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "source/models/models.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "port/n3ds/src/engine_models.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "port/n3ds/tests/src/engine_model_tests.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "source/rasterizer/rasterizer_transparent_geometry.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "source/rasterizer/rasterizer_memory_pool.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "source/rasterizer/rasterizer_frame_statistics.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "source/shaders/shaders.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "source/shaders/shader_definitions.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/n3ds/src/engine_transparent.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "port/n3ds/tests/src/engine_transparent_tests.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "source/rasterizer/xbox/rasterizer_xbox_dynavobgeom.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "source/cseries/sort.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/n3ds/src/engine_inline_owners.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "source/math/random_math.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/n3ds/src/engine_sounds.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "port/n3ds/tests/src/engine_sound_tests.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "port/n3ds/src/engine_dynamic_geometry.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/n3ds/tests/src/engine_dynamic_geometry_tests.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/n3ds/src/engine_textures.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "port/n3ds/tests/src/engine_texture_tests.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "source/bitmaps/bitmaps.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "source/rasterizer/rasterizer_text.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/n3ds/src/engine_hardware_bitmaps.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "port/n3ds/tests/src/engine_dynamic_bitmap_tests.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "port/n3ds/src/engine_text.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/n3ds/tests/src/engine_text_tests.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/n3ds/src/engine_widgets.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/n3ds/src/engine_threads.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/n3ds/tests/src/engine_thread_tests.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "port/n3ds/tests/src/engine_file_thread_tests.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/n3ds/src/engine_saves.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/n3ds/tests/src/engine_save_tests.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "source/saved games/saved_game_files.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "source/saved games/player_profile.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "source/saved games/playlist_profile.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/n3ds/src/engine_signatures.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/n3ds/tests/src/engine_signature_tests.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/n3ds/tests/src/engine_profile_tests.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/n3ds/tests/src/engine_profile_enumeration_tests.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "source/game/game_engine.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "source/text/text_group.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "source/interface/ui_widget.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "source/interface/player_ui.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "source/main/main.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "source/input/input_abstraction.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "source/interface/ui_widget_event_handler_functions.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "port/n3ds/src/engine_persistent_state.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "port/n3ds/tests/src/engine_persistent_state_tests.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "source/memory/lruv_cache.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/n3ds/src/engine_decal_storage.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "port/n3ds/tests/src/engine_decal_storage_tests.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/n3ds/src/s3tc.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/n3ds/tests/src/engine_service_tests.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "source/text/unicode.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "source/cseries/profile.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "source/hs/hs_runtime.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "source/hs/hs_globals_external.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/n3ds/tests/src/engine_script_tests.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "source/physics/collision_usage.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "source/editor/editor_stubs.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "source/cache/cache_files.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "source/tag_files/tag_groups.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "source/tag_files/tag_files.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/n3ds/src/cache_reader.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "port/n3ds/src/engine_cache.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "port/n3ds/tests/src/engine_cache_tests.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "source/scenario/scenario.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "source/cutscene/recorded_animation_definitions.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "source/physics/collision_bsp.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "source/physics/bsp2d.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "source/physics/bsp3d.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "source/math/matrix_math.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "source/memory/memory_pool.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "source/objects/object_lights.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "source/structures/cluster_partitions.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/n3ds/tests/src/engine_object_tests.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/n3ds/src/engine_globals.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "source/math/real_math.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "port/n3ds/src/runtime.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1",
+        "HALO_N3DS_ORIGINAL_CSERIES"
+      ]
+    },
+    {
+      "source": "port/n3ds/src/game_state_n3ds.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "port/n3ds/src/engine_frontend_boot.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_MISSION_LIVE=1",
+        "HALO_N3DS_MISSION_SKIP_AT=0",
+        "HALO_N3DS_MISSION_DIFFICULTY=1",
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "port/n3ds/compat/src/engine_common.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/n3ds/compat/src/engine_wide.c",
+      "compiler": "clang",
+      "defines": [
+        "_POSIX_C_SOURCE=200809L"
+      ],
+      "sdk": false
+    },
+    {
+      "source": "port/n3ds/src/engine_main.c",
+      "compiler": "gcc"
+    },
+    {
+      "source": "port/n3ds/src/engine_platform.c",
+      "compiler": "gcc"
+    },
+    {
+      "source": "port/n3ds/src/engine_input_platform.c",
+      "compiler": "gcc"
+    },
+    {
+      "source": "port/n3ds/src/engine_files_platform.c",
+      "compiler": "gcc"
+    },
+    {
+      "source": "port/n3ds/src/engine_crt.c",
+      "compiler": "gcc"
+    },
+    {
+      "source": "port/n3ds/src/engine_gpu_blend.c",
+      "compiler": "gcc"
+    },
+    {
+      "source": "port/n3ds/src/engine_gpu_renderer.c",
+      "compiler": "gcc"
+    },
+    {
+      "source": "port/n3ds/src/engine_gpu_programs.c",
+      "compiler": "gcc"
+    },
+    {
+      "source": "port/n3ds/src/engine_gpu_widgets.c",
+      "compiler": "gcc"
+    },
+    {
+      "source": "port/n3ds/tests/src/engine_gpu_widget_tests.c",
+      "compiler": "gcc"
+    },
+    {
+      "source": "port/n3ds/src/engine_saves_platform.c",
+      "compiler": "gcc"
+    },
+    {
+      "source": "port/n3ds/src/engine_signatures_platform.c",
+      "compiler": "gcc"
+    },
+    {
+      "source": "port/n3ds/src/engine_socket_errors.c",
+      "compiler": "gcc"
+    },
+    {
+      "source": "source/game/game.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "port/n3ds/src/engine_audio.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "source/rasterizer/xbox/rasterizer_xbox_decals.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "source/cache/cache_files_windows.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "port/n3ds/src/engine_bink.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "port/n3ds/src/engine_heap.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "port/n3ds/tests/src/engine_heap_tests.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "port/n3ds/src/engine_progress.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "port/n3ds/tests/src/engine_progress_tests.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "source/interface/progress_bar.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "port/n3ds/src/engine_system.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "port/n3ds/tests/src/engine_system_tests.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "port/n3ds/src/engine_screen.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "port/n3ds/tests/src/engine_screen_tests.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "port/n3ds/src/engine_hud.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "port/n3ds/src/engine_network.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "port/n3ds/tests/src/engine_network_tests.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "source/bungie_net/network/transport_endpoint_set_winsock.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "port/n3ds/src/engine_diagnostics.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "port/n3ds/tests/src/engine_diagnostics_tests.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "source/bitmaps/tiff_file.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "port/n3ds/src/engine_settings.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "port/n3ds/tests/src/engine_settings_tests.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "source/networking/network_game_manager.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "source/interface/marketing_and_strategic_business_development.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "source/networking/telnet_console.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "source/rasterizer/xbox/rasterizer_xbox_screen_effect.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "port/n3ds/src/engine_chicago.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "port/n3ds/src/engine_generic_model.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "port/n3ds/src/engine_glass.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "port/n3ds/src/engine_water.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "port/n3ds/src/engine_plasma.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "port/n3ds/src/engine_meter.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "source/rasterizer/rasterizer_swizzle.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "source/render/render_particles.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "source/ai/ai_debug.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "port/n3ds/src/engine_mission_render.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "port/n3ds/src/engine_mission_diagnostics.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "port/n3ds/src/engine_shadows.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "source/render/render_objects.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "source/ai/actions.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "source/ai/ai.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "source/ai/ai_profile.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "source/effects/particle_systems.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "source/interface/hud.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "source/interface/hud_draw.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "source/interface/hud_unit.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "source/interface/hud_weapon.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "source/interface/ui_widget_game_data_input_functions.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "source/models/model_animations.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "source/render/render_sprite.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "source/sound/sound_manager.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "source/structures/structure_visibility.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "source/units/biped_limp_noodle.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "port/n3ds/src/engine_checkpoint.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "source/interface/hud_messaging.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "source/structures/structure_detail_objects.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "port/n3ds/src/engine_math.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "source/physics/collision_features.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "source/ai/actor_perception.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "source/math/periodic_functions.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "source/ai/actors.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "source/units/bipeds.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "source/units/units.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "source/items/weapons.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "source/physics/collisions.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "port/n3ds/src/engine_parallel_platform.c",
+      "compiler": "gcc"
+    },
+    {
+      "source": "port/n3ds/src/engine_prefetch_platform.c",
+      "compiler": "gcc"
+    },
+    {
+      "source": "source/rasterizer/rasterizer_lights.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "port/n3ds/src/engine_controls.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "port/n3ds/src/engine_save_codec.c",
+      "compiler": "gcc"
+    },
+    {
+      "source": "source/interface/interface.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "source/rasterizer/rasterizer_cinematics.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "source/camera/camera_scripting.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "port/n3ds/src/engine_world_inline_owners.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "port/n3ds/src/engine_world_diagnostics.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "port/n3ds/src/engine_gpu_linear.cpp",
+      "compiler": "gcc"
+    },
+    {
+      "source": "port/n3ds/src/engine_gpu_vram.cpp",
+      "compiler": "gcc"
+    },
+    {
+      "source": "port/n3ds/src/engine_gpu_chicago.c",
+      "compiler": "gcc"
+    },
+    {
+      "source": "port/n3ds/tests/src/engine_gpu_chicago_tests.c",
+      "compiler": "gcc"
+    },
+    {
+      "source": "port/n3ds/src/engine_generic.c",
+      "compiler": "gcc"
+    },
+    {
+      "source": "port/n3ds/src/engine_audio_platform.c",
+      "compiler": "gcc"
+    },
+    {
+      "source": "port/n3ds/src/engine_audio_codec.c",
+      "compiler": "gcc"
+    },
+    {
+      "source": "port/n3ds/src/engine_gpu_text.c",
+      "compiler": "gcc"
+    },
+    {
+      "source": "port/n3ds/src/engine_gpu_hud.c",
+      "compiler": "gcc"
+    },
+    {
+      "source": "port/n3ds/src/engine_gpu_textures.c",
+      "compiler": "gcc"
+    },
+    {
+      "source": "port/n3ds/tests/src/engine_gpu_texture_tests.c",
+      "compiler": "gcc"
+    },
+    {
+      "source": "port/n3ds/tests/src/engine_gpu_blend_tests.c",
+      "compiler": "gcc"
+    },
+    {
+      "source": "port/n3ds/src/engine_threads_platform.c",
+      "compiler": "gcc"
+    },
+    {
+      "source": "port/n3ds/tests/src/engine_system_io_tests.c",
+      "compiler": "gcc"
+    },
+    {
+      "source": "port/n3ds/src/engine_services.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_WORLD_SERVICES"
+      ]
+    }
+  ],
+  "runtime": [
+    "source/ai/action_alert.c",
+    "source/ai/action_avoid.c",
+    "source/ai/action_charge.c",
+    "source/ai/action_converse.c",
+    "source/ai/action_fight.c",
+    "source/ai/action_flee.c",
+    "source/ai/action_guard.c",
+    "source/ai/action_obey.c",
+    "source/ai/action_search.c",
+    "source/ai/action_sleep.c",
+    "source/ai/action_uncover.c",
+    "source/ai/action_vehicle.c",
+    "source/ai/action_wait.c",
+    "source/ai/actor_combat.c",
+    "source/ai/actor_firing_position.c",
+    "source/ai/actor_looking.c",
+    "source/ai/actor_moving.c",
+    "source/ai/actor_stimulus.c",
+    "source/ai/actor_type_carrier.c",
+    "source/ai/actor_type_crew.c",
+    "source/ai/actor_type_elite.c",
+    "source/ai/actor_type_engineer.c",
+    "source/ai/actor_type_flood.c",
+    "source/ai/actor_type_grunt.c",
+    "source/ai/actor_type_hunter.c",
+    "source/ai/actor_type_infection.c",
+    "source/ai/actor_type_jackal.c",
+    "source/ai/actor_type_marine.c",
+    "source/ai/actor_type_mounted_weapon.c",
+    "source/ai/actor_type_sentinel.c",
+    "source/ai/actor_types.c",
+    "source/ai/ai_communication.c",
+    "source/ai/ai_scenario_definitions.c",
+    "source/ai/ai_script.c",
+    "source/ai/encounters.c",
+    "source/ai/path.c",
+    "source/ai/path_obstacle_avoidance.c",
+    "source/ai/path_obstacles.c",
+    "source/ai/path_smoothing.c",
+    "source/ai/path_structure_bsp.c",
+    "source/ai/props.c",
+    "source/bitmaps/s3tc/s3tc.c",
+    "source/bungie_net/common/message_header.c",
+    "source/bungie_net/network/transport_address.c",
+    "source/bungie_net/network/transport_endpoint_winsock.c",
+    "source/cache/cache_files_decompress_windows.c",
+    "source/cache/predicted_resources.c",
+    "source/camera/dead_camera.c",
+    "source/camera/director.c",
+    "source/camera/editor_flying_camera.c",
+    "source/camera/first_person_camera.c",
+    "source/camera/flying_camera.c",
+    "source/camera/following_camera.c",
+    "source/camera/observer.c",
+    "source/camera/orbiting_camera.c",
+    "source/cutscene/cinematics.c",
+    "source/cutscene/recorded_animation_initialize.c",
+    "source/cutscene/recorded_animation_playback.c",
+    "source/cutscene/recorded_animation_playback_v1.c",
+    "source/cutscene/recorded_animations.c",
+    "source/devices/device_controls.c",
+    "source/devices/device_light_fixtures.c",
+    "source/devices/device_machines.c",
+    "source/devices/devices.c",
+    "source/dialogs/edit_text.c",
+    "source/effects/contrails.c",
+    "source/effects/decals.c",
+    "source/effects/effects.c",
+    "source/effects/material_effects.c",
+    "source/effects/player_effects.c",
+    "source/effects/weather_particle_systems.c",
+    "source/game/aim_assist.c",
+    "source/game/cheats.c",
+    "source/game/game_allegiance.c",
+    "source/game/game_engine_ctf.c",
+    "source/game/game_engine_king.c",
+    "source/game/game_engine_list.c",
+    "source/game/game_engine_multiplayer_sounds.c",
+    "source/game/game_engine_oddball.c",
+    "source/game/game_engine_race.c",
+    "source/game/game_engine_slayer.c",
+    "source/game/game_engine_stub.c",
+    "source/game/game_globals.c",
+    "source/game/game_statistics.c",
+    "source/game/player_queues_new.c",
+    "source/game/player_rumble.c",
+    "source/hs/hs.c",
+    "source/hs/hs_compile.c",
+    "source/hs/hs_library_external.c",
+    "source/hs/object_lists.c",
+    "source/interface/attract_mode.c",
+    "source/interface/event_manager.c",
+    "source/interface/first_person_weapons.c",
+    "source/interface/hud_definitions.c",
+    "source/interface/hud_nav_points.c",
+    "source/interface/hud_sounds.c",
+    "source/interface/motion_sensor.c",
+    "source/interface/terminal.c",
+    "source/interface/ui_widget_text_search_and_replace_functions.c",
+    "source/interface/virtual_keyboard.c",
+    "source/items/equipment.c",
+    "source/items/garbage.c",
+    "source/items/items.c",
+    "source/items/projectile_definitions.c",
+    "source/items/projectiles.c",
+    "source/items/weapon_definitions.c",
+    "source/main/console.c",
+    "source/main/debug_keys.c",
+    "source/math/geometry.c",
+    "source/memory/array.c",
+    "source/memory/byte_swapping.c",
+    "source/memory/circular_queue.c",
+    "source/memory/data_encoding.c",
+    "source/memory/data_packet_groups.c",
+    "source/memory/data_packets.c",
+    "source/memory/stack_memory_pool.c",
+    "source/memory/zlib/adler32.c",
+    "source/memory/zlib/infblock.c",
+    "source/memory/zlib/infcodes.c",
+    "source/memory/zlib/inffast.c",
+    "source/memory/zlib/inflate.c",
+    "source/memory/zlib/inftrees.c",
+    "source/memory/zlib/infutil.c",
+    "source/memory/zlib/zutil.c",
+    "source/models/model_animation_definitions.c",
+    "source/networking/network_client_manager.c",
+    "source/networking/network_client_message_handler.c",
+    "source/networking/network_connection.c",
+    "source/networking/network_game_globals.c",
+    "source/networking/network_game_ui.c",
+    "source/networking/network_messages.c",
+    "source/networking/network_server_manager.c",
+    "source/networking/network_server_message_handler.c",
+    "source/objects/damage.c",
+    "source/objects/object_deleted_procs.c",
+    "source/objects/object_types.c",
+    "source/objects/placeholder_definitions.c",
+    "source/objects/scenery.c",
+    "source/objects/widgets/antenna.c",
+    "source/objects/widgets/flags.c",
+    "source/objects/widgets/glow.c",
+    "source/objects/widgets/light_volumes.c",
+    "source/objects/widgets/lightning.c",
+    "source/objects/widgets/widgets.c",
+    "source/physics/breakable_surfaces.c",
+    "source/physics/collision_debug.c",
+    "source/physics/collision_models.c",
+    "source/physics/physics.c",
+    "source/physics/physics_variables.c",
+    "source/physics/point_physics.c",
+    "source/rasterizer/rasterizer_debug.c",
+    "source/rasterizer/xbox/rasterizer_xbox_debug.c",
+    "source/rasterizer/xbox/rasterizer_xbox_detail_objects.c",
+    "source/rasterizer/xbox/rasterizer_xbox_environment_fog.c",
+    "source/rasterizer/xbox/rasterizer_xbox_errors.c",
+    "source/rasterizer/xbox/rasterizer_xbox_profile.c",
+    "source/rasterizer/xbox/rasterizer_xbox_transparent_geometry.c",
+    "source/rasterizer/xbox/rasterizer_xbox_vertex_shaders.c",
+    "source/rasterizer/xbox/rasterizer_xbox_vertex_shaders_runtime.c",
+    "source/rasterizer/xbox/rasterizer_xbox_water.c",
+    "source/rasterizer/xbox/rasterizer_xbox_widgets.c",
+    "source/render/render.c",
+    "source/render/render_cameras.c",
+    "source/render/render_contrails.c",
+    "source/render/render_debug.c",
+    "source/render/render_sky.c",
+    "source/scenario/wind.c",
+    "source/shell/shell.c",
+    "source/sound/game_sound.c",
+    "source/sound/sound_classes.c",
+    "source/sound/sound_definitions.c",
+    "source/sound/sound_environment_definitions.c",
+    "source/sound/sound_preferences.c",
+    "source/sound/sound_scenery.c",
+    "source/structures/leaf_map.c",
+    "source/structures/structure_bsp_definitions.c",
+    "source/structures/structure_lens_flares.c",
+    "source/structures/structure_render.c",
+    "source/structures/structure_runtime_decals.c",
+    "source/structures/structures.c",
+    "source/text/draw_string.c",
+    "source/text/font_group.c",
+    "source/tool/connected_geometry.c",
+    "source/tool/error_geometry.c",
+    "source/units/dialogue_definitions.c",
+    "source/units/unit_definitions.c",
+    "source/units/unit_dialogue.c",
+    "source/units/unit_scripting_commands.c",
+    "source/units/vehicles.c"
+  ]
+}

@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="Current" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <Configuration Condition="'$(Configuration)' == ''">Debug</Configuration>
+    <Platform Condition="'$(Platform)' == ''">x86</Platform>
+    <ProjectGuid>{691525AF-7800-4811-8F7E-F93D6BFF1FE7}</ProjectGuid>
+    <OutputType>WinExe</OutputType>
+    <AssemblyName>Halo3DS Setup Windows 7</AssemblyName>
+    <RootNamespace>HaloSetup.Windows7</RootNamespace>
+    <TargetFrameworkVersion>v3.5</TargetFrameworkVersion>
+    <PlatformTarget>x86</PlatformTarget>
+    <LangVersion>latest</LangVersion>
+    <CodePage>65001</CodePage>
+    <Nullable>enable</Nullable>
+    <OutputPath>$(MSBuildProjectDirectory)\..\..\..\..\build\setup-win7\$(Configuration)\</OutputPath>
+    <PythonExecutable Condition="'$(PythonExecutable)' == ''">python</PythonExecutable>
+    <GameBuild Condition="'$(GameBuild)' == ''">$(MSBuildProjectDirectory)\..\..\..\..\build\n3ds\Halo3DS.3dsx</GameBuild>
+    <NoWarn>8632;8600;8601;8602;8603;8604;8618;8625;9113</NoWarn>
+  </PropertyGroup>
+  <Import Project="..\Setup.local.props" Condition="Exists('..\Setup.local.props')" />
+  <ItemGroup>
+    <Reference Include="System" />
+    <Reference Include="System.Core" />
+    <Reference Include="System.Drawing" />
+    <Reference Include="System.Windows.Forms" />
+    <Reference Include="System.Web.Extensions" />
+    <Compile Include="App.cs" />
+    <Compile Include="AssemblyInfo.cs" />
+    <Compile Include="Compatibility.cs" />
+    <Compile Include="Core\*.cs" />
+    <None Include="..\Core\*.cs"><Link>Shared converter\%(Filename)%(Extension)</Link></None>
+    <None Include="Tests.cs" />
+    <None Include="adapt-core.py" />
+    <None Include="build.ps1" />
+    <None Include="..\..\..\..\docs\DEVELOPMENT.md"><Link>Developer notes.md</Link></None>
+    <None Include="app.manifest" />
+  </ItemGroup>
+  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+  <!-- Use the same CLR 2 compiler references and packaging as command-line releases.
+       Avoid a second set of subtly different Windows 7 compiler flags. -->
+  <Target Name="Build">
+    <Error Condition="!Exists('$(GameBuild)')" Text="Set GameBuild in setup/Setup.local.props to your Halo3DS.3dsx. See Setup.local.props.example." />
+    <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\build.ps1&quot; -GameBuild &quot;$(GameBuild)&quot; -Output &quot;$(OutputPath)&quot; -Python &quot;$(PythonExecutable)&quot; -Configuration &quot;$(Configuration)&quot;" />
+  </Target>
+  <Target Name="Rebuild" DependsOnTargets="Build" />
+  <!-- Build regenerates outputs deterministically. Keep Clean non-destructive:
+       local OutputPath overrides may point at a shared release directory. -->
+  <Target Name="Clean" />
+</Project>

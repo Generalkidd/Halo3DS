@@ -1,0 +1,25 @@
+; Native screen-space RGBA text, preserving the original per-vertex alpha.
+.fvec projection[4]
+.constf constants(0.0, 0.0, 0.0, 1.0)
+.out position position
+.out color color
+.out texcoord texcoord0
+; The native texture binder keeps all three units enabled (neutral fallbacks).
+.out neutral1 texcoord1
+.out neutral2 texcoord2
+.proc main
+    mov r0.xy, v0
+    mov r0.z, constants.z
+    mov r0.w, constants.w
+    dp4 position.x, projection[0], r0
+    dp4 position.y, projection[1], r0
+    dp4 position.z, projection[2], r0
+    dp4 position.w, projection[3], r0
+    mov color, v1
+    ; Complete each enabled output register, including unused lanes.
+    mov texcoord, v2
+    ; The world resolve also samples its tiny video-grain texture at UV0.
+    mov neutral1, v2
+    mov neutral2, constants
+    end
+.end

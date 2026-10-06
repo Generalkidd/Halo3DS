@@ -1,0 +1,9 @@
+<Project>
+  <!-- Copy to Setup.local.props; use absolute paths for your own machine. -->
+  <PropertyGroup>
+    <GameBuild>C:\build\Halo3DS.3dsx</GameBuild>
+    <PythonExecutable>python</PythonExecutable>
+    <!-- Optional: packaged WinUI ZIP when building the Launcher project directly. -->
+    <!-- <PayloadPath>C:\build\setup.payload.zip</PayloadPath> -->
+  </PropertyGroup>
+</Project>

@@ -1,0 +1,92 @@
+; Emit every enabled output lane exactly once on each execution path.
+; Posed world position/normal and diffuse UV. Premultiplied facing tint.
+; PICA handles sampling, normalization, eye reflection and facing tint.
+; The diffuse pass skips reflection work and retains the previous lighting.
+.fvec projection[4]
+.fvec camera
+.fvec fallback_eye
+.fvec delta
+.fvec parallel
+.fvec options
+.fvec pose[3]
+.constf constants(0.0, 1.0, 2.0, 0.000000000001)
+.constf light_direction(0.3, 0.4, 0.8660254, 0.7)
+.constf light_tint(0.72, 0.82, 0.9, 0.3)
+.constf light_threshold(0.0000000001, 0.0, 0.0, 0.0)
+.out position position
+.out color color
+.out cube texcoord0.xy
+.out - texcoord0w cube.z
+.out maps texcoord1.xy
+.proc main
+    mov r0.xyz, v0
+    mov r0.w, constants.y
+    mov r2.xyz, v1
+    mov r7, v2
+    mov r1.w, options.y
+    cmp constants.x, lt, lt, r1.w
+    jmpc cmp.x, rigid_pose
+    cmp r1.w, eq, eq, r1.w
+    jmpc cmp.x, pose_ready
+rigid_pose:
+    dp4 r6.x, pose[0], r0
+    dp4 r6.y, pose[1], r0
+    dp4 r6.z, pose[2], r0
+    mov r0.xyz, r6
+    dp3 r6.x, pose[0], r2
+    dp3 r6.y, pose[1], r2
+    dp3 r6.z, pose[2], r2
+    mov r2.xyz, r6
+    mul r7.xy, options.zw, v2
+pose_ready:
+    mov maps, r7
+    dp4 position.x, projection[0], r0
+    dp4 position.y, projection[1], r0
+    dp4 position.z, projection[2], r0
+    dp4 position.w, projection[3], r0
+    dp3 r1.x, r2, r2
+    mov r5.x, r1.x
+    max r1.x, constants.w, r1.x
+    rsq r1.x, r1.x
+    mul r2.xyz, r2, r1.x
+    mov color.w, constants.y
+    mov r1.w, options.x
+    cmp constants.x, lt, lt, r1.w
+    jmpc cmp.x, diffuse_color
+    add r3.xyz, camera, -r0
+    dp3 r1.y, r3, r3
+    cmp constants.w, gt, gt, r1.y
+    jmpc cmp.x, eye_zero
+    rsq r1.y, r1.y
+    mul r3.xyz, r3, r1.y
+    cmp r1.y, eq, eq, r1.y
+    jmpc cmp.x, eye_ready
+eye_zero:
+    mov r3.xyz, fallback_eye
+eye_ready:
+    dp3 r1.z, r2, r3
+    mul r4.xyz, constants.z, r2
+    mul r4.xyz, r4, r1.z
+    add cube.xyz, r4, -r3
+    mov cube.w, constants.x
+    max r1.z, r1.z, -r1.z
+    min r1.z, constants.y, r1.z
+    mul r4, delta, r1.z
+    add r4, parallel, r4
+    max r4, constants.x, r4
+    min r4, constants.y, r4
+    mul color.xyz, r4, r4.w
+    end
+diffuse_color:
+    mov cube, constants.xxyx
+    mov r1.x, light_tint.w
+    cmp light_threshold.x, ge, ge, r5.x
+    jmpc cmp.x, light_ready
+    dp3 r1.x, light_direction, r2
+    max r1.x, r1.x, -r1.x
+    mul r1.x, light_direction.w, r1.x
+    add r1.x, light_tint.w, r1.x
+light_ready:
+    mul color.xyz, light_tint, r1.x
+    end
+.end

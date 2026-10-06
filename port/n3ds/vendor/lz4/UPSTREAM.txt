@@ -1,0 +1,4 @@
+Unmodified LZ4 v1.10.0 lib/lz4.c and lib/lz4.h.
+Source: https://github.com/lz4/lz4/tree/v1.10.0/lib
+BSD 2-clause license: see LICENSE.
+Used for bounded, independently decodable checkpoint blocks.

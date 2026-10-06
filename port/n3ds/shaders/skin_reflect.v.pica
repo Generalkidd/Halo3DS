@@ -1,0 +1,96 @@
+; Emit every enabled output lane exactly once on each execution path.
+; Native fragment-lit model with optional one-pass cubemap reflections.
+; 4 projection + 87 bone + options + camera + 2 reflection colors + constant = 96.
+.fvec projection[4]
+.fvec bone[87]
+.fvec options
+.fvec camera
+.fvec reflection_delta
+.fvec reflection_parallel
+.constf constants(0.0, 1.0, 2.0, 0.00000001)
+.out position position
+.out color color
+.out cube texcoord0.xy
+.out - texcoord0w cube.z
+.out maps texcoord1.xy
+.out - texcoord2 maps.zw
+.out quaternion normalquat
+.out view view
+.proc main
+    mov r0.xyz, v0
+    mov r0.w, constants.y
+    mova a0.xy, v3
+    dp4 r1.x, bone[a0.x+0], r0
+    dp4 r1.y, bone[a0.x+1], r0
+    dp4 r1.z, bone[a0.x+2], r0
+    dp3 r2.x, bone[a0.x+0], v1
+    dp3 r2.y, bone[a0.x+1], v1
+    dp3 r2.z, bone[a0.x+2], v1
+    ; Single-influence vertices skip the unused transform and blend.
+    cmp constants.x, ge, ge, v3.w
+    jmpc cmp.x, skin_complete
+    dp4 r4.x, bone[a0.y+0], r0
+    dp4 r4.y, bone[a0.y+1], r0
+    dp4 r4.z, bone[a0.y+2], r0
+    mul r1.xyz, v3.z, r1
+    mul r4.xyz, v3.w, r4
+    add r1.xyz, r1, r4
+    dp3 r4.x, bone[a0.y+0], v1
+    dp3 r4.y, bone[a0.y+1], v1
+    dp3 r4.z, bone[a0.y+2], v1
+    mul r2.xyz, v3.z, r2
+    mul r4.xyz, v3.w, r4
+    add r2.xyz, r2, r4
+skin_complete:
+    mov r1.w, constants.y
+    dp4 position.x, projection[0], r1
+    dp4 position.y, projection[1], r1
+    dp4 position.z, projection[2], r1
+    dp4 position.w, projection[3], r1
+    ; Normalize the skinned world normal and eye vector on the GPU.
+    dp3 r3.x, r2, r2
+    max r3.x, constants.w, r3.x
+    rsq r3.x, r3.x
+    mul r2.xyz, r2, r3.x
+    add r4.xyz, camera, -r1
+    mov view.xyz, r4
+    mov view.w, constants.x
+    ; Ordinary and reflective parts retain the same program/palette.
+    ; Uniform options.w bypasses reflection math for ordinary parts.
+    mov r7, constants.yyyy
+    mov r8, constants.xxyx
+    ; With reflection disabled, its delta register carries independent detail UV scale.
+    mul r8.xy, reflection_delta, v2
+    mov r3.y, options.w
+    cmp constants.x, ge, ge, r3.y
+    jmpc cmp.x, diffuse_only
+    dp3 r3.y, r4, r4
+    max r3.y, constants.w, r3.y
+    rsq r3.y, r3.y
+    mul r4.xyz, r4, r3.y
+    dp3 r3.z, r2, r4
+    mul r5.xyz, constants.z, r2
+    mul r5.xyz, r5, r3.z
+    add r8.xyz, r5, -r4
+    ; Authored perpendicular/parallel reflection RGB and brightness.
+    mul r5, reflection_delta, r3.z
+    add r7, reflection_parallel, r5
+diffuse_only:
+    mov color, r7
+    mov cube, r8
+    ; Fragment lighting consumes the world-space normal quaternion.
+    mov r6.xy, r2
+    add r6.z, constants.y, r2.z
+    mov r6.w, constants.x
+    dp3 r3.w, r6, r6
+    mov r9, constants.yxxx
+    cmp constants.w, ge, ge, r3.w
+    jmpc cmp.x, done_normal
+    rsq r3.w, r3.w
+    mul r9, r6, r3.w
+done_normal:
+    mov quaternion, r9
+    mul maps.xy, options, v2
+    mul maps.zw, options.xyxy, v2.xyxy
+    end
+.end

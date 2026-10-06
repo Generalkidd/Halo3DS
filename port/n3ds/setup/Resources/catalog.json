@@ -1,0 +1,324 @@
+{
+  "ui": {
+    "Title": "Main menu",
+    "Bytes": 33582080,
+    "Sha256": "8556b647b82742d07282fe4e6db0cf847b542c046484e91e71ec31fea5f5fd7e",
+    "SourceBytes": 14145536,
+    "SourceSha256": "35e3e560478d85178749be310ad13d6d6ecde618d32675261a3554592333a833",
+    "Sidecars": {
+      "ui.nrl": "c2264d2c9248cedbc25bfbab9978fbc4c9684628e030a8134fc984e6d11fd91b",
+      "ui-bsp0.nrl": "0e8aa133fcdaca93b7d71b27bd8863f0d84b521a71bab762dc1891f3f0f687dc"
+    }
+  },
+  "a10": {
+    "Title": "The Pillar of Autumn",
+    "Bytes": 274734080,
+    "Sha256": "1ce33954aa12a2e0c21a07e20d0dc652b1b403e4ef1b98c067439a15545d9971",
+    "SourceBytes": 173903872,
+    "SourceSha256": "f7461e5b6eaf0314c4f03a1c6e43752b06ae3e4782b70b240a8c15e5f634b3ce",
+    "Sidecars": {
+      "a10.nrl": "cb7e61f2753e4aeaa1a150a98fccf82d8834a149a018e92eb271079814d23356",
+      "a10-bsp0.nrl": "fc9eb1099e201e4c48a2b0b0ed8fa0fe2060419287185a3a8603f073cb1aa446",
+      "a10-bsp1.nrl": "b822c30f9b7660c4dc1762c73f017d850ff37d3bead155ab38758cbe9ffbb581",
+      "a10-bsp2.nrl": "436bf5d252b5db1fcc403351653f4944f9652479ae5975132b4375d3cfc8275c",
+      "a10-bsp3.nrl": "bcdd60162dbfa258dc6b69cb4841b2238a9210bc38caa7ed5a1229936a48fb94",
+      "a10-bsp4.nrl": "94c093a0e6105c62fb4737120e9d372d4034021ab949fce4103003409289cfed",
+      "a10-bsp5.nrl": "0d1cc4f1d3415d5548f0c7e65785e0a8dd9f57c2a7b494788acec7d50862af90",
+      "a10-bsp6.nrl": "6398cb14fdbc5589b4ca8af3804e0c25c3f568cfee81a22b16819ce4016c7a21",
+      "a10-bsp7.nrl": "c77c9600de11b54df021fa23968b9def60a2fc183c38bc8867ec20f3057c594b",
+      "a10-bsp8.nrl": "58b1e76ccb7cef3b8ecc30b569e2f65f4cfc1c1340d0353a755fffb594055fb5"
+    }
+  },
+  "a30": {
+    "Title": "Halo",
+    "Bytes": 213065216,
+    "Sha256": "287959f34a7379a1dbec5fec15b4d94d17fe97ccd861f5c0c8fc80148b7ed293",
+    "SourceBytes": 152610816,
+    "SourceSha256": "4875fa105e6c517589a796cfdcc7fcaa07e98df13d14e601bfc9eb1eab7e30b5",
+    "Sidecars": {
+      "a30.nrl": "6ca4211253f3925ad1e5164d4274080d5682bba8fb8f98d8bd0e6fa6c7f0e548",
+      "a30-bsp0.nrl": "d985cc2f95b0c83c28742a27b8a4786bee6fc4ce02ebce89cdf4f2edeb348858",
+      "a30-bsp1.nrl": "63bb1cf4327b41f08c82f75b71c1245853b8dd9887de2c428ecae5966b6ef86d"
+    }
+  },
+  "a50": {
+    "Title": "The Truth and Reconciliation",
+    "Bytes": 250138624,
+    "Sha256": "d7a3e80a86f2b0f23d855ce353aed3c0eb252145697797d87f25623dc470f38d",
+    "SourceBytes": 176224256,
+    "SourceSha256": "f8ec33c0130191cf944ef7b4a3f210bb680cfd1341cdf3a6ef3447391049abe7",
+    "Sidecars": {
+      "a50.nrl": "ddb9ed9a52906df0698eb473b9915c0e959ad6f1466eb2bc2debaaa3726248e0",
+      "a50-bsp0.nrl": "defafd192b4e9a6f92d7a4542263b4eab9a4bdf9045e3a8de97c6e82a8808fb7",
+      "a50-bsp1.nrl": "5cbfd367efb879fecb8a51c93930053fbf9aebc129e72acc03cdb8c2f8f46401",
+      "a50-bsp2.nrl": "92a7d4c4f66d4b5bc580e82c9317c6d7934799fa8ecd4e7f08d1635a067f406e",
+      "a50-bsp3.nrl": "723c28dba79fc4086d20344238c8e3a56598d3cf9d61311cb6ac1a9b1f08deb6"
+    }
+  },
+  "b30": {
+    "Title": "The Silent Cartographer",
+    "Bytes": 224887296,
+    "Sha256": "74020202d3930ee52c1ee96a7d8e3ee4020ce31a434b3f870d71df72b9c3e4dd",
+    "SourceBytes": 162877440,
+    "SourceSha256": "a6e2ae628f96b666922d6429541068c3e117e8aa5031d00d187b3c853630be0f",
+    "Sidecars": {
+      "b30.nrl": "d7c35d2dc73db6d64cdda459517cfef1fc8c03bea166554273eacf0a2190af2f",
+      "b30-bsp0.nrl": "00a3330040aacbece367112423d407252bf438a97e7b02254cc30b6be28ffb6e",
+      "b30-bsp1.nrl": "10cda5576ded9b11bae03ad882950ae3c761d30931e1f82f117ce18b97b468e4"
+    }
+  },
+  "b40": {
+    "Title": "Assault on the Control Room",
+    "Bytes": 279763456,
+    "Sha256": "8c5e4aecbd0bc7e063feb7d0c6a3f6d8cff65bf1abec75286070ef9c85fd927b",
+    "SourceBytes": 186873856,
+    "SourceSha256": "0a7b26d6d828e7b773d36d9d5c798b9bf4b143332301a0c0e7a3d685782eab48",
+    "Sidecars": {
+      "b40.nrl": "a3f04e1845c50d1636bb292efb5751590aaaa03c52de7d4741dbde67e1ba4ea7",
+      "b40-bsp0.nrl": "20c870fbcfb87d1f995ad9109a6ed06ed554d8b8ff072fb6426333eca2f70282",
+      "b40-bsp1.nrl": "144d041434c5ad6eea25f4b9bdd50f520fb49fe5f2bc39a40befe019783e4940",
+      "b40-bsp10.nrl": "1e4e27cd06a75a5fc268593d47fb5a47077f74ceaf81ca6a7ec4f258a3bebe11",
+      "b40-bsp11.nrl": "7f38f23d749979647145a70bce2b6f839e75257f89773c19b369a10662499dbe",
+      "b40-bsp12.nrl": "7c69ce433bcec6213a323eeb33d41df65f8a38112c826cad326d1d5ea8b4c72e",
+      "b40-bsp2.nrl": "a703475b2e2ed93beffe62fd4c079e9005621fadc46c04d4abe6568e321d7c67",
+      "b40-bsp3.nrl": "c303fe9e1a60e2d3012d8ca0cfc143c3ce1569bdc9d4794eb45735954a681835",
+      "b40-bsp4.nrl": "f96f7e4abeebbcc235ee756a68edfa72650320bbefc4b9443465f016e7efaf02",
+      "b40-bsp5.nrl": "5be40fb68e5194a61d5d28d857cb4b964a78ba797bc1303e552f3ec9c9712a58",
+      "b40-bsp6.nrl": "e05c7759da9405eb0452c71f36dbf100e58811aa2d480fbe780571841fd2b556",
+      "b40-bsp7.nrl": "9b7ef065de6d6797e401fd82cfc94ff79e06abd1d42c4503973b0ae07d183f36",
+      "b40-bsp8.nrl": "25274d53bc44c00a2a9f2e1b0c2d62bd33cf7b4670c079bf377e6324ed3e496a",
+      "b40-bsp9.nrl": "fa64b2e5b4622b4bb2aeb1a5362ee630fed6b9068d85a412cf2c0fcf7409d325"
+    }
+  },
+  "c10": {
+    "Title": "343 Guilty Spark",
+    "Bytes": 252559360,
+    "Sha256": "423d50a4d7fb7b3c280d7e0806d67e136b2b6a51468ed0be6ee9415e5f129e7d",
+    "SourceBytes": 166926336,
+    "SourceSha256": "d65683f92e2f78cf8ba4d31c26b212869652b5d5ec037add480865a49e18434e",
+    "Sidecars": {
+      "c10.nrl": "c12d5bf9545ab67f2e0da1ff1cf8002f414e9821027106e804ef2955c22edd50",
+      "c10-bsp0.nrl": "ee9bed5c9e4e4ab7735bbec34c70025bbfed816e50f04f6b437437f7adcf7958",
+      "c10-bsp1.nrl": "2dba89e5a559f6c57595c01cb587fd7412764a23da1fdc8617bfa04b1e36876d",
+      "c10-bsp2.nrl": "1ae6a31b995fa68599150b07145f57ac027f81c2f32161c74079899d7ce006ff",
+      "c10-bsp3.nrl": "2b36b30d5cffce7db35d389590522c7e9c5f136ed567f809849e27147cfe6c8c",
+      "c10-bsp4.nrl": "ee2ae208f8a6868091786a3ff85f2da71a44e6e4131e4e0b18d3ed4d73b3e3c3",
+      "c10-bsp5.nrl": "ef329dd139d468a239f3d65c4beb90168520a86748fae84a3b7ecd9a56565506"
+    }
+  },
+  "c20": {
+    "Title": "The Library",
+    "Bytes": 142009856,
+    "Sha256": "1c1c9a8ca882636a3e78cb1d14e25a09c4a11388f6381c5f74212d468b70e654",
+    "SourceBytes": 76980224,
+    "SourceSha256": "6560cd88af4c5b4e2f02f14017085a7b47e9a9622198c30f36b03d3d3943d6b8",
+    "Sidecars": {
+      "c20.nrl": "c80578cd3168e89e848f14258f6480485de54feebd91e3a2e47d67431ebffb2f",
+      "c20-bsp0.nrl": "da1c7ae99f1052384f836fedcc7da805ea013470ae70e190c369c9a39c7c56f7",
+      "c20-bsp1.nrl": "748e68043a37f76cf64e39c8b4fce1dc9bd211cb4457a5db56d02d75098e41cc",
+      "c20-bsp2.nrl": "084b3fbea7bd96e9fae48ce5122d0890f5f032347f1bdd19ef1c223282d47366",
+      "c20-bsp3.nrl": "84b70db12f64f7efc159d6203fbef5ae1e43a9efdafc51542a9ea0584a2ef381"
+    }
+  },
+  "c40": {
+    "Title": "Two Betrayals",
+    "Bytes": 255975936,
+    "Sha256": "d7465f07a675a86785a329b9ab3d8a5a20b25b7ca7d05bafeb7ca87b02b20be9",
+    "SourceBytes": 166295552,
+    "SourceSha256": "b5fb3db5b111280e8494c5ec7612604d7facd1e0a511987afa38a228a115a896",
+    "Sidecars": {
+      "c40.nrl": "1bd32669b7050d670871e52310f36df8529646327325087265bfbb3784f45012",
+      "c40-bsp0.nrl": "016b5932f6346e791d0faa070b1bb5285ce56cdd1f7c00a33fc5bb0f8136b76c",
+      "c40-bsp1.nrl": "b2c1d1915b29d49e0b9de03854c22b06ca330ea8291ee714b52c77ffd9c09994",
+      "c40-bsp10.nrl": "5ed7d1be45342ffc6463ba0853128055b6490ba1c57b51f4ab299233bf66db41",
+      "c40-bsp11.nrl": "a3c14756707759637f8d3d3e2fca5f82bd7e1159673dbe873b3cadc06d7b97cc",
+      "c40-bsp12.nrl": "1c8cdf9a9770342a229c8421b1d21b9c1f5f1c8a63289c6ecc3118c2c0ce51e5",
+      "c40-bsp2.nrl": "c5521404796d217358aaf5aff39dbdcf10a8600f7228d57b34fdba8f2410c300",
+      "c40-bsp3.nrl": "983a5038fd69687775c62d0d7ecfbd519c4064ca9939faaf94740e608e5c4db3",
+      "c40-bsp4.nrl": "31d65e0c0b2c2626977fd773d39e3bca905f0cfc4248826e71b8421287e99f05",
+      "c40-bsp5.nrl": "9c7116e1500dd3ee1d861302ab36a85ba4e135b19290fa5e0960cab9b3b0ee0b",
+      "c40-bsp6.nrl": "6bb551ec20ca1ab7970d8a9b1017a9daa80f5d6e00db0fcc1342e93ef8653adf",
+      "c40-bsp7.nrl": "07029114fad2f45872cb456818c0b5a9b870ee503492e5473caea550f83b9274",
+      "c40-bsp8.nrl": "5f3cde1d744ef98efc80eb02414342318d061541934358e2e6d9a7353f524084",
+      "c40-bsp9.nrl": "fd705cd519bf50a22fa5a962c8cb56ee20494a392e3c33f10b213a283e2a1e28"
+    }
+  },
+  "d20": {
+    "Title": "Keyes",
+    "Bytes": 205501952,
+    "Sha256": "30d8fc02bcd209a7ce03174d8cf6cf771dd3621837d9a2d02111718dcc5e792c",
+    "SourceBytes": 131012608,
+    "SourceSha256": "6b38b4776f4be1e9e12063db202e5809245aae0ded3d9cef56602d7fd69c96be",
+    "Sidecars": {
+      "d20.nrl": "a64fd5a07cc802bf831582786e05cd21bfb32e2b7184d0038affe259f85c2532",
+      "d20-bsp0.nrl": "f633c3b0b5b35a25db6ba152aa08b386938aeb0b907420c0ce948d12769271f5",
+      "d20-bsp1.nrl": "7374e16282721f454fb20b07ee5bb68ad5daba8f779beff12272218f3058cdf1",
+      "d20-bsp2.nrl": "34b85e99ef28395c4a92b7f72ff2df3b38c320ba0de46653e55f098e87e401d2",
+      "d20-bsp3.nrl": "050d7c8f8c50d9d67e0e2cab88762c2da1d031a93a484c1ec70763c5bc4bd186",
+      "d20-bsp4.nrl": "62012ff4a3e49dc7e8d8b1d6f93d5f1e991ce931e63061d5f5ac13bb95f4a8fd"
+    }
+  },
+  "d40": {
+    "Title": "The Maw",
+    "Bytes": 274594816,
+    "Sha256": "438452ef1896dd5bc2d3210b279f76e71b775f7eb2b7a8f8e29f4e5471d59a76",
+    "SourceBytes": 170405888,
+    "SourceSha256": "7c6dccc9f928f4a44db992c4d6f5fa6191e9cfd331bb0d0b631540f0fc9bc796",
+    "Sidecars": {
+      "d40.nrl": "e53de15a9307729866b711f3558b9f471eb73c3cf349b3886dd79dbb6c1fa60a",
+      "d40-bsp0.nrl": "3d28420b96bb986a60bc7f646a4a7ddc2acfe28bcacb1b23a02042d3b150f0aa",
+      "d40-bsp1.nrl": "e6eb02f3206922cb0851961a45c15be70dd721e21a8ea91076f58e8483c73467",
+      "d40-bsp2.nrl": "08115d8e3b388e02bcf2e5bc217536a61024beab79bcf7cd3f017688fffaa84f",
+      "d40-bsp3.nrl": "b6b704e8d502b46336ae3907d2071de317762ae39989a06229fef2e57dd6ee57",
+      "d40-bsp4.nrl": "904648600785a96f87546c91f5650ec39f9b38ecf7b8c571f896ec674c7980fe",
+      "d40-bsp5.nrl": "061115b17abf58214751f0676083550e73dd9b865d3b73564d85dbd02d7cdebd",
+      "d40-bsp6.nrl": "a0ffa2ac636941995d562c6dab01bd100c3b4b7ec2fa2285cc49e1ea7b98b56c",
+      "d40-bsp7.nrl": "e74fc566d1b0a4772335b5d059ffa6b5b0d70b9ae03aa8554487f701d8176ed7",
+      "d40-bsp8.nrl": "b47e18384f09d35c26b21cf8e172254296ceed9ca6987d937ebcb6e76a87d7f3",
+      "d40-bsp9.nrl": "4889809f47c6818ebabe3dc4cd268bfcead5ed5002a01a5b0b9f5faa3726f696"
+    }
+  },
+  "beavercreek": {
+    "Title": "Battle Creek",
+    "Bytes": 43565056,
+    "Sha256": "eaf90b2abc4fd295469eb2d640063618b0d14396f28e7d7f1758e834c061c50a",
+    "SourceBytes": 22122496,
+    "SourceSha256": "c65ac17d830552cdebfc173c1e8aa17f1f009149138c2c8e72afda1f79f88a60",
+    "Sidecars": {
+      "beavercreek.nrl": "500e611376d9d8b79216f85a598c7aa3d92d8660234224b71934835461616b47",
+      "beavercreek-bsp0.nrl": "c660e9eb7d0cdceada67181b5b486c6df1ec011dc9761b091caec19f8f9e488a"
+    }
+  },
+  "sidewinder": {
+    "Title": "Sidewinder",
+    "Bytes": 48048128,
+    "Sha256": "995561a68c8c5b142f13f1967730ce8c08d4f0db9574db8e987d915f2b118dcc",
+    "SourceBytes": 24823808,
+    "SourceSha256": "210f7a01bac7b4c242483b1a640e0bc32fb0a2b4f97f56e69668720563b34912",
+    "Sidecars": {
+      "sidewinder.nrl": "d2585622da1c642f8508e31d6c2e664de7b2a7d1f6841535c3167a588b25262b",
+      "sidewinder-bsp0.nrl": "2b834b717e6e655c71bc90f7c6072b3a4a1a3fe1d96323a0ecd55b44923858d8"
+    }
+  },
+  "damnation": {
+    "Title": "Damnation",
+    "Bytes": 47968768,
+    "Sha256": "87bd92c1821ff20bed03c559d7be5ac43baeb44aa68342ffdbb5a8cd978f711c",
+    "SourceBytes": 23756800,
+    "SourceSha256": "8b97ca7d73a4b720ba1b88deeb5a250b02a3f6886ffd2ddaa789cc9ad05e47b8",
+    "Sidecars": {
+      "damnation.nrl": "44a0cf63e161b391e2358fe95e01b51a1d6335cc112e1953a936e9ee21bdb467",
+      "damnation-bsp0.nrl": "dabb8c16e940c4d35f2e6d3c6bc3e65f62b9d048526ee66cf9f83147e749ebf6"
+    }
+  },
+  "ratrace": {
+    "Title": "Rat Race",
+    "Bytes": 47403008,
+    "Sha256": "577886f949f2648f04cf99e354fb04ca08d7b9199636c2f9fe1a161ccdaa4b1e",
+    "SourceBytes": 23840768,
+    "SourceSha256": "ad83896842b2303d145b944f644e4ddfe8d0dd80feda7efcb058a0f567a6bdec",
+    "Sidecars": {
+      "ratrace.nrl": "537869c697f7c0517d2142212a9e0c3dc5d7eb453eb220b6cf560fa776f60dc7",
+      "ratrace-bsp0.nrl": "3c88e52f9538a6ac651531ad3942c3e145384c812019c31b6cbafbf143e2c99f"
+    }
+  },
+  "prisoner": {
+    "Title": "Prisoner",
+    "Bytes": 43974656,
+    "Sha256": "85ff2fdc117b7640bda85a490b30c662f2626bd6d0685e41832935422891c307",
+    "SourceBytes": 21323776,
+    "SourceSha256": "50740d89600b7fa53613ced764fa6e688434a8132948224658bf1ed07662aa3d",
+    "Sidecars": {
+      "prisoner.nrl": "0bddc3c4b399960a37bea6519f5b3f69b7e0c72c1ef679fc6a2888c4cd45e6f2",
+      "prisoner-bsp0.nrl": "ae5f04d86a0c262d0b0df81f2dc9bd2d22a107144a0cbc182cdcbf3906c7091d"
+    }
+  },
+  "hangemhigh": {
+    "Title": "Hang \u2019Em High",
+    "Bytes": 43700224,
+    "Sha256": "e3e4b25ed36178926f0df11f3cd82b07e2071f6aa0efaa77f0cfde8f8480981f",
+    "SourceBytes": 21338112,
+    "SourceSha256": "932a3a13a69fff5dd6e69c9b2c896c1bf3942c54a2a207975c4d0da4df07ed30",
+    "Sidecars": {
+      "hangemhigh.nrl": "88c00e7ef184dc1fc8ed67e8a1c8c905db3acf14f2042e2682d4aae71609e8a5",
+      "hangemhigh-bsp0.nrl": "e591e815032a6eb12d5356b93160e4f809c9bb336430eb7201b289dd4b482ba1"
+    }
+  },
+  "chillout": {
+    "Title": "Chill Out",
+    "Bytes": 41967104,
+    "Sha256": "52bc3e23b9142cf479770d1d601fe08b13d78fe3eb05eca72d313b7ebbd21ffb",
+    "SourceBytes": 20336640,
+    "SourceSha256": "81819e9d7037a6b6c4e9a7472a431ebb53ed25ea00d8af634ac8384f1fe13d8b",
+    "Sidecars": {
+      "chillout.nrl": "86b94f620619f6d31b6a06e6d1fcc02716ed03a3db067d650171c399de68c8a4",
+      "chillout-bsp0.nrl": "1e3380b12f2415ba20f0f0093f8758c21d3f8f30e8bacce05d1e2d6dcf849713"
+    }
+  },
+  "carousel": {
+    "Title": "Derelict",
+    "Bytes": 42367488,
+    "Sha256": "3e4be29a7952af0b3f19a7540e454fd0deece6d6078c256cde70a734beba55e1",
+    "SourceBytes": 20215808,
+    "SourceSha256": "1c6353df6e4530437841b09775e62fa067caa46bb0e40f4579bbf2276991a38e",
+    "Sidecars": {
+      "carousel.nrl": "436ed25e662a80869be9a0a2b8ab1dc5e2a78b94aa0bcfc8bef1bdc7d7d4e414",
+      "carousel-bsp0.nrl": "f22b9218283e08e31ad4204ba1b2c2ba7b7c18a6f2eaf4155c1a875ad46832ae"
+    }
+  },
+  "boardingaction": {
+    "Title": "Boarding Action",
+    "Bytes": 45346304,
+    "Sha256": "34ddf961973b6aaf05f40f26bd9ad536ca97f8af503995611535ccf6ce911522",
+    "SourceBytes": 22075392,
+    "SourceSha256": "e14cebccd63f7780e1f5da7a1687a37bdaa3f0821701095075336ef548889efb",
+    "Sidecars": {
+      "boardingaction.nrl": "5180cf0959979fd1a50cc97b3d5d6072c3d021581c2ad11d502cfd239f952de3",
+      "boardingaction-bsp0.nrl": "6049818ec5b05d47488bec91d27478a313bf694229e9858d6f283e849974bf2e"
+    }
+  },
+  "bloodgulch": {
+    "Title": "Blood Gulch",
+    "Bytes": 44328960,
+    "Sha256": "9eb0374cbe4571af640ae0d2e0ebf6119543cdbbece44d49543b4748c4cf0dc1",
+    "SourceBytes": 22571008,
+    "SourceSha256": "50fe52406f075d975e24100a65b26ff696458023dd3509878953052ab0ef858f",
+    "Sidecars": {
+      "bloodgulch.nrl": "d8ce85841b87ccabbf6ad960db98f222e229523573a7623f235d1b0a09afa504",
+      "bloodgulch-bsp0.nrl": "5140a5e3a32e5bdfc0f8464a59a4ecef63c888ae7d45160d86d90ded36865c9e"
+    }
+  },
+  "wizard": {
+    "Title": "Wizard",
+    "Bytes": 40681984,
+    "Sha256": "978539ff70085998485870a15d4ec81d3811442ac48f9265db668a396f6ff1eb",
+    "SourceBytes": 19687424,
+    "SourceSha256": "e782ad19071efa1c73f30be44feb6b7e073e15f00337e23d877a8e9776f2f3ad",
+    "Sidecars": {
+      "wizard.nrl": "70186c41585a45ae764430b3a8f853efcab001e920d76660079bbda24fe39341",
+      "wizard-bsp0.nrl": "884937ab116c8199502622487eef69fc59d85664b8552b4f2a109a846cfa9e9b"
+    }
+  },
+  "putput": {
+    "Title": "Chiron TL-34",
+    "Bytes": 40668672,
+    "Sha256": "efbe723188f34053d318105f20c7046f263171fbb937fbad45e3d00f8437f243",
+    "SourceBytes": 19777536,
+    "SourceSha256": "7f5d13335d44982b0fbf7aad6b767d035aa64b32bf5c38d6d29bf20916fce5d4",
+    "Sidecars": {
+      "putput.nrl": "74807b5730c4dcbea88ce9e3d37f6adc1f156e7a55c534532798a9e5ee29e245",
+      "putput-bsp0.nrl": "25cfc03d21f094e71630a0fed50a236560ee7c136eb62cdb93c2fbc10b738fb9"
+    }
+  },
+  "longest": {
+    "Title": "Longest",
+    "Bytes": 42141696,
+    "Sha256": "e045b0843f4a167a516f050161a651610fafc94ccc8c5f2c5d5725d108d5d1b9",
+    "SourceBytes": 20512768,
+    "SourceSha256": "12977a4042ecb960cbe48ef936046a35c6754c18829ad2d17206b66ddd03864e",
+    "Sidecars": {
+      "longest.nrl": "33a76fb322970c7f8a0f1acb2e60787d31d958cca80ecd73a8d1ab8d14e92d17",
+      "longest-bsp0.nrl": "05a66667aa7a2222933e9679ad72ff0e08bb629567d08296e1bf132492488661"
+    }
+  }
+}

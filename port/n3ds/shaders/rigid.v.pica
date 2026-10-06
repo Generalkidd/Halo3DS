@@ -1,0 +1,44 @@
+; Rigid model: local position/normal/UV, exact current bone every draw.
+.fvec projection[4]
+.fvec bone[3]
+.fvec options
+.constf constants(0.0, 0.3, 0.7, 1.0)
+.constf lightdir(0.3, 0.4, 0.8660254, 0.0000000001)
+.constf tint(0.72, 0.82, 0.9, 1.0)
+.out position position
+.out color color
+.out texcoord texcoord0
+.out neutral1 texcoord1
+.out neutral2 texcoord2
+.proc main
+    mov r0.xyz, v0
+    mov r0.w, constants.w
+    dp4 r1.x, bone[0], r0
+    dp4 r1.y, bone[1], r0
+    dp4 r1.z, bone[2], r0
+    mov r1.w, constants.w
+    dp4 position.x, projection[0], r1
+    dp4 position.y, projection[1], r1
+    dp4 position.z, projection[2], r1
+    dp4 position.w, projection[3], r1
+    dp3 r2.x, bone[0], v1
+    dp3 r2.y, bone[1], v1
+    dp3 r2.z, bone[2], v1
+    dp3 r3.x, r2, r2
+    max r3.x, lightdir.w, r3.x
+    rsq r3.x, r3.x
+    dp3 r3.y, lightdir, r2
+    mul r3.y, r3.y, r3.x
+    max r3.y, r3.y, -r3.y
+    mul r3.y, constants.z, r3.y
+    add r3.y, constants.y, r3.y
+    mul r4.xyz, tint, r3.y
+    max color.xyz, options.z, r4
+    mov color.w, constants.w
+    mul texcoord.xy, options, v2
+    mov texcoord.zw, constants
+    mul neutral1.xy, options, v2
+    mov neutral1.zw, constants
+    mov neutral2, constants.xxxx
+    end
+.end

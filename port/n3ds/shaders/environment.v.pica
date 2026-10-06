@@ -1,0 +1,30 @@
+; Shared plain/detail/bump environment program; plain draws use fixed v4/v5.
+.fvec projection[4]
+.fvec options
+.constf constants(0.0, 1.0, 0.0, 0.0)
+.out position position
+.out color color
+.out base_uv texcoord0.xy
+.out maps texcoord1.xy
+.out - texcoord2 maps.zw
+.out quaternion normalquat
+.out view view
+.proc main
+    ; DPH supplies the homogeneous 1 directly; no temporary position setup.
+    dph position.x, v0, projection[0]
+    dph position.y, v0, projection[1]
+    dph position.z, v0, projection[2]
+    dph position.w, v0, projection[3]
+    mov color.xyz, v1
+    mov color.w, v5.x
+    mov base_uv, v2
+    mov maps.xy, v3
+    ; PICA MAD permits only one uniform operand; load the four UV constants
+    ; once. Plain/detail/bump supply zero offset, emission supplies animation.
+    mov r1, options
+    mad maps.zw, v2.xyxy, r1.xyxy, r1.zwzw
+    mov quaternion, v4
+    ; PICA consumes only XYZ of view; world-space lights subtract this vertex.
+    mov view, -v0
+    end
+.end

@@ -1,0 +1,49 @@
+; Emit every enabled output lane exactly once on each execution path.
+; Native authored diffuse lighting; normals remain on the GPU.
+.fvec projection[4]
+.fvec bone[3]
+.fvec options
+.fvec camera
+.constf constants(0.0, 1.0, 0.5, 0.00000001)
+.out position position
+.out color color
+.out texcoord texcoord0.xy
+.out - texcoord1 texcoord.zw
+.out quaternion normalquat
+.out view view
+.proc main
+    mov r0.xyz, v0
+    mov r0.w, constants.y
+    dp4 r1.x, bone[0], r0
+    dp4 r1.y, bone[1], r0
+    dp4 r1.z, bone[2], r0
+    mov r1.w, constants.y
+    dp4 position.x, projection[0], r1
+    dp4 position.y, projection[1], r1
+    dp4 position.z, projection[2], r1
+    dp4 position.w, projection[3], r1
+    dp3 r2.x, bone[0], v1
+    dp3 r2.y, bone[1], v1
+    dp3 r2.z, bone[2], v1
+    add view.xyz, camera, -r1
+    mov view.w, constants.x
+    dp3 r3.x, r2, r2
+    max r3.x, constants.w, r3.x
+    rsq r3.x, r3.x
+    mul r2.xyz, r2, r3.x
+    mov r4.xy, r2
+    add r4.z, constants.y, r2.z
+    mov r4.w, constants.x
+    dp3 r3.x, r4, r4
+    mov r9, constants.yxxx
+    cmp constants.w, ge, ge, r3.x
+    jmpc cmp.x, done_normal
+    rsq r3.x, r3.x
+    mul r9, r4, r3.x
+done_normal:
+    mov quaternion, r9
+    mov color, constants.yyyy
+    mul texcoord.xy, options, v2
+    mul texcoord.zw, options.xyxy, v2.xyxy
+    end
+.end

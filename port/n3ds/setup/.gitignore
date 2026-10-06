@@ -1,0 +1,10 @@
+**/bin/
+**/obj/
+publish/
+*.user
+*.3dsx
+*.map
+*.nrl
+*.xbe
+dspfirm.cdc
+ntsc2276-hud-strings.bin

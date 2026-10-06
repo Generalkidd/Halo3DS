@@ -1,0 +1,15 @@
+; Emit every enabled output lane exactly once on each execution path.
+; Offscreen sampling verification for all three native texture units.
+.constf constants(0.0, 0.0, 0.0, 1.0)
+.out position position
+.out tc0 texcoord0
+.out tc1 texcoord1
+.out tc2 texcoord2
+.proc main
+    mov position.xyz, v0
+    mov position.w, constants.w
+    mov tc0, v1
+    mov tc1, v1
+    mov tc2, v1
+    end
+.end

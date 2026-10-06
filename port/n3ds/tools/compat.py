@@ -1,0 +1,172 @@
+"""Preserve the original 32-bit SDK ABI and MSVC C linkage on ARM.
+
+Adapted from the upstream Linux/Android SDK and C-semantics helpers. SDK
+headers remain local inputs; only generated copies live in the build folder.
+"""
+import re
+from pathlib import Path
+from typing import Any, Dict, Iterable, List, Set
+
+CRT_HEADERS = ['assert.h', 'conio.h', 'crtdbg.h', 'ctype.h', 'direct.h', 'dos.h', 'eh.h', 'emmintrin.h', 'errno.h', 'excpt.h', 'fcntl.h', 'float.h', 'fpieee.h', 'fstream.h', 'io.h', 'iomanip.h', 'ios.h', 'iostream.h', 'iso646.h', 'istream.h', 'limits.h', 'locale.h', 'malloc.h', 'math.h', 'mbctype.h', 'mbstring.h', 'memory.h', 'mmintrin.h', 'new.h', 'ostream.h', 'process.h', 'search.h', 'setjmp.h', 'setjmpex.h', 'share.h', 'signal.h', 'stdarg.h', 'stddef.h', 'stdexcpt.h', 'stdio.h', 'stdiostr.h', 'stdlib.h', 'stl.h', 'streamb.h', 'string.h', 'strstrea.h', 'tchar.h', 'time.h', 'typeinfo.h', 'use_ansi.h', 'useoldio.h', 'varargs.h', 'wchar.h', 'wctype.h', 'xlocinfo.h', 'xmath.h', 'xmmintrin.h', 'ymath.h', 'yvals.h']
+
+TAG = re.compile(r"\b(struct|union)\s+([A-Za-z_]\w*)")
+COMMENT = re.compile(r"/\*.*?\*/|//[^\n]*", re.S)
+INLINE_FUNCTION = re.compile(
+    r"\b(?:__inline|_inline|__forceinline|D3DXINLINE|FORCEINLINE)\b"
+    r"[^;{}()]*?\b([A-Za-z_]\w*)\s*\([^;{}]*\)\s*\{"
+)
+SOURCE_SUFFIXES = {".c", ".h", ".inl"}
+
+
+def source_files(roots: Iterable[Path]) -> List[Path]:
+    files: List[Path] = []
+    for root in roots:
+        files.extend(
+            path
+            for path in sorted(root.rglob("*"))
+            if path.suffix.lower() in SOURCE_SUFFIXES and path.is_file()
+            # the SDK overlay lists each header under several spellings
+            and (not path.is_symlink() or path.name == path.name.lower())
+        )
+    return files
+
+
+# Conditions that are never true for this build: C++ and 64-bit Windows.
+UNUSED_CONDITION = r"(?:__cplusplus|_WIN64)\b"
+CPLUSPLUS_IF = re.compile(
+    r"#\s*if(?:def\s+" + UNUSED_CONDITION + r"|\s+defined\s*\(?\s*" + UNUSED_CONDITION + r")"
+)
+CPLUSPLUS_IFNDEF = re.compile(
+    r"#\s*if(?:ndef\s+" + UNUSED_CONDITION + r"|\s+!\s*defined\s*\(?\s*" + UNUSED_CONDITION + r")"
+)
+
+
+def strip_cplusplus(text: str) -> str:
+    """Drop lines only a C++ or Win64 compiler sees (#ifdef __cplusplus, _WIN64)."""
+    kept: List[str] = []
+    # One [kind, in_else] entry per open conditional. kind is "cpp" for
+    # #ifdef __cplusplus, "c" for #ifndef __cplusplus, else "other".
+    stack: List[List[Any]] = []
+
+    def cplusplus_only(entry: List[Any]) -> bool:
+        kind, in_else = entry
+        return (kind == "cpp" and not in_else) or (kind == "c" and in_else)
+
+    for line in text.splitlines():
+        directive = re.sub(r"^#\s*", "#", line.strip())
+        if directive.startswith("#if"):
+            if CPLUSPLUS_IF.match(directive):
+                stack.append(["cpp", False])
+            elif CPLUSPLUS_IFNDEF.match(directive):
+                stack.append(["c", False])
+            else:
+                stack.append(["other", False])
+            continue
+        if directive.startswith("#else") and stack:
+            stack[-1][1] = True
+            continue
+        if directive.startswith("#elif") and stack:
+            # an #elif leaves the __cplusplus test behind
+            stack[-1] = ["other", False]
+            continue
+        if directive.startswith("#endif") and stack:
+            stack.pop()
+            continue
+        if not any(cplusplus_only(entry) for entry in stack):
+            kept.append(line)
+    return "\n".join(kept)
+
+
+def read(path: Path) -> str:
+    return strip_cplusplus(COMMENT.sub(" ", path.read_text(encoding="latin-1")))
+
+
+def scan_tags(files: Iterable[Path]) -> Dict[str, Set[str]]:
+    tags: Dict[str, Set[str]] = {}
+    for path in files:
+        for kind, name in TAG.findall(read(path)):
+            tags.setdefault(name, set()).add(kind)
+    return tags
+
+
+def scan_inline_functions(files: Iterable[Path], all_inlines: bool) -> Set[str]:
+    """Inline function names that need `#pragma weak`.
+
+    With all_inlines, every one: the upstream COMDAT adapter gives all of
+    them external definitions, which must never clash with an ordinary
+    definition elsewhere. Otherwise only those also declared or called
+    without a body - the ones that can keep external linkage in an ordinary
+    unit - since clang warns about the pragma for names that end up static.
+    A call statement also matches that pattern, erring towards the pragma.
+    """
+    texts = [read(path) for path in files]
+    inline_names: Set[str] = set()
+    for text in texts:
+        inline_names.update(INLINE_FUNCTION.findall(text))
+    if all_inlines:
+        return inline_names
+    everything = "\n".join(texts)
+    return {
+        name
+        for name in inline_names
+        if re.search(r"\b" + re.escape(name) + r"\s*\([^;{}]*\)\s*;", everything)
+    }
+
+
+def render(tags: Dict[str, Set[str]], inline_functions: Set[str]) -> str:
+    lines = [
+        "/* generated by port/n3ds/tools/compat.py - do not edit */",
+        "#ifndef HALO_N3DS_ENGINE_SEMANTICS_H",
+        "#define HALO_N3DS_ENGINE_SEMANTICS_H",
+        "",
+        "/* ---------- file-scope struct and union tags */",
+        "",
+    ]
+    for name in sorted(tags):
+        kinds = tags[name]
+        if len(kinds) != 1:
+            # Used as both struct and union somewhere (third-party code with
+            # its own meaning). Leave it to ordinary C scoping.
+            continue
+        lines.append(f"{next(iter(kinds))} {name};")
+    lines += ["", "/* ---------- COMDAT inline functions */", ""]
+    for name in sorted(inline_functions):
+        lines.append(f"#pragma weak {name}")
+    lines += ["", "#endif", ""]
+    return "\n".join(lines)
+
+
+C_BODIES = {
+    "Int64ShllMod32": "return Value << (ShiftCount & 31);",
+    "Int64ShraMod32": "return Value >> (ShiftCount & 31);",
+    "Int64ShrlMod32": "return Value >> (ShiftCount & 31);",
+}
+
+
+def patch_winnt(text: str) -> str:
+    for name, body in C_BODIES.items():
+        pattern = re.compile(
+            r"(" + name + r"\s*\([^)]*\)\s*\{)\s*__asm\s*\{[^}]*\}\s*(\})",
+            re.MULTILINE,
+        )
+        text, count = pattern.subn(lambda m: m.group(1) + "\n    " + body + "\n" + m.group(2), text)
+        if count != 1:
+            raise SystemExit(f"winnt.h: expected one definition of {name}, found {count}")
+    if re.search(r"__asm\s*\{", text):
+        raise SystemExit("winnt.h: unexpected inline assembly left after patching")
+    return text
+
+
+def prepare(repo, sdk_source, out):
+    overlay=out/'sdk'; overlay.mkdir(exist_ok=True)
+    for source in sorted(sdk_source.iterdir()):
+        if source.suffix.lower() not in ('.h','.inl') or source.name.lower() in CRT_HEADERS:
+            continue
+        data=source.read_bytes()
+        if source.name.lower()=='winnt.h':
+            data=patch_winnt(data.decode('latin-1')).encode('latin-1')
+        (overlay/source.name.lower()).write_bytes(data)
+    files=source_files([repo/'source',overlay])
+    semantics=out/'engine_semantics.h'
+    semantics.write_text(render(scan_tags(files),scan_inline_functions(files,False)),encoding='utf-8')
+    return overlay,semantics

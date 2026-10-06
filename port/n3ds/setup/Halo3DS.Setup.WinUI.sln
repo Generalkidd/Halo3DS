@@ -1,0 +1,34 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Halo3DS.Setup", "App\Halo3DS.Setup.csproj", "{5ECBCD59-FD82-5E20-B801-5CFB231CA2FE}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HaloSetup.Core", "Core\HaloSetup.Core.csproj", "{38463036-FEAC-5B5E-9D91-4BCEFCDBEC92}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HaloSetup.Tests", "Tests\HaloSetup.Tests.csproj", "{0D68EEB1-DFD5-5F4B-9631-CA400C4D9D45}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Halo3DS.Setup.Bundle", "Launcher\Launcher.csproj", "{C8887C00-8A57-54DC-8791-ADB94233EBBC}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|x64 = Debug|x64
+		Release|x64 = Release|x64
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{5ECBCD59-FD82-5E20-B801-5CFB231CA2FE}.Debug|x64.ActiveCfg = Debug|x64
+		{5ECBCD59-FD82-5E20-B801-5CFB231CA2FE}.Debug|x64.Build.0 = Debug|x64
+		{5ECBCD59-FD82-5E20-B801-5CFB231CA2FE}.Release|x64.ActiveCfg = Release|x64
+		{5ECBCD59-FD82-5E20-B801-5CFB231CA2FE}.Release|x64.Build.0 = Release|x64
+		{38463036-FEAC-5B5E-9D91-4BCEFCDBEC92}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{38463036-FEAC-5B5E-9D91-4BCEFCDBEC92}.Debug|x64.Build.0 = Debug|Any CPU
+		{38463036-FEAC-5B5E-9D91-4BCEFCDBEC92}.Release|x64.ActiveCfg = Release|Any CPU
+		{38463036-FEAC-5B5E-9D91-4BCEFCDBEC92}.Release|x64.Build.0 = Release|Any CPU
+		{0D68EEB1-DFD5-5F4B-9631-CA400C4D9D45}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{0D68EEB1-DFD5-5F4B-9631-CA400C4D9D45}.Debug|x64.Build.0 = Debug|Any CPU
+		{0D68EEB1-DFD5-5F4B-9631-CA400C4D9D45}.Release|x64.ActiveCfg = Release|Any CPU
+		{0D68EEB1-DFD5-5F4B-9631-CA400C4D9D45}.Release|x64.Build.0 = Release|Any CPU
+		{C8887C00-8A57-54DC-8791-ADB94233EBBC}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{C8887C00-8A57-54DC-8791-ADB94233EBBC}.Release|x64.ActiveCfg = Release|Any CPU
+	EndGlobalSection
+EndGlobal
