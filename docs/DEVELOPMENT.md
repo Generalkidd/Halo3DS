@@ -112,7 +112,10 @@ scenes, steady render time fell from about 67.6 to 19.5 ms per frame and world
 object draw from about 43.5 to 3.1 ms. A six-bot run measured about 19.8 ms
 render and 9.6 ms simulation at match time 180 and continued past frame 1700.
 The static upper portion of the captured scene matched the earlier build
-pixel for pixel. Hardware results are still required.
+pixel for pixel. Blood Gulch with two bots and a scripted plasma pistol shot
+queued weapon and impact audio, and measured about 29 ms render and 9 ms
+simulation at match time 180. Map costs differ; hardware results are still
+required.
 
 `--diagnostic-pc-matrix` builds the runtime matrix fixture. In a private test
 SD, `halo-source/pc-matrix.txt` contains one stock map name and one mode, such
