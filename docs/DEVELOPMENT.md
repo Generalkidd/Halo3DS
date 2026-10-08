@@ -324,6 +324,18 @@ Keep generated binaries and owner supplied game files outside Git. This source
 merge workflow lets the PC port receive upstream fixes without replacing the
 original engine with a parallel gameplay implementation.
 
+Run `port/n3ds/tools/prepare_upstream_update.ps1` from `local-integration` to
+fetch and compare upstream. When new commits exist, it creates a sibling
+`Halo3DS-Upstream-Review-<commit>` worktree and merges there. The working branch
+is untouched, including if there are merge conflicts. In the review worktree,
+inspect `git diff origin/main -- source`, build both the default Xbox and
+`--experimental-pc-runtime` launchers, and repeat the relevant emulator and
+installer checks. Only after those pass, return to `local-integration` and run
+`git merge --ff-only upstream-review-<commit>`. If that fast-forward fails,
+new local work has appeared; refresh the review branch and test again. Never
+use `reset --hard`, force push, or rebase the integration branch to pick up
+upstream changes.
+
 ## Where to make changes
 
 | Area | Main owners |
