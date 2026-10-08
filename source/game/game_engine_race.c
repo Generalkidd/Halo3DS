@@ -275,6 +275,36 @@ void race_engine_dispose(
 	return;
 }
 
+#ifdef HALO_N3DS
+boolean game_engine_race_next_goal(long player_index, real_point3d const *position,
+	real_point3d *goal)
+{
+	struct scenario *scenario = global_scenario_get();
+	real best_distance2 = REAL_MAX;
+	long flag_index;
+	boolean found = FALSE;
+	for (flag_index = 0; flag_index < scenario->netgame_flags.count; flag_index++)
+	{
+		struct scenario_netgame_flag *flag = TAG_BLOCK_GET_ELEMENT(
+			&scenario->netgame_flags, flag_index, struct scenario_netgame_flag);
+		real dx, dy, distance2;
+		if (flag->type != _netgame_flag_race_track ||
+			!can_touch_team(player_index, flag->team_index))
+			continue;
+		dx = flag->position.x - position->x;
+		dy = flag->position.y - position->y;
+		distance2 = dx * dx + dy * dy;
+		if (distance2 < best_distance2)
+		{
+			best_distance2 = distance2;
+			*goal = flag->position;
+			found = TRUE;
+		}
+	}
+	return found;
+}
+#endif
+
 static void delete_race_vehicles(
 	void)
 {

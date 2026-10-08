@@ -8,12 +8,16 @@ param(
     [Parameter(Mandatory = $true)][string]$PcIso,
     [Parameter(Mandatory = $true)][string]$SdRoot,
     [string[]]$MapNames = @(),
+    [Nullable[int]]$BotCount = $null,
     [string]$SevenZipPath,
     [string]$LauncherPath = (Join-Path $PSScriptRoot 'Halo3DS-PC.3dsx'),
     [string]$RuntimeManifest = (Join-Path $PSScriptRoot 'pc-runtime.json')
 )
 
 $ErrorActionPreference = 'Stop'
+if ($null -ne $BotCount -and ($BotCount -lt 0 -or $BotCount -gt 15)) {
+    throw 'Bot count must be from 0 to 15 (one player slot is reserved for you).'
+}
 $iso = (Resolve-Path -LiteralPath $PcIso).Path
 if ([IO.Path]::GetExtension($iso) -ine '.iso' -or !(Test-Path -LiteralPath $iso -PathType Leaf)) {
     throw 'Select your Halo CE PC retail .iso file. Xbox XISO images are not accepted.'
@@ -48,6 +52,7 @@ $relativePaths = @('3ds/Halo3DS-PC/Halo3DS-PC.3dsx')
 if ($WhatIfPreference) {
     $selection = if ($MapNames.Count) { $MapNames -join ', ' } else { 'all game maps' }
     Write-Output "What if: read $selection plus PC ui/bitmaps/sounds from the selected ISO, then install under 3ds/Halo3DS-PC and halo-source/pc-retail on $sd"
+    if ($null -ne $BotCount) { Write-Output "What if: set solo multiplayer bot count to $BotCount" }
     return
 }
 
@@ -144,6 +149,38 @@ try {
             }
             [IO.File]::Move($partial, $entry.Destination)
             Write-Output "Installed and verified: $($entry.Relative)"
+        } finally { if (Test-Path -LiteralPath $partial) { Remove-Item -LiteralPath $partial } }
+    }
+    if ($null -ne $BotCount) {
+        $botSettings = Test-Within $sd 'halo-source/bots.txt'
+        $desired = [Text.Encoding]::ASCII.GetBytes([string]$BotCount + "`n")
+        $partial = $botSettings + '.partial-' + [guid]::NewGuid().ToString('N')
+        $previous = $null
+        $alreadySet = $false
+        try {
+            if (Test-Path -LiteralPath $botSettings -PathType Leaf) {
+                if ((Get-Item -LiteralPath $botSettings -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) {
+                    throw 'Bot settings path is redirected.'
+                }
+                if ([Convert]::ToBase64String([IO.File]::ReadAllBytes($botSettings)) -eq [Convert]::ToBase64String($desired)) {
+                    Write-Output "Bot count already set to $BotCount"
+                    $alreadySet = $true
+                }
+            }
+            if (!$alreadySet) {
+                [IO.File]::WriteAllBytes($partial, $desired)
+                if (Test-Path -LiteralPath $botSettings -PathType Leaf) {
+                    $previous = $botSettings + '.previous-' + [guid]::NewGuid().ToString('N')
+                    [IO.File]::Move($botSettings, $previous)
+                }
+                [IO.File]::Move($partial, $botSettings)
+                Write-Output "Solo multiplayer bot count set to $BotCount"
+            }
+        } catch {
+            if ($previous -and !(Test-Path -LiteralPath $botSettings) -and (Test-Path -LiteralPath $previous)) {
+                [IO.File]::Move($previous, $botSettings)
+            }
+            throw
         } finally { if (Test-Path -LiteralPath $partial) { Remove-Item -LiteralPath $partial } }
     }
     Write-Output 'PC retail installation complete. Launch 3ds/Halo3DS-PC/Halo3DS-PC.3dsx.'

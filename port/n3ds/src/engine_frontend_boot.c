@@ -12,6 +12,7 @@
 #include "errors.h"
 #include "game_state.h"
 #include "game.h"
+#include "game/game_engine.h"
 #include "players.h"
 #include "input/input.h"
 #include "input/input_abstraction.h"
@@ -238,6 +239,21 @@ int halo_engine_boot(void)
     for(frame=0;(!HALO_N3DS_MISSION_TICKS || frame<HALO_N3DS_MISSION_TICKS) && n3ds_engine_app_running();++frame) {
         struct native_input_sample sample;
         long long start=n3ds_engine_ticks();long local,player,unit=NONE;
+#ifdef HALO_N3DS_PROBE_A10
+        if(frame==90) {
+            main_set_map_name("levels\\a10\\a10");
+            n3ds_log("PROBE A10: requested original campaign map through main_set_map_name");
+        }
+#endif
+#ifdef HALO_N3DS_BOT_TEST_COUNT
+        if(frame==90) {
+            struct game_variant variant;
+            static const char *modes[]={"slayer","ctf","oddball","king","race"};
+            CHECK(game_engine_get_variant_by_name(&variant,modes[HALO_N3DS_BOT_TEST_MODE])->game_engine_index!=0);
+            CHECK(n3ds_main_queue_solo_multiplayer("levels\\test\\bloodgulch\\bloodgulch",&variant,0));
+            snprintf(message,sizeof(message),"BOT PROBE: queued Blood Gulch %s with %d local bots",modes[HALO_N3DS_BOT_TEST_MODE],HALO_N3DS_BOT_TEST_COUNT);n3ds_log(message);
+        }
+#endif
         n3ds_frontend_trace("checkpoint-poll");n3ds_checkpoint_poll();
         current_frame=frame+1;n3ds_frontend_trace("services");
 #ifdef HALO_N3DS_CHECKPOINT_TEST
@@ -402,6 +418,12 @@ int halo_engine_boot(void)
         }
         #endif
         CHECK(!n3ds_engine_mission_render(unit,game_time_get()));
+#ifdef HALO_N3DS_PROBE_A10
+        if(frame+1==300) {
+            int capture_failed=n3ds_gpu_screen_test();
+            n3ds_log(capture_failed?"PROBE A10: screen capture check failed":"PROBE A10: screen capture saved");
+        }
+#endif
         #if HALO_N3DS_MAW_CUTSCENE_TEST == 2
         {
             static unsigned int empty_bsp_frames;

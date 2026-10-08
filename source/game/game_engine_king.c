@@ -242,6 +242,15 @@ extern real_rgb_color global_default_animation_colors[4];
 extern real global_default_animation_values[4];
 
 struct king_globals king_globals = { 0 };
+#ifdef HALO_N3DS
+boolean game_engine_king_active_hill_center(real_point3d *position)
+{
+	if (!position || king_globals.hill_point_count <= 0)
+		return FALSE;
+	*position = king_globals.hill_center;
+	return TRUE;
+}
+#endif
 static short king_engine_hill_count = 0;
 static short king_engine_hills[MAXIMUM_HILLS] = { 0 };
 

@@ -115,6 +115,9 @@ symbols in this file:
 #include "memory/data.h"
 #include "networking/network_game_globals.h"
 #include "units/units.h"
+#ifdef HALO_N3DS
+#include "engine_bots.h"
+#endif
 
 /* ---------- constants */
 
@@ -348,6 +351,11 @@ void update_server_next_update(
 			&update->update.actions[queue_index],
 			&queue->current_action,
 			sizeof(struct player_action));
+#ifdef HALO_N3DS
+		if(game_connection()==_game_connection_local)
+			n3ds_bots_fill_action(queue_index, queue->identifier,
+				&update->update.actions[queue_index]);
+#endif
 		update->update.action_count += 1;
 	}
 	update_client_handle_server_update(&update->update, update_number);

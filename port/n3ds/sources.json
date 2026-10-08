@@ -599,6 +599,11 @@
       ]
     },
     {
+      "source": "port/n3ds/src/engine_bots.c",
+      "compiler": "clang",
+      "defines": ["HALO_N3DS_FRONTEND=1"]
+    },
+    {
       "source": "port/n3ds/compat/src/engine_common.c",
       "compiler": "clang"
     },
