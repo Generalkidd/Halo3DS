@@ -19,6 +19,16 @@ static int ready,count,paused;
 static unsigned int decoded_frames,underruns,submitted;
 static int exit_registered;
 void n3ds_log(const char *);
+#ifdef HALO_N3DS_AUDIO_TRACE
+static unsigned int audio_trace_lines;
+static void audio_trace(const char *event,int channel,unsigned int detail,float a,float b)
+{
+    if(audio_trace_lines++>=100) return;
+    char text[180];snprintf(text,sizeof(text),"AUDIO TRACE: %s ch=%d detail=%u a=%.5f b=%.5f paused=%d dsp_paused=%d",event,channel,detail,a,b,paused,
+        ready && channel>=0 && channel<count ? (int)ndspChnIsPaused(channel) : -1);
+    n3ds_log(text);
+}
+#endif
 static void audio_exit(void)
 {
     if(!ready) return;
@@ -48,6 +58,9 @@ int n3ds_audio_initialize(int channels)
 void n3ds_audio_stop(int channel)
 {
     if(!ready || channel<0 || channel>=count) return;
+#ifdef HALO_N3DS_AUDIO_TRACE
+    audio_trace("stop",channel,voices[channel].outstanding,0,0);
+#endif
     struct voice *v=voices+channel;ndspChnWaveBufClear(channel);
     memset(v->wave,0,sizeof(v->wave));memset(&v->current,0,sizeof(v->current));memset(&v->next,0,sizeof(v->next));v->outstanding=0;
 }
@@ -87,6 +100,9 @@ int n3ds_audio_state(int i)
 int n3ds_audio_queue(int i,const void *data,unsigned int bytes,int channels,int compression)
 {
     if(!ready || i<0 || i>=count || !data || !bytes || channels<1 || channels>2 || compression<0 || compression>1 || bytes%(channels*(compression?36:2))) return 0;
+#ifdef HALO_N3DS_AUDIO_TRACE
+    audio_trace("queue",i,bytes,(float)channels,(float)compression);
+#endif
     struct voice *v=voices+i;struct clip c={data,bytes,0,channels,compression};
     if(v->current.data) v->next=c;else {v->current=c;ndspChnSetFormat(i,channels==2?NDSP_FORMAT_STEREO_PCM16:NDSP_FORMAT_MONO_PCM16);}
     return 1;
@@ -94,6 +110,9 @@ int n3ds_audio_queue(int i,const void *data,unsigned int bytes,int channels,int 
 void n3ds_audio_properties(int i,float rate,float left,float right)
 {
     if(!ready || i<0 || i>=count) return;
+#ifdef HALO_N3DS_AUDIO_TRACE
+    audio_trace("mix",i,(unsigned int)rate,left,right);
+#endif
     float mix[12]={0};mix[0]=left;mix[1]=right;
     ndspChnSetRate(i,rate);ndspChnSetMix(i,mix);
 }
@@ -157,6 +176,9 @@ void n3ds_audio_update(void)
         decoded_frames+=j->frames;++submitted;
         memset(wave,0,sizeof(*wave));wave->data_pcm16=j->pcm;wave->nsamples=j->frames;
         DSP_FlushDataCache(j->pcm,j->frames*j->channels*2);ndspChnWaveBufAdd(j->voice,wave);++v->outstanding;
+#ifdef HALO_N3DS_AUDIO_TRACE
+        audio_trace("submit",j->voice,j->frames,(float)j->channels,(float)wave->status);
+#endif
     }
 }
 int n3ds_audio_parallel_tests(void)

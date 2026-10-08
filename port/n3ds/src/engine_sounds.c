@@ -1,11 +1,12 @@
 /* Native encoded-sample cache, preserving original ready/reference semantics.
- * Playback and codec conversion belong to the future native sound device. */
+ * PC samples may come from sounds.map, while Xbox samples stay in the map. */
 #include "cseries.h"
 #include "cache/sound_cache.h"
 #include "sound/sound_definitions.h"
 #include "cache_reader.h"
 #include "engine_cache.h"
 #include "engine_sounds.h"
+#include "../pc/engine_pc_runtime.h"
 
 enum { SOUND_SLOTS=512, SOUND_BUDGET=4*1024*1024 };
 struct sound_entry {
@@ -143,7 +144,11 @@ boolean _sound_cache_sound_request(struct sound_permutation *sound, boolean bloc
     if (!entry) {
         unsigned long offset=sound->samples.file_offset;
         long size=sound->samples.size;
-        if (!fetch || size<=0 || size>SOUND_BUDGET || offset<2048 || offset>(unsigned long)view->header.file_length ||
+        if (!fetch || size<=0 || size>SOUND_BUDGET || offset<2048) return FALSE;
+        if (n3ds_pc_tags_active()) {
+            if (offset>=0x40000000UL && offset<0x60000000UL) return FALSE;
+            if (!n3ds_pc_cache_range_valid(offset,(unsigned long)size)) return FALSE;
+        } else if (offset>(unsigned long)view->header.file_length ||
             (unsigned long)size>(unsigned long)view->header.file_length-offset) return FALSE;
         for (i=0;i<SOUND_SLOTS;++i) if (!entries[i].sound) break;
         if (i==SOUND_SLOTS) {

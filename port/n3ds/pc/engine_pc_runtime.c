@@ -193,11 +193,11 @@ fail:
     return 1;
 }
 
-int n3ds_pc_cache_read(unsigned long offset, unsigned long bytes, void *destination)
+int n3ds_pc_cache_range_valid(unsigned long offset, unsigned long bytes)
 {
     const struct cache_file_source *source;
     uint32_t relative;
-    if (!pc.active || !destination || !bytes || bytes > UINT32_MAX || offset > UINT32_MAX)
+    if (!pc.active || !bytes || bytes > UINT32_MAX || offset > UINT32_MAX)
         return 0;
     if (offset >= 0x60000000U) {
         source = &pc.resource_files[_resource_map_sounds].source;
@@ -209,9 +209,22 @@ int n3ds_pc_cache_read(unsigned long offset, unsigned long bytes, void *destinat
         source = &pc.map.source;
         relative = (uint32_t)offset;
     }
-    return source->read && relative <= source->size &&
-        bytes <= source->size - relative &&
-        source->read(source->context, relative, (uint32_t)bytes, destination);
+    return source->read && relative <= source->size && bytes <= source->size - relative;
+}
+
+int n3ds_pc_cache_read(unsigned long offset, unsigned long bytes, void *destination)
+{
+    if (!destination || !n3ds_pc_cache_range_valid(offset, bytes)) return 0;
+    if (offset >= 0x60000000U)
+        return pc.resource_files[_resource_map_sounds].source.read(
+            pc.resource_files[_resource_map_sounds].source.context,
+            (uint32_t)(offset - 0x60000000U), (uint32_t)bytes, destination);
+    if (offset >= 0x40000000U)
+        return pc.resource_files[_resource_map_bitmaps].source.read(
+            pc.resource_files[_resource_map_bitmaps].source.context,
+            (uint32_t)(offset - 0x40000000U), (uint32_t)bytes, destination);
+    return pc.map.source.read(pc.map.source.context,
+        (uint32_t)offset, (uint32_t)bytes, destination);
 }
 
 int n3ds_pc_bsp_load(struct n3ds_cache_view *view,
@@ -277,6 +290,8 @@ void n3ds_pc_tags_close(void) {}
 int n3ds_pc_tags_active(void) { return 0; }
 int n3ds_pc_cache_read(unsigned long offset, unsigned long bytes, void *destination)
 { (void)offset; (void)bytes; (void)destination; return 0; }
+int n3ds_pc_cache_range_valid(unsigned long offset, unsigned long bytes)
+{ (void)offset; (void)bytes; return 0; }
 int n3ds_pc_bsp_load(struct n3ds_cache_view *view,
     const struct scenario_structure_bsp_reference *reference)
 { (void)view; (void)reference; return 1; }
