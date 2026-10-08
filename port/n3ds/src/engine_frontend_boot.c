@@ -245,6 +245,12 @@ int halo_engine_boot(void)
             n3ds_log("PROBE A10: requested original campaign map through main_set_map_name");
         }
 #endif
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_A10
+        if(frame==90) {
+            main_set_map_name("levels\\a10\\a10");
+            n3ds_log("EXPERIMENTAL PC: requested PC retail a10 campaign map");
+        }
+#endif
 #ifdef HALO_N3DS_EXPERIMENTAL_PC_MAP_ID
         if(frame==90) {
             struct game_variant variant;

@@ -31,6 +31,8 @@ static struct {
     int active;
     uint8_t *tags;
     uint32_t capacity;
+    void *model_geometry;
+    uint32_t model_geometry_bytes;
     struct cache_file_header header;
     struct pc_file map;
     struct pc_file resource_files[NUMBER_OF_RESOURCE_MAP_TYPES];
@@ -95,6 +97,7 @@ int n3ds_pc_map_available(const char *name)
 
 void n3ds_pc_tags_close(void)
 {
+    free(pc.model_geometry);
     for (int type = _resource_map_bitmaps; type < NUMBER_OF_RESOURCE_MAP_TYPES; ++type) {
         if (pc.resources[type]) resource_map_close(pc.resources[type]);
         close_file(&pc.resource_files[type]);
@@ -104,6 +107,17 @@ void n3ds_pc_tags_close(void)
 }
 
 int n3ds_pc_tags_active(void) { return pc.active; }
+
+void *n3ds_pc_model_resolve_external(const struct n3ds_cache_view *view,
+    const void *address, unsigned long bytes)
+{
+    uintptr_t base = (uintptr_t)pc.model_geometry;
+    uintptr_t pointer = (uintptr_t)address;
+    if (!pc.active || !view || view->tags != pc.tags || !base ||
+        pointer < base || pointer - base > pc.model_geometry_bytes ||
+        bytes > pc.model_geometry_bytes - (pointer - base)) return NULL;
+    return (void *)address;
+}
 
 int n3ds_pc_tags_open(const char *name, struct n3ds_cache_view *view)
 {
@@ -153,9 +167,8 @@ int n3ds_pc_tags_open(const char *name, struct n3ds_cache_view *view)
     status = custom_edition_cache_rebase_known(view->tags, used, view->tag_bytes,
         (uint32_t)(uintptr_t)view->tags, &rebase);
     if (status != _cache_file_status_ok || rebase.unknown_tag_count) goto fail;
-    uint32_t resident_end = used;
     if (!n3ds_pc_models_convert(view->tags, used, view->tag_bytes,
-        &load, &pc.map.source, &resident_end)) goto fail;
+        &load, &pc.map.source, &pc.model_geometry, &pc.model_geometry_bytes)) goto fail;
     /* Xbox tag_index is 0x24 bytes; PC's is 0x28. These fields align except
      * the signature, which PC keeps at +0x24. The 3DS binder checks +0x20.
      * PC model-data size at +0x20 is retained separately by the load report. */

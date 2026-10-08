@@ -275,6 +275,9 @@ static int load_tag_candidate(const char *name,struct n3ds_cache_view *candidate
 #ifdef HALO_N3DS_EXPERIMENTAL_PC_MAP_ID
         || !strcmp(base, HALO_N3DS_EXPERIMENTAL_PC_MAP_ID == 0 ? "bloodgulch" : "timberland")
 #endif
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_A10
+        || !strcmp(base, "a10")
+#endif
         ) {
         snprintf(path, 128, "sdmc:/halo-source/pc-retail/%s.map", base);
         if (n3ds_pc_tags_open(base, candidate)) goto fail;
@@ -312,6 +315,9 @@ boolean n3ds_engine_map_installed(const char *name)
     if (!strcmp(base, "ui")) return n3ds_pc_map_available(base);
 #ifdef HALO_N3DS_EXPERIMENTAL_PC_MAP_ID
     if (!strcmp(base, HALO_N3DS_EXPERIMENTAL_PC_MAP_ID == 0 ? "bloodgulch" : "timberland")) return n3ds_pc_map_available(base);
+#endif
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_A10
+    if (!strcmp(base, "a10")) return n3ds_pc_map_available(base);
 #endif
 #endif
     snprintf(path,sizeof(path),"sdmc:/halo-source/%s.map",base);

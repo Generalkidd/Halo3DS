@@ -153,6 +153,35 @@ void n3ds_chicago_model_draw(const struct shader *shader,short permutation,
          * stages exist. This is a defined path, not a fallback for other stages. */
         assert(!g->stages.count && material->maps.count==1);
     }
+    if (!(material->type==0 && material->maps.count>=1 && material->maps.count<=4 && !material->extra_layers.count)) {
+        char detail[192];
+        snprintf(detail, sizeof(detail),
+            "CHICAGO LAYOUT: type=%d maps=%ld extra_layers=%ld shader_type=%d generic=%d",
+            material->type, material->maps.count, material->extra_layers.count,
+            shader->base.type, generic);
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_A10
+        /* The campaign probe records unsupported Chicago cube materials while
+         * continuing engine startup. Release rendering must implement them. */
+        static const void *seen[32]; static unsigned seen_count;
+        unsigned index;
+        for (index=0; index<seen_count && seen[index]!=shader; ++index) {}
+        if (index==seen_count && seen_count<32) {
+            seen[seen_count++]=shader;
+            n3ds_log(detail);
+            for (long t=0;t<view->tag_header->tag_count;++t)
+                if (view->instances[t].base_address==shader) {
+                    snprintf(detail,sizeof(detail),
+                        "EXPERIMENTAL PC: skipped Chicago material %.120s",
+                        view->instances[t].name);
+                    n3ds_log(detail);
+                    break;
+                }
+        }
+        return;
+#else
+        n3ds_log(detail);
+#endif
+    }
     assert(material->type==0 && material->maps.count>=1 && material->maps.count<=4 && !material->extra_layers.count);
     if((material->flags&((1<<3)|(1<<6))) || (material->fade_mode && material->blend!=3)) {
         char message[240];

@@ -83,8 +83,9 @@ static int finite_vector(const real_vector3d *v)
 
 static int walk(uint8_t *tags, uint32_t used, uint32_t limit,
     const struct custom_edition_load_report *report, const uint8_t *model_data,
-    uint32_t *cursor, struct totals *totals, int mutate)
+    uint8_t *geometry_storage, uint32_t *cursor, struct totals *totals, int mutate)
 {
+#define MODEL_FAIL(reason) do { n3ds_log("EXPERIMENTAL PC: model reject " reason); return 0; } while (0)
     int32_t tag_index = -1;
     struct model *model;
     while ((model = custom_edition_cache_tag_next(tags, used, 'mod2',
@@ -93,33 +94,45 @@ static int walk(uint8_t *tags, uint32_t used, uint32_t limit,
         if (model->nodes.count < 1 || model->nodes.count > MAXIMUM_NODES_PER_MODEL ||
             model->geometries.count < 0 || model->geometries.count > MAXIMUM_GEOMETRIES_PER_MODEL ||
             model->shaders.count < 0 || model->shaders.count > MAXIMUM_SHADERS_PER_MODEL)
-            return 0;
+            MODEL_FAIL("header counts");
         ++totals->models;
         for (long g = 0; g < model->geometries.count; ++g) {
             struct pc_model_geometry *geometry = custom_edition_cache_block_element(
                 tags, used, &model->geometries, g, sizeof(*geometry));
             if (!geometry || geometry->parts.count < 0 ||
-                geometry->parts.count > MAXIMUM_PARTS_PER_MODEL_GEOMETRY) return 0;
+                geometry->parts.count > MAXIMUM_PARTS_PER_MODEL_GEOMETRY) MODEL_FAIL("geometry parts");
             for (long p = 0; p < geometry->parts.count; ++p) {
                 struct pc_model_part *source = custom_edition_cache_block_element(
                     tags, used, &geometry->parts, p, sizeof(*source));
                 struct pc_model_part part;
                 uint32_t vertex_bytes, strip_bytes, vertex_at, strip_at;
-                if (!source) return 0;
+                if (!source) {
+                    n3ds_log("EXPERIMENTAL PC: model part outside tag arena");
+                    return 0;
+                }
                 part = *source;
                 if (part.shader_index < 0 || part.shader_index >= model->shaders.count ||
                     part.vertex_type != 4 || part.strip_type != 1 ||
                     part.vertex_count < 1 || part.vertex_count > 65535 ||
                     part.strip_triangle_count < 1 || part.strip_triangle_count > 65533 ||
                     (local && (!part.local_node_count ||
-                        part.local_node_count > MAXIMUM_NODES_PER_MODEL_GEOMETRY_PART))) return 0;
+                        part.local_node_count > MAXIMUM_NODES_PER_MODEL_GEOMETRY_PART))) {
+                    char detail[180];
+                    snprintf(detail, sizeof(detail),
+                        "EXPERIMENTAL PC: invalid model tag=%ld geometry=%ld part=%ld shader=%d/%ld vertex=%d count=%ld strip=%d count=%ld local=%d nodes=%u",
+                        (long)tag_index, g, p, part.shader_index, model->shaders.count,
+                        part.vertex_type, part.vertex_count, part.strip_type,
+                        part.strip_triangle_count, local, part.local_node_count);
+                    n3ds_log(detail);
+                    return 0;
+                }
                 vertex_bytes = (uint32_t)part.vertex_count * sizeof(struct model_vertex_uncompressed);
                 strip_bytes = ((uint32_t)part.strip_triangle_count + 2U) * sizeof(word);
                 if (part.vertex_offset > report->model_index_data_offset ||
                     vertex_bytes > report->model_index_data_offset - part.vertex_offset ||
                     part.strip_offset > report->model_data_bytes - report->model_index_data_offset ||
                     strip_bytes > report->model_data_bytes - report->model_index_data_offset - part.strip_offset)
-                    return 0;
+                    MODEL_FAIL("model data offset");
                 const struct model_vertex_uncompressed *vertices =
                     (const void *)(model_data + part.vertex_offset);
                 const word *indices = (const void *)(model_data +
@@ -131,24 +144,36 @@ static int walk(uint8_t *tags, uint32_t used, uint32_t limit,
                         v->nodes[1] < 0 || v->nodes[1] >= bound ||
                         !finite_vector(&v->normal) ||
                         !finite_vector(&v->binormal) ||
-                        !finite_vector(&v->tangent)) return 0;
+                        !finite_vector(&v->tangent)) MODEL_FAIL("vertex nodes or vectors");
                 }
                 for (uint32_t i = 0; i < (uint32_t)part.strip_triangle_count + 2U; ++i)
-                    if (indices[i] >= part.vertex_count) return 0;
+                    if (indices[i] >= part.vertex_count) MODEL_FAIL("strip index");
                 if (local) for (uint32_t i = 0; i < part.local_node_count; ++i)
-                    if (part.local_node_indices[i] >= model->nodes.count) return 0;
+                    if (part.local_node_indices[i] >= model->nodes.count) MODEL_FAIL("local node index");
+                if (*cursor > UINT32_MAX - 3U) MODEL_FAIL("vertex cursor overflow");
                 vertex_at = (*cursor + 3U) & ~3U;
-                if (vertex_at > limit || vertex_bytes > limit - vertex_at) return 0;
+                if (vertex_at > limit || vertex_bytes > limit - vertex_at) {
+                    char detail[192];
+                    snprintf(detail, sizeof(detail),
+                        "EXPERIMENTAL PC: model storage limit=%lu cursor=%lu vertex=%lu tag=%ld part=%ld",
+                        (unsigned long)limit,
+                        (unsigned long)*cursor, (unsigned long)vertex_bytes,
+                        (long)tag_index, p);
+                    n3ds_log(detail);
+                    MODEL_FAIL("vertex arena capacity");
+                }
+                if (vertex_at > UINT32_MAX - vertex_bytes - 3U)
+                    MODEL_FAIL("index cursor overflow");
                 strip_at = (vertex_at + vertex_bytes + 3U) & ~3U;
-                if (strip_at > limit || strip_bytes > limit - strip_at) return 0;
+                if (strip_at > limit || strip_bytes > limit - strip_at) MODEL_FAIL("index arena capacity");
                 *cursor = strip_at + strip_bytes;
                 ++totals->parts;
                 totals->vertices += (uint32_t)part.vertex_count;
                 totals->indices += (uint32_t)part.strip_triangle_count + 2U;
                 if (!mutate) continue;
                 struct model_vertex_uncompressed *destination =
-                    (void *)(tags + vertex_at);
-                word *strip = (void *)(tags + strip_at);
+                    (void *)(geometry_storage + vertex_at);
+                word *strip = (void *)(geometry_storage + strip_at);
                 memcpy(destination, vertices, vertex_bytes);
                 memcpy(strip, indices, strip_bytes);
                 if (local) for (long i = 0; i < part.vertex_count; ++i) {
@@ -181,49 +206,59 @@ static int walk(uint8_t *tags, uint32_t used, uint32_t limit,
         }
         if (mutate) model->flags &= ~2U;
     }
+#undef MODEL_FAIL
     return 1;
 }
 
 int n3ds_pc_models_convert(uint8_t *tags, uint32_t used, uint32_t capacity,
     const struct custom_edition_load_report *report,
-    const struct cache_file_source *map, uint32_t *end_offset)
+    const struct cache_file_source *map, void **geometry_owner,
+    uint32_t *geometry_bytes)
 {
-    uint32_t limit, cursor, check_cursor;
+    uint32_t cursor, check_cursor;
     struct totals checked = {0}, converted = {0};
-    uint8_t *model_data;
+    uint8_t *model_data, *geometry_storage = NULL;
     char message[180];
-    if (!tags || !report || !map || !end_offset || used > capacity ||
+    if (!tags || !report || !map || !geometry_owner || !geometry_bytes || used > capacity ||
         report->model_index_data_offset > report->model_data_bytes ||
         report->model_data_bytes > map->size ||
         report->model_data_offset > map->size - report->model_data_bytes)
         return 0;
-    limit = capacity;
-    if (report->structure_bsp_count > 0) {
-        if (report->lowest_structure_bsp_address < CUSTOM_EDITION_TAG_CACHE_ADDRESS)
-            return 0;
-        uint32_t bsp_offset = report->lowest_structure_bsp_address -
-            CUSTOM_EDITION_TAG_CACHE_ADDRESS;
-        if (bsp_offset < limit) limit = bsp_offset;
-    }
+    *geometry_owner = NULL;
+    *geometry_bytes = 0;
     model_data = malloc(report->model_data_bytes ? report->model_data_bytes : 1);
     if (!model_data) return 0;
     if (!map->read(map->context, report->model_data_offset,
         report->model_data_bytes, model_data)) {free(model_data);return 0;}
-    cursor = used;
-    check_cursor = used;
-    if (!walk(tags, used, limit, report, model_data, &check_cursor, &checked, 0) ||
-        !walk(tags, used, limit, report, model_data, &cursor, &converted, 1) ||
+    cursor = 0;
+    check_cursor = 0;
+    if (!walk(tags, used, UINT32_MAX, report, model_data, NULL,
+        &check_cursor, &checked, 0)) {
+        free(model_data);
+        n3ds_log("EXPERIMENTAL PC: model validation failed");
+        return 0;
+    }
+    geometry_storage = malloc(check_cursor ? check_cursor : 1);
+    if (!geometry_storage) {
+        free(model_data);
+        n3ds_log("EXPERIMENTAL PC: model geometry allocation failed");
+        return 0;
+    }
+    if (!walk(tags, used, check_cursor, report, model_data, geometry_storage,
+            &cursor, &converted, 1) ||
         memcmp(&checked, &converted, sizeof(checked)) || cursor != check_cursor) {
+        free(geometry_storage);
         free(model_data);
         n3ds_log("EXPERIMENTAL PC: model conversion failed");
         return 0;
     }
     free(model_data);
     int32_t regrouped = custom_edition_cache_tags_regroup(tags, used, 'mod2', 'mode');
-    if (regrouped != (int32_t)checked.models) return 0;
-    *end_offset = cursor;
+    if (regrouped != (int32_t)checked.models) {free(geometry_storage); return 0;}
+    *geometry_owner = geometry_storage;
+    *geometry_bytes = cursor;
     snprintf(message, sizeof(message),
-        "EXPERIMENTAL PC: models=%lu parts=%lu vertices=%lu strips=%lu resident_end=%lu",
+        "EXPERIMENTAL PC: models=%lu parts=%lu vertices=%lu strips=%lu geometry_bytes=%lu",
         (unsigned long)checked.models, (unsigned long)checked.parts,
         (unsigned long)checked.vertices, (unsigned long)checked.indices,
         (unsigned long)cursor);

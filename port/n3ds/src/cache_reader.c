@@ -63,10 +63,18 @@ void *n3ds_cache_resolve(const struct n3ds_cache_view *view, const void *xbox_ad
 {
     unsigned long address = (unsigned long)xbox_address;
     unsigned long offset;
-    if (!view->tags || address < view->xbox_base) return NULL;
-    offset = address - view->xbox_base;
-    if (offset > view->tag_bytes || bytes > view->tag_bytes - offset) return NULL;
-    return view->tags + offset;
+    if (!view || !view->tags) return NULL;
+    if (address >= view->xbox_base) {
+        offset = address - view->xbox_base;
+        if (offset <= view->tag_bytes && bytes <= view->tag_bytes - offset)
+            return view->tags + offset;
+    }
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_UI
+    extern void *n3ds_pc_model_resolve_external(const struct n3ds_cache_view *, const void *, unsigned long);
+    return n3ds_pc_model_resolve_external(view, xbox_address, bytes);
+#else
+    return NULL;
+#endif
 }
 
 void n3ds_cache_close(struct n3ds_cache_view *view)

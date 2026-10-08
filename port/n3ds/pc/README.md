@@ -41,6 +41,20 @@ count was zero in both PC match runs. The regular Xbox UI still booted after
 the PC adapter changes. No owner supplied maps, resource archives, or screen
 captures are committed to this repository.
 
+`--diagnostic-pc-campaign a10` requests the PC retail campaign map after
+the PC UI has booted. The campaign's 626 gbxmodel parts need about 9.1 MB of
+converted vertex and index storage; they cannot fit between the tag data
+and the first reserved BSP slot. The experimental loader now owns that
+storage separately, validates its bounds through the native cache resolver,
+and releases it with the map. In Azahar, `a10.map` loaded 3,724 tags,
+converted 76 models, and reached `MAP READY`; the first mission render
+submitted 178 BSP batches and 40,934 triangles. Its first Chicago shader
+uses a cube map (`type=1`), which the native Chicago path does not yet
+implement. The campaign diagnostic alone records and skips unsupported
+Chicago materials to expose later startup failures. This makes its images
+incomplete and is not a release behavior. A subsequent emulator run ended
+during a GPU driver update, so sustained campaign play remains unverified.
+
 `setup/PC/Package-Halo3DS-PC.ps1` continues to require an independently
 verified PC runtime binary and matching manifest. The diagnostic binary is
 not that release. No PC runtime package or SD installation is produced yet.
