@@ -32,7 +32,7 @@ void n3ds_log(const char *);
 #define CUBE_SIZE 32
 #define CUBE_COUNT 8
 static struct { const struct bitmap_data *bitmap; byte rgba[6*CUBE_SIZE*CUBE_SIZE*4]; } cubes[CUBE_COUNT];
-static unsigned int cube_generation,cube_count;
+static unsigned int cube_generation,cube_count,cube_replacement;
 int n3ds_cube_coordinates(const float r[3],int *face,float uv[2])
 {
     float x=r[0],y=r[1],z=r[2],a=fabsf(x),b=fabsf(y),c=fabsf(z),u,v,major;
@@ -49,10 +49,12 @@ const byte *n3ds_cube_load(long tag,short permutation)
     assert(group && permutation>=0 && group->bitmaps.count>0);
     struct bitmap_data *b=bitmap_group_try_and_get_bitmap(tag,permutation%group->bitmaps.count);
     if(cube_generation!=n3ds_engine_cache_generation()) {
-        memset(cubes,0,sizeof(cubes));cube_count=0;cube_generation=n3ds_engine_cache_generation();
+        memset(cubes,0,sizeof(cubes));cube_count=cube_replacement=0;
+        cube_generation=n3ds_engine_cache_generation();
     }
     for(unsigned int i=0;i<cube_count;++i) if(cubes[i].bitmap==b) return cubes[i].rgba;
-    assert(cube_count<CUBE_COUNT && n3ds_cache_resolve(view,b,sizeof(*b))==b);
+    assert(n3ds_cache_resolve(view,b,sizeof(*b))==b);
+    unsigned int slot=cube_count<CUBE_COUNT?cube_count++:cube_replacement++%CUBE_COUNT;
     assert(b->signature=='bitm' && b->type==2 && b->depth==1 && b->width==b->height);
     assert(b->width>=8 && b->width<=256 && !(b->width&(b->width-1)) && b->mipmap_count>=0 && b->mipmap_count<=8);
     boolean raw=b->format==6 || b->format==10 || b->format==11;
@@ -77,7 +79,7 @@ const byte *n3ds_cube_load(long tag,short permutation)
     unsigned int bytes=raw?side*side*pixel_bytes:((side+3)/4)*((side+3)/4)*block;
     assert(skip+bytes<=face_stride);
     byte *encoded=malloc(bytes),*decoded=malloc(side*side*4);assert(encoded && decoded);
-    byte *destination=cubes[cube_count].rgba;
+    byte *destination=cubes[slot].rgba;
     for(unsigned int face=0;face<6;++face) {
         assert(n3ds_engine_cache_read(b->pixels_offset+face*face_stride+skip,bytes,encoded));
         if(raw) {
@@ -93,12 +95,8 @@ const byte *n3ds_cube_load(long tag,short permutation)
             memcpy(destination+((face*CUBE_SIZE+y)*CUBE_SIZE+x)*4,
                 decoded+((y*side/CUBE_SIZE)*side+x*side/CUBE_SIZE)*4,4);
     }
-    free(decoded);free(encoded);cubes[cube_count++].bitmap=b;
+    free(decoded);free(encoded);cubes[slot].bitmap=b;
     char text[160];snprintf(text,sizeof(text),"NATIVE CUBE: tag=%08lx format=%d faces=6 size=32 level=%u stride=%u",tag,b->format,level,face_stride);n3ds_log(text);
-    /* Read-only decode evidence, captured once per resource generation. */
-    snprintf(text,sizeof(text),"z:\\native-cube-%08lx.bin",tag);
-    FILE *proof=fopen(text,"wb");assert(proof);
-    assert(fwrite(destination,6*CUBE_SIZE*CUBE_SIZE*4,1,proof)==1);assert(!fclose(proof));
     return destination;
 }
 void n3ds_cube_sample(const byte *pixels,const float direction[3],float rgb[4])

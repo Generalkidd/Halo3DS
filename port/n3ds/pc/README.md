@@ -52,8 +52,11 @@ submitted 178 BSP batches and 40,934 triangles. Its first Chicago shader
 uses a cube map (`type=1`), which the native Chicago path does not yet
 implement. The campaign diagnostic alone records and skips unsupported
 Chicago materials to expose later startup failures. This makes its images
-incomplete and is not a release behavior. A subsequent emulator run ended
-during a GPU driver update, so sustained campaign play remains unverified.
+incomplete and is not a release behavior. A later diagnostic build includes
+a candidate per-vertex cube and two-dimensional map combiner; it compiles
+but has not yet been exercised in the emulator. A subsequent emulator run
+ended during a GPU driver update, so sustained campaign play remains
+unverified.
 
 `setup/PC/Package-Halo3DS-PC.ps1` continues to require an independently
 verified PC runtime binary and matching manifest. The diagnostic binary is

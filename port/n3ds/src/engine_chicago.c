@@ -4,6 +4,7 @@
 #include "cseries.h"
 #include "engine_chicago.h"
 #include "engine_generic.h"
+#include "engine_glass.h"
 #include "engine_models.h"
 #include "engine_textures.h"
 #include "engine_cache.h"
@@ -127,6 +128,119 @@ int halo_engine_chicago_numeric_tests(void)
 }
 void n3ds_generic_model_draw(const struct shader *,short,const struct rasterizer_model_begin_parameters *,
     const void *,unsigned int,short,const unsigned short *,unsigned int);
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_UI
+/* Chicago type 1 uses a reflection cube in map 0. Evaluate its authored
+ * combiner at posed vertices until the native path has 3D cube coordinates.
+ * This keeps every map, animation and transparent blend in the PC diagnostic. */
+static int chicago_cube_model_draw(const struct chicago_shader *material,short permutation,
+    const struct rasterizer_model_begin_parameters *parameters,const void *data,
+    unsigned int count,short type,const unsigned short *indices,unsigned int index_count)
+{
+    const struct n3ds_cache_view *view=n3ds_engine_cache_view(0);
+    struct native_generic_material program={0};
+    struct native_chicago_material native={0};
+    struct native_chicago_vertex *output;
+    const byte *cube;
+    int color[3]={0},alpha[3]={0},replicate[3]={0};
+    long maps=material->maps.count;
+    if (material->type!=1 || maps<1 || maps>4 || material->extra_layers.count ||
+        material->fade_mode<0 || material->fade_mode>2 ||
+        material->fade_source<0 || material->fade_source>4) return 0;
+    const struct chicago_map *first=TAG_BLOCK_GET_ELEMENT(&material->maps,0,struct chicago_map);
+    if (!first || n3ds_cache_resolve(view,first,sizeof(*first))!=first ||
+        first->bitmap.index==NONE) return 0;
+    cube=n3ds_cube_load(first->bitmap.index,permutation);
+    if (!cube) return 0;
+    for (long m=0;m<maps;++m) {
+        const struct chicago_map *map=TAG_BLOCK_GET_ELEMENT(&material->maps,m,struct chicago_map);
+        if (!map || n3ds_cache_resolve(view,map,sizeof(*map))!=map) return 0;
+        if (m<maps-1) {
+            color[m]=map->color_function;
+            alpha[m]=map->alpha_function;
+            replicate[m]=!!(map->flags&2);
+        }
+        if (!m) continue;
+        boolean bound=map->bitmap.index==NONE ?
+            rasterizer_set_texture(0,0,0,NONE,permutation)!=NULL :
+            rasterizer_set_texture_direct(0,map->bitmap.index,permutation);
+        if (!bound) return 0;
+        program.textures[m]=n3ds_gpu_texture_bound(0);
+        program.point[m]=!!(map->flags&1);
+        program.clamp_u[m]=!!(map->flags&4);
+        program.clamp_v[m]=!!(map->flags&8);
+        real_vector4d transform[2];
+        shader_texture_animation_evaluate(&map->animation,&parameters->animation,
+            map->u_scale*parameters->base_map_scale.i,
+            map->v_scale*parameters->base_map_scale.j,
+            map->u_offset,map->v_offset,map->rotation,
+            global_frame_parameters.game_time_sec,&transform[0],&transform[1]);
+        memcpy(program.transform[m],transform,sizeof(transform));
+    }
+    if (!n3ds_chicago_program(&program,maps,color,alpha,replicate)) return 0;
+    native.maps=1;native.vertex_color=1;
+    native.blend=material->blend;
+    native.alpha_test=!!(material->flags&1);
+    native.two_sided=!!(material->flags&4);
+    native.decal=!!(material->flags&2);
+    native.sky=!!(parameters->geometry_flags&(1u<<4));
+    native.fade=1.f;
+    if (material->fade_source) {
+        if (!parameters->animation.values) return 0;
+        native.fade=PIN(parameters->animation.values[material->fade_source-1],0.f,1.f);
+    }
+    output=n3ds_gpu_chicago_allocate(count);
+    if (!output) return 0;
+    const struct model_vertex_uncompressed *cached=type==5?n3ds_model_decode_stream(data,count):NULL;
+    const real_vector2d scale={1.f,1.f};
+    const struct native_render_vertex *posed=n3ds_model_skin_stream(cached,count,
+        &parameters->skinning,&scale,parameters->unique_identifier);
+    float origin[3]={0};
+    if (!native.sky) n3ds_gpu_camera_origin(origin);
+    for (unsigned int i=0;i<count;++i) {
+        struct model_vertex_uncompressed decoded;
+        struct native_render_vertex temporary;
+        const struct model_vertex_uncompressed *vertex=cached?cached+i:&decoded;
+        const struct native_render_vertex *skinned=posed?posed+i:&temporary;
+        if (!cached && type==5) {
+            if (!n3ds_model_decode_vertex((const void *)((const byte *)data+i*32),&decoded)) return 0;
+        } else if (!cached) memcpy(&decoded,(const byte *)data+i*68,sizeof(decoded));
+        if (!posed && !n3ds_model_skin_vertex(vertex,&parameters->skinning,&scale,&temporary)) return 0;
+        for (int axis=0;axis<3;++axis) output[i].position[axis]=skinned->position[axis]-origin[axis];
+        real_vector3d normal={0};
+        for (int bone=0;bone<2;++bone) if (vertex->node_weights[bone]) {
+            real_vector3d transformed;
+            matrix4x3_transform_vector(parameters->skinning.node_matrices+vertex->nodes[bone],
+                &vertex->normal,&transformed);
+            for (int axis=0;axis<3;++axis)
+                normal.n[axis]+=transformed.n[axis]*vertex->node_weights[bone];
+        }
+        if (normalize3d(&normal)<=0) return 0;
+        float eye[3],dot=0,reflection[3],samples[4][4]={{0}};
+        for (int axis=0;axis<3;++axis) {
+            eye[axis]=global_window_parameters.camera.position.n[axis]-skinned->position[axis];
+            dot+=normal.n[axis]*eye[axis];
+        }
+        for (int axis=0;axis<3;++axis) reflection[axis]=2*dot*normal.n[axis]-eye[axis];
+        n3ds_cube_sample(cube,reflection,samples[0]);
+        for (long m=1;m<maps;++m)
+            n3ds_gpu_generic_sample(&program,(int)m,skinned->uv[0],skinned->uv[1],samples[m]);
+        n3ds_generic_evaluate(&program,samples,output[i].color);
+        if (material->fade_mode) {
+            float fade=angular_fade(vertex,&parameters->skinning,
+                &global_window_parameters.camera.forward,material->fade_mode);
+            if (material->blend==0) output[i].color[3]*=fade;
+            else if (material->blend==7)
+                for (int channel=0;channel<4;++channel) output[i].color[channel]*=fade;
+            else for (int channel=0;channel<3;++channel) {
+                float neutral=material->blend==1 || material->blend==5?1.f:
+                    material->blend==2?.5f:0.f;
+                output[i].color[channel]=output[i].color[channel]*fade+neutral*(1.f-fade);
+            }
+        }
+    }
+    return n3ds_gpu_chicago_relative_draw(&native,output,count,indices,index_count);
+}
+#endif
 void n3ds_chicago_model_draw(const struct shader *shader,short permutation,
     const struct rasterizer_model_begin_parameters *parameters,const void *data,
     unsigned int count,short type,const unsigned short *indices,unsigned int index_count)
@@ -153,6 +267,10 @@ void n3ds_chicago_model_draw(const struct shader *shader,short permutation,
          * stages exist. This is a defined path, not a fallback for other stages. */
         assert(!g->stages.count && material->maps.count==1);
     }
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_UI
+    if (!generic && material->type==1 && chicago_cube_model_draw(material,permutation,
+        parameters,data,count,type,indices,index_count)) return;
+#endif
     if (!(material->type==0 && material->maps.count>=1 && material->maps.count<=4 && !material->extra_layers.count)) {
         char detail[192];
         snprintf(detail, sizeof(detail),
