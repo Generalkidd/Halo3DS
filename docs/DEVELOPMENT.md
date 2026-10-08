@@ -246,6 +246,23 @@ build directory, replaces three x86-only shift helpers with C, and generates
 the forward declarations/weak-inline annotations required by the original C
 linkage rules. It does not ship SDK headers or invoke Xbox code.
 
+### Keeping upstream fixes
+
+Keep the GitHub `main` branch as the base of the local integration branch. Put
+PC cache conversion, device backends, and diagnostics under `port/n3ds/`.
+Changes to `source/` should be small, conditional access points for port
+features; use the original game code for its match rules, weapons, vehicles,
+collision and scoring. Check that boundary with
+`git diff --name-only origin/main -- source` before integrating a release.
+
+For a new upstream revision, fetch `origin/main`, review its commits and the
+`source/` diff, merge it into the integration branch, then rebuild the normal
+launcher and rerun the PC map probes and multiplayer diagnostics. Resolve any
+overlap in the small integration hooks in favor of the upstream behavior.
+Keep generated binaries and owner supplied game files outside Git. This source
+merge workflow lets the PC port receive upstream fixes without replacing the
+original engine with a parallel gameplay implementation.
+
 ## Where to make changes
 
 | Area | Main owners |

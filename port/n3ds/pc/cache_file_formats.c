@@ -4439,6 +4439,8 @@ enum cache_file_status custom_edition_bsp_rebase_known(
 				{ 0x184, 0x28 }, /* structure_fog_region */
 				{ 0x190, 0x88 }, /* structure_fog_palette_entry */
 				{ 0x1B4, 0xF0 }, /* structure_weather_palette_entry */
+				{ 0x1E4, 0x01 }, /* pathfinding surface flags, read as bytes by path.c */
+				{ 0x1F0, 0x01 }, /* pathfinding edge flags */
 				{ 0x1FC, 0x74 }, /* background sound palette */
 				{ 0x208, 0x50 }, /* sound environment palette */
 			};

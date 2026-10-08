@@ -55,6 +55,9 @@ def main():
     parser.add_argument('--probe-pc-map', choices=['ui','bloodgulch'], help='Diagnostic only: validate an owner-supplied PC retail map on ARM')
     parser.add_argument('--diagnostic-pc-ui', action='store_true', help='Experimental only: hand PC retail ui.map to the original engine')
     parser.add_argument('--diagnostic-pc-play', choices=['bloodgulch','timberland'], help='Experimental only: load PC retail UI then enter a PC solo multiplayer map')
+    parser.add_argument('--diagnostic-pc-mode', choices=['slayer','ctf','oddball','king','race'], default='slayer', help='Game variant for --diagnostic-pc-play')
+    parser.add_argument('--diagnostic-pc-bots', type=int, default=0, help='With --diagnostic-pc-play, use 1-15 local bot players')
+    parser.add_argument('--diagnostic-pc-fire', action='store_true', help='With --diagnostic-pc-play, exercise the original local weapon input path')
     parser.add_argument('--diagnostic-pc-campaign', choices=['a10'], help='Experimental only: load PC retail UI then request a PC campaign map')
     parser.add_argument('--experimental-pc-runtime', action='store_true', help='Experimental only: prefer installed PC retail maps, with Xbox map fallback; no forced map or capture')
     args = parser.parse_args()
@@ -68,6 +71,10 @@ def main():
         parser.error('--probe-pc-map cannot be combined with other map probes or a frame limit')
     if (args.diagnostic_pc_ui or args.diagnostic_pc_play or args.diagnostic_pc_campaign) and (args.probe_pc_map or args.probe_a10 or args.probe_solo_bots or args.test_frames or sum(bool(x) for x in (args.diagnostic_pc_ui,args.diagnostic_pc_play,args.diagnostic_pc_campaign)) > 1):
         parser.error('PC runtime diagnostics cannot be combined with other probes or a frame limit')
+    if (args.diagnostic_pc_mode != 'slayer' and not args.diagnostic_pc_play) or (args.diagnostic_pc_bots and (not args.diagnostic_pc_play or not 1 <= args.diagnostic_pc_bots <= 15)):
+        parser.error('PC mode and bot options require --diagnostic-pc-play; bot count must be 1-15')
+    if args.diagnostic_pc_fire and not args.diagnostic_pc_play:
+        parser.error('--diagnostic-pc-fire requires --diagnostic-pc-play')
     if args.experimental_pc_runtime and (args.probe_pc_map or args.probe_a10 or args.probe_solo_bots or args.test_frames or args.diagnostic_pc_ui or args.diagnostic_pc_play or args.diagnostic_pc_campaign):
         parser.error('--experimental-pc-runtime cannot be combined with diagnostics or probes')
     out = args.output.resolve(); out.mkdir(parents=True, exist_ok=True)
@@ -111,6 +118,11 @@ def main():
         defines.append('-DHALO_N3DS_EXPERIMENTAL_PC_ALL_MAPS=1')
     if args.diagnostic_pc_play:
         defines.append(f'-DHALO_N3DS_EXPERIMENTAL_PC_MAP_ID={0 if args.diagnostic_pc_play == "bloodgulch" else 1}')
+        defines.append(f'-DHALO_N3DS_EXPERIMENTAL_PC_MODE={ ["slayer","ctf","oddball","king","race"].index(args.diagnostic_pc_mode) }')
+        if args.diagnostic_pc_bots:
+            defines.append(f'-DHALO_N3DS_BOT_TEST_COUNT={args.diagnostic_pc_bots}')
+        if args.diagnostic_pc_fire:
+            defines.append('-DHALO_N3DS_EXPERIMENTAL_PC_FIRE=1')
     if args.diagnostic_pc_campaign:
         defines.append('-DHALO_N3DS_EXPERIMENTAL_PC_A10=1')
     native = [str(gcc),*COMMON,'-D__3DS__','-I',str(args.libctru/'include'),'-I',str(args.citro3d/'include')]
@@ -169,6 +181,9 @@ def main():
             'probe_pc_map':args.probe_pc_map,
             'diagnostic_pc_ui':args.diagnostic_pc_ui,
             'diagnostic_pc_play':args.diagnostic_pc_play,
+            'diagnostic_pc_mode':args.diagnostic_pc_mode,
+            'diagnostic_pc_bots':args.diagnostic_pc_bots,
+            'diagnostic_pc_fire':args.diagnostic_pc_fire,
             'diagnostic_pc_campaign':args.diagnostic_pc_campaign,
             'experimental_pc_runtime':args.experimental_pc_runtime,
             'checkpoint_identity':build_id,'commands':commands,'source_sha256':{e['source']:sha(ROOT/e['source']) for e in entries},

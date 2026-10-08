@@ -73,3 +73,23 @@ its PC retail UI through frame 511 without a forced map. The updated PC
 Timberland diagnostic ran beyond frame 690 with a player unit; its frame-300
 image matched the earlier PC Timberland capture after the model storage
 change.
+
+Further opt-in multiplayer diagnostics leave the original engine's placement,
+match, weapon and vehicle code in charge. Timberland solo Slayer spawned 33
+weapon objects and four Warthogs. Timberland CTF with two local bots spawned
+two flags, four Warthogs and three bipeds and stayed active beyond frame 750.
+Blood Gulch Oddball with two bots spawned the ball; the bots selected it,
+routed and recorded combat hits. In Blood Gulch Race, the original engine
+spawned three Warthogs and a bot entered a driver seat and moved the vehicle.
+A separate Blood Gulch Slayer diagnostic held the New 3DS primary trigger for
+30 frames; the map owned plasma pistol's original `game_time_last_fired`
+changed from zero to 199. This verifies that firing path in the emulator,
+not every PC weapon or a complete scored match.
+
+The PC BSP converter now checks and rebases the byte pathfinding surface and
+edge blocks along with collision geometry. Timberland's path flags were
+present, but some cross-map CTF searches exhausted the original 1,024 node
+list. The optional bot controller now takes partial waypoints from the
+original path builder in that case and re-searches after advancing. No
+original pathfinding or multiplayer rule was replaced. Long route completion,
+scoring and physical New 3DS XL behavior remain unverified.

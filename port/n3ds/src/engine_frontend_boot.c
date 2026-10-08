@@ -36,6 +36,11 @@
 #include "engine_cache.h"
 #include "cache_reader.h"
 #include "physics/collision_usage.h"
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_MAP_ID
+#include "objects/objects.h"
+#include "tag_files/tag_groups.h"
+#include "items/weapons.h"
+#endif
 #ifdef HALO_N3DS_MAP_CYCLE_TEST
 #include "tag_files/tag_groups.h"
 static const char *native_cycle_maps[]={"a10","a30","a50","b30","b40","c10","c20","c40","d20","d40"};
@@ -73,6 +78,33 @@ int n3ds_engine_mission_render(long,long);
 #endif
 #define CHECK(e) do {if(!(e)){n3ds_log("FRONTEND FAIL: " #e);return 1;}}while(0)
 static long current_frame;
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_MAP_ID
+/* Observe the original object placement and game rules without changing them. */
+static void pc_multiplayer_object_trace(long frame)
+{
+    static const struct { unsigned long mask; const char *label; } groups[] = {
+        {_object_mask_weapon,"weapon"}, {_object_mask_vehicle,"vehicle"},
+        {_object_mask_biped,"biped"}
+    };
+    char message[256];
+    for (unsigned int group=0;group<sizeof(groups)/sizeof(groups[0]);++group) {
+        struct object_iterator objects;
+        unsigned int count=0;
+        const char *examples[3]={0};
+        object_iterator_new(&objects,groups[group].mask,0);
+        while (object_iterator_next(&objects)) {
+            struct object_datum *object=object_get(objects.index);
+            if(count<3) examples[count]=tag_get_name(object->definition_index);
+            ++count;
+        }
+        snprintf(message,sizeof(message),
+            "EXPERIMENTAL PC OBJECTS: frame=%ld %s=%u tags=%s | %s | %s",
+            frame,groups[group].label,count,
+            examples[0]?examples[0]:"-",examples[1]?examples[1]:"-",examples[2]?examples[2]:"-");
+        n3ds_log(message);
+    }
+}
+#endif
 static int empty_sprite_tests(void)
 {
     struct build_sprite_data data={0};struct shader_effect_definition shader={0};
@@ -254,16 +286,17 @@ int halo_engine_boot(void)
 #ifdef HALO_N3DS_EXPERIMENTAL_PC_MAP_ID
         if(frame==90) {
             struct game_variant variant;
+            static const char *modes[]={"slayer","ctf","oddball","king","race"};
             const char *map=HALO_N3DS_EXPERIMENTAL_PC_MAP_ID == 0
                 ? "levels\\test\\bloodgulch\\bloodgulch"
                 : "levels\\test\\timberland\\timberland";
-            CHECK(game_engine_get_variant_by_name(&variant,"slayer")->game_engine_index!=0);
+            CHECK(game_engine_get_variant_by_name(&variant,modes[HALO_N3DS_EXPERIMENTAL_PC_MODE])->game_engine_index!=0);
             CHECK(n3ds_main_queue_solo_multiplayer(map,&variant,0));
-            snprintf(message,sizeof(message),"EXPERIMENTAL PC: queued PC retail %s solo Slayer",map);
+            snprintf(message,sizeof(message),"EXPERIMENTAL PC: queued PC retail %s solo %s",map,modes[HALO_N3DS_EXPERIMENTAL_PC_MODE]);
             n3ds_log(message);
         }
 #endif
-#ifdef HALO_N3DS_BOT_TEST_COUNT
+#if defined(HALO_N3DS_BOT_TEST_COUNT) && !defined(HALO_N3DS_EXPERIMENTAL_PC_MAP_ID)
         if(frame==90) {
             struct game_variant variant;
             static const char *modes[]={"slayer","ctf","oddball","king","race"};
@@ -309,6 +342,13 @@ int halo_engine_boot(void)
         n3ds_input_platform_poll(&sample);
         n3ds_input_gameplay_controls(game_in_progress() && !main_menu_is_active() &&
             !ui_widgets_active() && player_input_enabled() && !cinematic_in_progress());
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_FIRE
+        if(frame+1>=260 && frame+1<290 && game_in_progress() &&
+            !main_menu_is_active() && player_input_enabled()) {
+            sample.held|=original_model?NATIVE_KEY_L:NATIVE_KEY_ZR;
+            if(frame+1==260) n3ds_log("EXPERIMENTAL PC FIRE: holding original primary trigger for 30 frames");
+        }
+#endif
         if((sample.held&(NATIVE_KEY_START|NATIVE_KEY_SELECT))==(NATIVE_KEY_START|NATIVE_KEY_SELECT)) break;
         n3ds_engine_input_sample(&sample);input_update();input_abstraction_update();
         if(frame%30==0 || memcmp(&sample,&prior,sizeof(sample))) {
@@ -365,6 +405,23 @@ int halo_engine_boot(void)
             #endif
         }
         if(unit!=NONE && !main_menu_is_active()) n3ds_mission_combat_trace(unit,game_time_get());
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_FIRE
+        if (unit!=NONE && (frame+1==259 || frame+1==270 || frame+1==290 || frame+1==320)) {
+            short slot=unit_get(unit)->unit.current_weapon_index;
+            long weapon_index=slot==NONE?NONE:unit_get(unit)->unit.weapon_object_indices[slot];
+            struct weapon_datum *weapon=weapon_try_and_get(weapon_index);
+            snprintf(message,sizeof(message),
+                "EXPERIMENTAL PC FIRE: frame=%ld weapon=%s last_fired=%ld rounds=%d",
+                frame+1,weapon?tag_get_name(weapon->definition_index):"-",
+                weapon?weapon->weapon.game_time_last_fired:NONE,
+                weapon?weapon->weapon.magazines[0].rounds_loaded:NONE);
+            n3ds_log(message);
+        }
+#endif
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_MAP_ID
+        if (unit!=NONE && frame+1>=300 && (frame+1)%150==0)
+            pc_multiplayer_object_trace(frame+1);
+#endif
         #ifdef HALO_N3DS_MEMORY_CHECKS
         if(frame+1==900) {
             extern void *n3ds_game_state_identity(unsigned long long *);

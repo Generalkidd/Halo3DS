@@ -22,6 +22,7 @@
 #include "objects/objects.h"
 #include "physics/collisions.h"
 #include "scenario/scenario.h"
+#include "structures/structure_bsp_definitions.h"
 #include "tag_files/tag_files.h"
 #include "units/units.h"
 #include "units/bipeds.h"
@@ -260,12 +261,40 @@ static boolean combat_bot_route_point(struct combat_bot_state *state, short queu
 			path_state_destination(&path_state, &end_point, end_surface, 0.8f);
 			if (path_state_find(&path_state))
 				path_state_build_path(&path_state, &state->route);
+			else if (path_state.node_count >= PATH_NODE_LIST_SIZE &&
+				path_state.closest_node_index != NONE &&
+				path_state.closest_distance + 2.f < distance3d(&start_point, &end_point))
+			{
+				/* A large multiplayer BSP can exhaust the original search's
+				 * fixed node list. Use its closest explored node as a short
+				 * waypoint, then search again after reaching that waypoint. */
+				path_state.destination.target_radius = path_state.closest_distance + 0.01f;
+				if (path_state_build_path(&path_state, &state->route))
+				{
+					state->route.steps_finish_path = FALSE;
+					platform_log("combat bot route: player %d partial waypoint %.2f from goal",
+						queue_index, path_state.closest_distance);
+				}
+			}
 		}
 		if (queue_index < 8 && tick - state->route_last_tick == 0)
 			platform_log("combat bot route: player %d %s steps %d start %ld end %ld",
 				queue_index, state->route.valid ? "found" : "failed",
 				state->route.valid ? state->route.step_count : 0,
 				start_surface, end_surface);
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_MAP_ID
+		if (queue_index < 8 && start_surface != NONE && end_surface != NONE)
+		{
+			struct structure_bsp const *bsp = global_structure_bsp_get();
+			byte const *flags = bsp && bsp->pathfinding_surfaces.address ?
+				(byte const *)bsp->pathfinding_surfaces.address : NULL;
+			platform_log("combat bot path data: surfaces %ld start_flag %u end_flag %u nodes %d closest %.3f",
+				bsp ? bsp->pathfinding_surfaces.count : 0,
+				flags && start_surface < bsp->pathfinding_surfaces.count ? flags[start_surface] : 0,
+				flags && end_surface < bsp->pathfinding_surfaces.count ? flags[end_surface] : 0,
+				path_state.node_count, path_state.closest_distance);
+		}
+#endif
 	}
 	if (!state->route.valid || state->route.step_count <= 0)
 		return FALSE;
