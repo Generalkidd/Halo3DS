@@ -493,7 +493,7 @@ int halo_engine_boot(void)
         }
         #endif
         CHECK(!n3ds_engine_mission_render(unit,game_time_get()));
-#if defined(HALO_N3DS_PROBE_A10) || (defined(HALO_N3DS_EXPERIMENTAL_PC_UI) && !defined(HALO_N3DS_EXPERIMENTAL_PC_ALL_MAPS))
+#if defined(HALO_N3DS_PROBE_A10) || (defined(HALO_N3DS_BOT_TEST_COUNT) && !defined(HALO_N3DS_EXPERIMENTAL_PC_UI)) || (defined(HALO_N3DS_EXPERIMENTAL_PC_UI) && !defined(HALO_N3DS_EXPERIMENTAL_PC_ALL_MAPS))
         if(frame+1==300) {
             int capture_failed=n3ds_gpu_screen_test();
 #ifdef HALO_N3DS_EXPERIMENTAL_PC_UI

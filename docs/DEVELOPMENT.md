@@ -281,6 +281,19 @@ sharing private renderer state. They are not independent libraries. Consolidate
 only when responsibilities match; combining unrelated material paths into a
 larger file does not simplify their state and memory contracts.
 
+### Captured screenshots
+
+The `halo-native-*-front.rgb` diagnostic files contain libctru's sideways
+`GSP_BGR8_OES` framebuffer bytes. Decode the bytes as BGR and rotate 90 degrees
+when making a PNG, for example:
+
+```sh
+python port/n3ds/tools/decode_front_capture.py halo-native-front.rgb screenshot.png
+```
+
+Pass `--bottom` for a bottom screen capture. Reading these bytes as RGB swaps
+red and blue, making ordinary Blood Gulch terrain appear blue and its sky pink.
+
 ## Rendering rules
 
 - PICA200 arithmetic has less precision than CPU floats. Model palettes, CPU
