@@ -2,6 +2,8 @@
 
 This installer is for a **PC retail v7 runtime build**. It requires your own Halo: Combat Evolved **PC ISO** and 7-Zip. It rejects Xbox disc images and never runs the disc's setup program. The package contains no ISO, maps, Xbox files, or other game assets.
 
+An existing complete PC retail `maps` folder is also accepted through `-PcMapsFolder` in place of `-PcIso`; this path does not need 7-Zip. Exactly one PC source must be selected. Both paths validate v7 map headers and destination hashes before writing to the SD card.
+
 Place the experimental PC runtime `Halo3DS-PC.3dsx` and its matching `pc-runtime.json` beside these scripts. `build.py --experimental-pc-runtime` generates the manifest beside the 3DSX with `MapFormat: HaloCE-PC-retail-v7`, `Runtime: Halo3DS-PC`, and its SHA-256. The normal Xbox launcher does **not** meet this requirement. The PC runtime currently reaches local multiplayer in Azahar; physical New 3DS testing and full match validation are still pending.
 
 From PowerShell, run:

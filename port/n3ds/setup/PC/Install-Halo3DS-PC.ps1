@@ -5,7 +5,8 @@ is read from the ISO at install time and is never bundled with the package.
 #>
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
-    [Parameter(Mandatory = $true)][string]$PcIso,
+    [string]$PcIso,
+    [string]$PcMapsFolder,
     [Parameter(Mandatory = $true)][string]$SdRoot,
     [string[]]$MapNames = @(),
     [Nullable[int]]$BotCount = $null,
@@ -15,6 +16,9 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+if ([bool]$PcIso -eq [bool]$PcMapsFolder) {
+    throw 'Choose exactly one PC source: -PcIso or -PcMapsFolder.'
+}
 if (!$LauncherPath) { $LauncherPath = Join-Path $PSScriptRoot 'Halo3DS-PC.3dsx' }
 if (!$RuntimeManifest) { $RuntimeManifest = Join-Path $PSScriptRoot 'pc-runtime.json' }
 # PowerShell forwards WhatIfPreference into provider-backed reads such as
@@ -25,17 +29,29 @@ $WhatIfPreference = $false
 if ($null -ne $BotCount -and ($BotCount -lt 0 -or $BotCount -gt 15)) {
     throw 'Bot count must be from 0 to 15 (one player slot is reserved for you).'
 }
-$iso = (Resolve-Path -LiteralPath $PcIso).Path
-if ([IO.Path]::GetExtension($iso) -ine '.iso' -or !(Test-Path -LiteralPath $iso -PathType Leaf)) {
-    throw 'Select your Halo CE PC retail .iso file. Xbox XISO images are not accepted.'
+$iso = $null
+$sourceFolder = $null
+if ($PcIso) {
+    $iso = (Resolve-Path -LiteralPath $PcIso).Path
+    if ([IO.Path]::GetExtension($iso) -ine '.iso' -or !(Test-Path -LiteralPath $iso -PathType Leaf)) {
+        throw 'Select your Halo CE PC retail .iso file. Xbox XISO images are not accepted.'
+    }
+} else {
+    $sourceFolder = (Resolve-Path -LiteralPath $PcMapsFolder).Path
+    if (!(Test-Path -LiteralPath $sourceFolder -PathType Container)) {
+        throw 'Select an existing folder containing extracted Halo CE PC retail .map files.'
+    }
 }
 $sd = (Resolve-Path -LiteralPath $SdRoot).Path
 if (!(Test-Path -LiteralPath $sd -PathType Container)) { throw 'Select an existing SD card root.' }
 if ([IO.Path]::GetFileName($sd.TrimEnd('\', '/')) -in @('3ds', 'halo-source', 'pc-retail')) {
     throw 'Select the SD card root, not one of its subfolders.'
 }
-if ($iso.StartsWith($sd.TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
-    throw 'Keep the PC ISO outside the SD card destination.'
+$sdPrefix = $sd.TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
+if (($iso -and $iso.StartsWith($sdPrefix, [StringComparison]::OrdinalIgnoreCase)) -or
+    ($sourceFolder -and ($sourceFolder.Equals($sd,[StringComparison]::OrdinalIgnoreCase) -or
+        $sourceFolder.StartsWith($sdPrefix,[StringComparison]::OrdinalIgnoreCase)))) {
+    throw 'Keep the PC source outside the SD card destination.'
 }
 $launcher = (Resolve-Path -LiteralPath $LauncherPath).Path
 $manifestFile = (Resolve-Path -LiteralPath $RuntimeManifest).Path
@@ -102,14 +118,33 @@ function Test-Within([string]$root, [string]$path) {
 
 $stage = Join-Path ([IO.Path]::GetTempPath()) ('Halo3DS-PC-' + [guid]::NewGuid().ToString('N'))
 try {
-    $extractArgs = @{ IsoPath = $iso; OutputDirectory = $stage; MapNames = $MapNames }
-    if ($SevenZipPath) { $extractArgs.SevenZipPath = $SevenZipPath }
-    & (Join-Path $PSScriptRoot 'Extract-HaloCE-PC.ps1') @extractArgs | Out-Null
-    $maps = @(Get-ChildItem -LiteralPath $stage -Filter '*.map' -File | Sort-Object Name)
+    if ($iso) {
+        $extractArgs = @{ IsoPath = $iso; OutputDirectory = $stage; MapNames = $MapNames }
+        if ($SevenZipPath) { $extractArgs.SevenZipPath = $SevenZipPath }
+        & (Join-Path $PSScriptRoot 'Extract-HaloCE-PC.ps1') @extractArgs | Out-Null
+        $maps = @(Get-ChildItem -LiteralPath $stage -Filter '*.map' -File | Sort-Object Name)
+    } else {
+        $all = @(Get-ChildItem -LiteralPath $sourceFolder -Filter '*.map' -File)
+        $requested = @($MapNames | ForEach-Object { $_.Trim().ToLowerInvariant() } | Select-Object -Unique)
+        foreach ($name in $requested) {
+            if ($name -notmatch '^[a-z0-9_-]{1,32}$' -or
+                !@($all | Where-Object { $_.BaseName -ieq $name }).Count) {
+                throw "PC retail maps folder does not contain $name.map"
+            }
+        }
+        $resources = @('ui','bitmaps','sounds')
+        if (@($all | Where-Object { $_.BaseName -ieq 'loc' }).Count) { $resources += 'loc' }
+        $maps = @($all | Where-Object {
+            $_.BaseName -in $resources -or !$requested.Count -or $_.BaseName -in $requested
+        } | Sort-Object Name)
+    }
+    foreach ($map in $maps) {
+        if ($map.BaseName -notmatch '^[a-z0-9_-]{1,32}$') { throw "Unsafe PC map filename: $($map.Name)" }
+    }
     $names = @($maps | ForEach-Object BaseName)
     if ('ui' -notin $names -or 'bitmaps' -notin $names -or 'sounds' -notin $names -or
         @($names | Where-Object { $_ -notin @('ui', 'bitmaps', 'sounds', 'loc') }).Count -eq 0) {
-        throw 'The ISO must contain PC ui, bitmaps, sounds and at least one game map.'
+        throw 'The PC source must contain ui, bitmaps, sounds and at least one game map.'
     }
     foreach ($map in $maps) {
         $valid = switch ($map.BaseName) {
@@ -118,7 +153,7 @@ try {
             'loc' { $map.Length -gt 4096; break }
             default { Test-PcGameMap $map.FullName }
         }
-        if (!$valid) { throw "The ISO contains an invalid Halo CE PC retail map: $($map.Name)" }
+        if (!$valid) { throw "The PC source contains an invalid Halo CE PC retail map: $($map.Name)" }
         $relativePaths += 'halo-source/pc-retail/' + $map.Name
     }
     $entries = @()
@@ -139,7 +174,7 @@ try {
     $drive = [IO.DriveInfo]::new([IO.Path]::GetPathRoot($sd))
     if ($drive.AvailableFreeSpace -lt $needed + 64MB) { throw 'The SD card needs more free space for the selected PC maps.' }
     if ($dryRun) {
-        Write-Output "What if: verified $($maps.Count) PC retail files from the selected ISO; would install under 3ds/Halo3DS-PC and halo-source/pc-retail on $sd"
+        Write-Output "What if: verified $($maps.Count) PC retail files from the selected source; would install under 3ds/Halo3DS-PC and halo-source/pc-retail on $sd"
         if ($null -ne $BotCount) { Write-Output "What if: set solo multiplayer bot count to $BotCount" }
         return
     }
@@ -197,7 +232,7 @@ try {
         [IO.Path]::GetFileName($resolvedStage) -notmatch '^Halo3DS-PC-[0-9a-f]{32}$') {
         throw 'Refusing to remove an unexpected staging folder.'
     }
-    if (Test-Path -LiteralPath $resolvedStage -PathType Container) {
+    if ($iso -and (Test-Path -LiteralPath $resolvedStage -PathType Container)) {
         [IO.Directory]::Delete($resolvedStage, $true)
     }
 }

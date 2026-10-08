@@ -233,7 +233,12 @@ source, and notices. The user supplies both ISOs at install time. Package
 round trips must inspect the ZIP allowlist, exercise `-WhatIf` from an extracted
 copy, and verify both launcher hashes in an isolated output folder. The current
 local test used the supported Xbox XISO and a small PC retail-format ISO
-fixture; a full owner PC retail ISO install and physical card run remain open.
+fixture. The dual installer also accepts a complete owner PC retail `maps`
+folder with `-PcMapsFolder`. On October 8, 2026, the supported Xbox ISO plus
+the extracted HaloRecomp PC retail set were installed on the FAT32 `D:` card:
+24 existing Xbox maps verified, 32 PC files present, Xbox and PC launcher
+hashes matched the release candidates, and existing saves/demos remained.
+The physical New 3DS XL runtime test and a full PC ISO extraction remain open.
 
 Verify the game hash extracted from both final EXEs. Check that source archives
 contain the converter, adapters, solutions, scripts, schemas and notices, but no

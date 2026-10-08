@@ -2,7 +2,8 @@
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
     [Parameter(Mandatory = $true)][string]$XboxIso,
-    [Parameter(Mandatory = $true)][string]$PcIso,
+    [string]$PcIso,
+    [string]$PcMapsFolder,
     [Parameter(Mandatory = $true)][string]$SdRoot,
     [string]$XboxCompatibilityFile,
     [string[]]$PcMapNames = @(),
@@ -10,20 +11,26 @@ param(
     [string]$SevenZipPath
 )
 $ErrorActionPreference = 'Stop'
+if ([bool]$PcIso -eq [bool]$PcMapsFolder) {
+    throw 'Choose exactly one PC source: -PcIso or -PcMapsFolder.'
+}
 # Keep provider-backed validation reads active under -WhatIf. Both converters
 # still return before destination writes during preflight.
 $dryRun = [bool]$WhatIfPreference
 $WhatIfPreference = $false
 
 $xbox = (Resolve-Path -LiteralPath $XboxIso).Path
-$pc = (Resolve-Path -LiteralPath $PcIso).Path
+$pc = if ($PcIso) { (Resolve-Path -LiteralPath $PcIso).Path } else { (Resolve-Path -LiteralPath $PcMapsFolder).Path }
 $sd = (Resolve-Path -LiteralPath $SdRoot).Path
 if (!(Test-Path -LiteralPath $xbox -PathType Leaf) -or
     [IO.Path]::GetExtension($xbox) -notin @('.iso','.xiso')) {
     throw 'Select an existing original Xbox Halo XISO.'
 }
-if (!(Test-Path -LiteralPath $pc -PathType Leaf) -or [IO.Path]::GetExtension($pc) -ine '.iso') {
+if ($PcIso -and (!(Test-Path -LiteralPath $pc -PathType Leaf) -or [IO.Path]::GetExtension($pc) -ine '.iso')) {
     throw 'Select an existing Halo CE PC retail ISO.'
+}
+if ($PcMapsFolder -and !(Test-Path -LiteralPath $pc -PathType Container)) {
+    throw 'Select an existing Halo CE PC retail maps folder.'
 }
 if ($xbox.Equals($pc,[StringComparison]::OrdinalIgnoreCase)) { throw 'Choose two distinct disc images.' }
 if (!(Test-Path -LiteralPath $sd -PathType Container) -or
@@ -32,8 +39,9 @@ if (!(Test-Path -LiteralPath $sd -PathType Container) -or
 }
 $sdPrefix = [IO.Path]::GetFullPath($sd).TrimEnd('\','/') + [IO.Path]::DirectorySeparatorChar
 if ($xbox.StartsWith($sdPrefix,[StringComparison]::OrdinalIgnoreCase) -or
+    $pc.Equals($sd,[StringComparison]::OrdinalIgnoreCase) -or
     $pc.StartsWith($sdPrefix,[StringComparison]::OrdinalIgnoreCase)) {
-    throw 'Keep both disc images outside the SD card destination.'
+    throw 'Keep both game sources outside the SD card destination.'
 }
 if ($null -ne $BotCount -and ($BotCount -lt 0 -or $BotCount -gt 15)) { throw 'Bot count must be 0 through 15.' }
 $xboxCli = Join-Path $PSScriptRoot 'Halo3DS-Xbox-Install.exe'
@@ -50,7 +58,8 @@ if ($XboxCompatibilityFile) { $xboxArgs += $XboxCompatibilityFile }
 & $xboxCli @xboxArgs
 if ($LASTEXITCODE -ne 0) { throw 'Xbox source validation failed; nothing was installed.' }
 
-$pcArgs = @{ PcIso=$pc; SdRoot=$sd; LauncherPath=$pcLauncher; RuntimeManifest=$pcManifest; WhatIf=$true }
+$pcArgs = @{ SdRoot=$sd; LauncherPath=$pcLauncher; RuntimeManifest=$pcManifest; WhatIf=$true }
+if ($PcIso) { $pcArgs.PcIso = $pc } else { $pcArgs.PcMapsFolder = $pc }
 if ($PcMapNames.Count) { $pcArgs.MapNames = $PcMapNames }
 if ($null -ne $BotCount) { $pcArgs.BotCount = $BotCount }
 if ($SevenZipPath) { $pcArgs.SevenZipPath = $SevenZipPath }
@@ -58,7 +67,7 @@ if ($SevenZipPath) { $pcArgs.SevenZipPath = $SevenZipPath }
 if ($LASTEXITCODE -ne 0 -or !$?) { throw 'PC source validation failed; nothing was installed.' }
 
 if ($dryRun) {
-    Write-Output 'What if: both disc images and the PC launcher passed preflight; the Xbox and PC launchers would be installed separately on the selected SD card.'
+    Write-Output 'What if: both game sources and the PC launcher passed preflight; the Xbox and PC launchers would be installed separately on the selected SD card.'
     return
 }
 if (!$PSCmdlet.ShouldProcess($sd,'Install Xbox and PC Halo3DS data and launchers')) { return }
