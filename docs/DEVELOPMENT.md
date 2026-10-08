@@ -80,9 +80,10 @@ matrix fixture additionally reached frame 300 with two bots and routes on
 Gephyrophobia CTF, Death Island Oddball, Ice Fields King, Infinity Race and
 Timberland Slayer. PC Blood Gulch CTF registered fifteen of fifteen bots,
 maintained sixteen active bipeds through frame 600, and generated routes.
-These checks
-do not establish full match completion, scoring, all mode and map combinations,
-or New 3DS hardware performance.
+An Xbox Blood Gulch CTF diagnostic likewise registered fifteen of fifteen
+bots, generated routes and reached frame 1591 without a fatal error. These
+checks do not establish full match completion, scoring, every mode and map
+combination, or New 3DS hardware performance.
 
 `--diagnostic-pc-matrix` builds the runtime matrix fixture. In a private test
 SD, `halo-source/pc-matrix.txt` contains one stock map name and one mode, such
