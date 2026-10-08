@@ -4438,6 +4438,7 @@ enum cache_file_status custom_edition_bsp_rebase_known(
 				{ 0x178, 0x20 }, /* structure_fog_plane */
 				{ 0x184, 0x28 }, /* structure_fog_region */
 				{ 0x190, 0x88 }, /* structure_fog_palette_entry */
+				{ 0x1B4, 0xF0 }, /* structure_weather_palette_entry */
 				{ 0x1FC, 0x74 }, /* background sound palette */
 				{ 0x208, 0x50 }, /* sound environment palette */
 			};
@@ -4628,8 +4629,18 @@ enum cache_file_status custom_edition_bsp_rebase_known(
 				if (vertex_bytes)
 				{
 					if (pass)
-						write_u32(vertices + TAG_DATA_ADDRESS_OFFSET,
-							destination_base + vertex_offset);
+					{
+						uint32_t resident = destination_base + vertex_offset;
+						write_u32(vertices + TAG_DATA_ADDRESS_OFFSET, resident);
+						/* PC material vertex buffers carry counts and types, but their
+						   in-memory pointers are filled by the PC renderer. The original
+						   Xbox renderer reads both pointers directly. The checked raw
+						   block contains environment vertices followed by lightmap ones. */
+						write_u32(material + 0xBC, vertex_count ? resident : 0);
+						write_u32(material + 0xD0, lightmap_vertex_count ?
+							resident + (uint32_t)vertex_count *
+							STRUCTURE_BSP_ENVIRONMENT_VERTEX_BYTES : 0);
+						}
 					else
 					{
 						++report->pointer_count;

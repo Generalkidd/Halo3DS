@@ -511,6 +511,16 @@
       "compiler": "gcc"
     },
     {
+      "source": "port/n3ds/pc/engine_pc_runtime.c",
+      "compiler": "clang",
+      "defines": ["HALO_N3DS_FRONTEND=1"]
+    },
+    {
+      "source": "port/n3ds/pc/engine_pc_models.c",
+      "compiler": "clang",
+      "defines": ["HALO_N3DS_FRONTEND=1"]
+    },
+    {
       "source": "port/n3ds/src/engine_cache.c",
       "compiler": "clang",
       "defines": [

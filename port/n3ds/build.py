@@ -53,6 +53,8 @@ def main():
     parser.add_argument('--probe-solo-bots', type=int, default=0, help='Diagnostic only: request Blood Gulch solo multiplayer with 1-15 bots')
     parser.add_argument('--probe-solo-mode', choices=['slayer','ctf','oddball','king','race'], default='slayer')
     parser.add_argument('--probe-pc-map', choices=['ui','bloodgulch'], help='Diagnostic only: validate an owner-supplied PC retail map on ARM')
+    parser.add_argument('--diagnostic-pc-ui', action='store_true', help='Experimental only: hand PC retail ui.map to the original engine')
+    parser.add_argument('--diagnostic-pc-play', choices=['bloodgulch','timberland'], help='Experimental only: load PC retail UI then enter a PC solo multiplayer map')
     args = parser.parse_args()
     if args.test_frames<0 or (args.diagnostics and not args.test_frames):
         parser.error('diagnostics require a positive frame limit')
@@ -62,6 +64,8 @@ def main():
         parser.error('--probe-solo-bots requires 1-15 bots, no other map probe and no frame limit')
     if args.probe_pc_map and (args.probe_a10 or args.probe_solo_bots or args.test_frames):
         parser.error('--probe-pc-map cannot be combined with other map probes or a frame limit')
+    if (args.diagnostic_pc_ui or args.diagnostic_pc_play) and (args.probe_pc_map or args.probe_a10 or args.probe_solo_bots or args.test_frames or (args.diagnostic_pc_ui and args.diagnostic_pc_play)):
+        parser.error('PC runtime diagnostics cannot be combined with other probes or a frame limit')
     out = args.output.resolve(); out.mkdir(parents=True, exist_ok=True)
     for name in defaults:
         setattr(args, name, getattr(args, name).resolve())
@@ -97,6 +101,10 @@ def main():
         defines.append(f'-DHALO_N3DS_BOT_TEST_MODE={mode_index}')
     if args.probe_pc_map:
         defines.append(f'-DHALO_N3DS_PC_PROBE_MAP={0 if args.probe_pc_map == "ui" else 1}')
+    if args.diagnostic_pc_ui or args.diagnostic_pc_play:
+        defines.append('-DHALO_N3DS_EXPERIMENTAL_PC_UI=1')
+    if args.diagnostic_pc_play:
+        defines.append(f'-DHALO_N3DS_EXPERIMENTAL_PC_MAP_ID={0 if args.diagnostic_pc_play == "bloodgulch" else 1}')
     native = [str(gcc),*COMMON,'-D__3DS__','-I',str(args.libctru/'include'),'-I',str(args.citro3d/'include')]
     game = [args.clang,'--target=arm-none-eabi','-isystem',str(args.devkitarm/'arm-none-eabi/include'),
             *COMMON,'-std=gnu99','-D__STRICT_ANSI__','-DHALO_N3DS','-fsigned-char','-fshort-wchar',
@@ -151,6 +159,8 @@ def main():
             'probe_a10':args.probe_a10,
             'probe_solo_bots':args.probe_solo_bots,'probe_solo_mode':args.probe_solo_mode,
             'probe_pc_map':args.probe_pc_map,
+            'diagnostic_pc_ui':args.diagnostic_pc_ui,
+            'diagnostic_pc_play':args.diagnostic_pc_play,
             'checkpoint_identity':build_id,'commands':commands,'source_sha256':{e['source']:sha(ROOT/e['source']) for e in entries},
             'linked_inputs':{str(p):sha(p) for p in [*objects,archive]}}
     (out/'boot-build.json').write_text(json.dumps(report,indent=2))

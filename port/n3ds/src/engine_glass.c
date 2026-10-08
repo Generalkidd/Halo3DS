@@ -6,6 +6,7 @@
 #include "engine_glass.h"
 #include "engine_models.h"
 #include "engine_cache.h"
+#include "../pc/engine_pc_runtime.h"
 #include "cache_reader.h"
 #include "engine_textures.h"
 #include "engine_bitmaps.h"
@@ -56,14 +57,19 @@ const byte *n3ds_cube_load(long tag,short permutation)
     assert(b->width>=8 && b->width<=256 && !(b->width&(b->width-1)) && b->mipmap_count>=0 && b->mipmap_count<=8);
     boolean raw=b->format==6 || b->format==10 || b->format==11;
     unsigned int pixel_bytes=b->format==6?2:4;
-    assert((raw && (b->flags&8)) || (!raw && b->format>=14 && b->format<=16 && !(b->flags&8)));
+    assert(n3ds_pc_tags_active()
+        ? (raw || (b->format>=14 && b->format<=16))
+        : ((raw && (b->flags&8)) ||
+           (!raw && b->format>=14 && b->format<=16 && !(b->flags&8))));
     assert(b->flags&0x80);
     unsigned int block=b->format==14?8:16,chain=0,skip=0,side=b->width,level=0;
     for(int mip=0;mip<=b->mipmap_count;++mip) {
         unsigned int n=MAX(1,b->width>>mip);
         chain+=raw?n*n*pixel_bytes:((n+3)/4)*((n+3)/4)*block;
     }
-    unsigned int face_stride=(chain+127)&~127u;
+    /* PC retail stores the six mip chains back to back. Xbox cache images
+     * align each face to 128 bytes. Both layouts are validated below. */
+    unsigned int face_stride=n3ds_pc_tags_active()?chain:(chain+127)&~127u;
     assert(b->pixels_size==(long)(face_stride*6) && b->pixels_offset>=2048);
     while(side>CUBE_SIZE && level<(unsigned int)b->mipmap_count) {
         skip+=raw?side*side*pixel_bytes:((side+3)/4)*((side+3)/4)*block;side>>=1;++level;
@@ -77,7 +83,8 @@ const byte *n3ds_cube_load(long tag,short permutation)
         if(raw) {
             for(unsigned int y=0;y<side;++y) for(unsigned int x=0;x<side;++x) {
                 long address[2];bitmap_swizzle_vector2d(side,side,x,y,address);
-                unsigned int pixel=n3ds_bitmap_decode_pixel(encoded+pixel_bytes*(address[0]|address[1]),b->format);
+                unsigned int at=n3ds_pc_tags_active()?y*side+x:(unsigned int)(address[0]|address[1]);
+                unsigned int pixel=n3ds_bitmap_decode_pixel(encoded+pixel_bytes*at,b->format);
                 for(int c=0;c<4;++c) decoded[(y*side+x)*4+c]=pixel>>(24-c*8);
             }
         } else assert(!halo_s3tc_decode(b->format==14?0xc:b->format==15?0xe:0xf,

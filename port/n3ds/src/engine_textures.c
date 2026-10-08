@@ -298,6 +298,37 @@ static int sampled_raw_texture(const byte *source, unsigned int source_bytes,
     return 1;
 }
 
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_UI
+/* Halo PC stores raw pixels in row order. Keep the same nearest reduction and
+ * PICA tile orientation as the Xbox sampler, but use a linear source index. */
+static int sampled_pc_raw_texture(const byte *source, unsigned int source_bytes,
+    int format, unsigned int width, unsigned int height,
+    unsigned int target_width, unsigned int target_height,
+    unsigned int *output, unsigned int output_bytes)
+{
+    static const unsigned int spread[8]={0,1,4,5,16,17,20,21};
+    unsigned int stride=format<=2 || format==17?1:format>=10?4:2;
+    if (!source || !output || !stride || !width || !height ||
+        width>1024 || height>1024 || target_width<8 || target_height<8 ||
+        target_width>512 || target_height>512 ||
+        source_bytes<width*height*stride ||
+        output_bytes<target_width*target_height*4) return 0;
+    for (unsigned int y=0;y<target_height;++y)
+        for (unsigned int x=0;x<target_width;++x) {
+            unsigned int sx=x*width/target_width,sy=y*height/target_height;
+            unsigned int native_y=target_height-1-y;
+            unsigned int offset=((native_y/8)*(target_width/8)+x/8)*64+
+                spread[x&7]+2*spread[native_y&7];
+            const byte *pixel=source+(sy*width+sx)*stride;
+            if (format==17) {
+                unsigned int argb=global_vector_palette[*pixel];
+                output[offset]=(argb<<8)|(argb>>24);
+            } else output[offset]=n3ds_bitmap_decode_pixel(pixel,format);
+        }
+    return 1;
+}
+#endif
+
 /* Compare with the former full-image decode, including discarded pixels, on
  * deterministic varied input. This runs before gameplay timing begins. */
 int n3ds_engine_sampled_texture_tests(void)
@@ -557,6 +588,10 @@ static void *load_bitmap_now(struct bitmap_data *bitmap, boolean block, boolean 
     boolean raw=bitmap && ((bitmap->format>=0 && bitmap->format<=3) || bitmap->format==6 ||
         (bitmap->format>=8 && bitmap->format<=11) || bitmap->format==17);
     unsigned int pixel_stride=bitmap && (bitmap->format<=2 || bitmap->format==17)?1:bitmap && bitmap->format>=10?4:2;
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_UI
+    extern int n3ds_pc_tags_active(void);
+    int pc_bitmap=n3ds_pc_tags_active();
+#endif
     assert(load || !block);
     if (!initialized || !opened) return NULL;
     resource=cached_bitmap_resource(bitmap);if(resource) return resource;
@@ -599,12 +634,24 @@ static void *load_bitmap_now(struct bitmap_data *bitmap, boolean block, boolean 
         if (entries[i].bitmap == bitmap) {entries[i].last_used=texture_frame;return entries[i].resource;}
     if (!load) return NULL;
     if(bitmap->type==2) return load_cube_now(bitmap);
+    int invalid_layout=raw ? (!(bitmap->flags&8) || (bitmap->flags&(2|16))) :
+        ((bitmap->flags&8) || bitmap->format<14 || bitmap->format>16);
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_UI
+    if (pc_bitmap) invalid_layout=raw ? !!(bitmap->flags&(2|8|16)) :
+        (!(bitmap->flags&2) || (bitmap->flags&(8|16)) ||
+            bitmap->format<14 || bitmap->format>16);
+#endif
+    int maximum_mips=10;
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_UI
+    if (pc_bitmap) maximum_mips=11;
+#endif
     if (bitmap->signature != 'bitm' || !(bitmap->flags & 0x80) ||
         (!!(bitmap->flags&4)!=(bitmap->format==17)) ||
-        (raw ? (!(bitmap->flags&8) || (bitmap->flags&(2|16))) : ((bitmap->flags&8) || bitmap->format<14 || bitmap->format>16)) ||
+        invalid_layout ||
         bitmap->type != 0 || bitmap->depth != 1 ||
         bitmap->width < 4 || bitmap->height < 4 || bitmap->width > 2048 || bitmap->height > 2048 ||
-        bitmap->mipmap_count < 0 || bitmap->mipmap_count > 10 || bitmap->pixels_size <= 0) return NULL;
+        bitmap->mipmap_count < 0 || bitmap->mipmap_count > maximum_mips ||
+        bitmap->pixels_size <= 0) return NULL;
     width = bitmap->width; height = bitmap->height;
     if ((width & (width-1)) || (height & (height-1))) return NULL;
     block_bytes = bitmap->format == 14 ? 8 : 16;
@@ -631,7 +678,11 @@ static void *load_bitmap_now(struct bitmap_data *bitmap, boolean block, boolean 
     long long stamp=n3ds_engine_ticks(),next;
     /* Older .ntx archives used nearest sampling of atlas padding. Decode only
      * lightmaps again; existing assets and other cached textures remain valid. */
-    int archived=!lightmap && texture_archive_read(bitmap,resolution,bitmap->pixels_offset+skip,bytes,target_width,target_height,tiled);
+    int archived=!lightmap &&
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_UI
+        !pc_bitmap &&
+#endif
+        texture_archive_read(bitmap,resolution,bitmap->pixels_offset+skip,bytes,target_width,target_height,tiled);
     next=n3ds_engine_ticks();idle_ticks[2]+=next-stamp;stamp=next;
 #ifdef HALO_N3DS_ARCHIVE_VERIFY
     byte *archive_reference=NULL;
@@ -650,7 +701,15 @@ static void *load_bitmap_now(struct bitmap_data *bitmap, boolean block, boolean 
             if(!distance) goto done;
             int ok=lightmap_reduce(compressed,bytes,width,height,target_width,target_height,tiled,distance);
             texture_scratch_free(distance,distance_linear);if(!ok) goto done;
-        } else if(!sampled_raw_texture(compressed,bytes,bitmap->format,width,height,target_width,target_height,tiled,output_bytes)) goto done;
+        } else {
+            int decoded;
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_UI
+            if (pc_bitmap) decoded=sampled_pc_raw_texture(compressed,bytes,bitmap->format,width,height,target_width,target_height,tiled,output_bytes);
+            else
+#endif
+                decoded=sampled_raw_texture(compressed,bytes,bitmap->format,width,height,target_width,target_height,tiled,output_bytes);
+            if (!decoded) goto done;
+        }
     } else if(sampled) {
         if(!sampled_dxt_texture(compressed,bytes,bitmap->format,width,height,target_width,target_height,tiled)) goto done;
     } else if(halo_s3tc_decode(bitmap->format == 14 ? 0x0c : bitmap->format == 15 ? 0x0e : 0x0f,

@@ -245,6 +245,18 @@ int halo_engine_boot(void)
             n3ds_log("PROBE A10: requested original campaign map through main_set_map_name");
         }
 #endif
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_MAP_ID
+        if(frame==90) {
+            struct game_variant variant;
+            const char *map=HALO_N3DS_EXPERIMENTAL_PC_MAP_ID == 0
+                ? "levels\\test\\bloodgulch\\bloodgulch"
+                : "levels\\test\\timberland\\timberland";
+            CHECK(game_engine_get_variant_by_name(&variant,"slayer")->game_engine_index!=0);
+            CHECK(n3ds_main_queue_solo_multiplayer(map,&variant,0));
+            snprintf(message,sizeof(message),"EXPERIMENTAL PC: queued PC retail %s solo Slayer",map);
+            n3ds_log(message);
+        }
+#endif
 #ifdef HALO_N3DS_BOT_TEST_COUNT
         if(frame==90) {
             struct game_variant variant;
@@ -418,10 +430,14 @@ int halo_engine_boot(void)
         }
         #endif
         CHECK(!n3ds_engine_mission_render(unit,game_time_get()));
-#ifdef HALO_N3DS_PROBE_A10
+#if defined(HALO_N3DS_PROBE_A10) || defined(HALO_N3DS_EXPERIMENTAL_PC_UI)
         if(frame+1==300) {
             int capture_failed=n3ds_gpu_screen_test();
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_UI
+            n3ds_log(capture_failed?"EXPERIMENTAL PC: screen capture check failed":"EXPERIMENTAL PC: screen capture saved");
+#else
             n3ds_log(capture_failed?"PROBE A10: screen capture check failed":"PROBE A10: screen capture saved");
+#endif
         }
 #endif
         #if HALO_N3DS_MAW_CUTSCENE_TEST == 2

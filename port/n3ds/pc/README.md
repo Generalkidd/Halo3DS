@@ -18,16 +18,29 @@ diagnostics and must not be packaged as PC runtime releases.
 
 On the New 3DS Azahar profile with private retail maps, `ui.map` (v7)
 loaded 1,409 tags and rebased 10,274 known pointers. `bloodgulch.map` (v7)
-loaded 2,408 tags, rebased 20,587 known pointers, and rebased 465 BSP
+loaded 2,408 tags, rebased 20,587 known pointers, and rebased 466 BSP
 pointers across 16 lightmaps and 79 materials. Both probes reported no
 unknown tag groups and passed. These are measured parser results. They do
-not prove every pointer field in a known group was covered, nor do they show
-that a PC map can run in the official Xbox engine.
+not prove every pointer field in a known group was covered; runtime behavior
+is reported below separately.
 
 The normal launcher still accepts Xbox v5 caches with its existing `.nrl`
-relocations. PC tags are deliberately not bound to that engine: the PC tag
-index differs, and model geometry, bitmap/sound resource offsets, HUD and
-script conversions, and rendering must be integrated and tested first.
+relocations. An opt-in `--diagnostic-pc-ui` build binds PC retail `ui.map` to
+the original engine. `--diagnostic-pc-play timberland` or `bloodgulch` also
+enters a solo Slayer match on that PC map at frame 90. This handoff translates
+known tag pointers, gbxmodel geometry, bitmap offsets and pixels, and BSP
+vertex and weather blocks. It is separate from the normal launcher because
+the checked layouts do not yet cover every PC runtime field.
+
+On the New 3DS Azahar OpenGL profile, the PC UI menu rendered through frame
+300. PC Blood Gulch ran past frame 450 and PC Timberland past frame 360,
+with player, weapon, world, and HUD visible. These are emulator observations;
+several world surfaces have incorrect colors or materials, other maps and
+weapons are unverified, and physical New 3DS behavior is untested. The PC bot
+count was zero in both PC match runs. The regular Xbox UI still booted after
+the PC adapter changes. No owner supplied maps, resource archives, or screen
+captures are committed to this repository.
+
 `setup/PC/Package-Halo3DS-PC.ps1` continues to require an independently
-verified PC runtime binary and matching manifest. No PC runtime release or
-SD installation is produced by this probe.
+verified PC runtime binary and matching manifest. The diagnostic binary is
+not that release. No PC runtime package or SD installation is produced yet.

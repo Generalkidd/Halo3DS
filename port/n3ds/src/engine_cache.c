@@ -12,6 +12,9 @@
 #include "structure_bsp_definitions.h"
 #include "collision_bsp_definitions.h"
 #include "collision_bsp.h"
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_UI
+#include "../pc/engine_pc_runtime.h"
+#endif
 
 void n3ds_log(const char *message);
 void n3ds_cache_progress(const char *stage,unsigned long done,unsigned long total)
@@ -155,6 +158,9 @@ static struct n3ds_cache_view bsp_arena;
 static int bsp_arena_attempted;
 static void bsp_close(struct n3ds_cache_view *view)
 {
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_UI
+    if (n3ds_pc_tags_active()) {memset(view,0,sizeof(*view));return;}
+#endif
     if(view->tags && view->tags==bsp_arena.tags) memset(view,0,sizeof(*view));
     else n3ds_cache_close(view);
 }
@@ -264,6 +270,18 @@ static int load_tag_candidate(const char *name,struct n3ds_cache_view *candidate
     for (scan = base; *scan; ++scan)
         if (!((*scan >= 'a' && *scan <= 'z') || (*scan >= 'A' && *scan <= 'Z') ||
               (*scan >= '0' && *scan <= '9') || *scan == '_')) return 1;
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_UI
+    if (!strcmp(base, "ui")
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_MAP_ID
+        || !strcmp(base, HALO_N3DS_EXPERIMENTAL_PC_MAP_ID == 0 ? "bloodgulch" : "timberland")
+#endif
+        ) {
+        snprintf(path, 128, "sdmc:/halo-source/pc-retail/%s.map", base);
+        if (n3ds_pc_tags_open(base, candidate)) goto fail;
+        strcpy(base_name, base);
+        return 0;
+    }
+#endif
     snprintf(path, 128, "sdmc:/halo-source/%s.map", base);
     snprintf(sidecar, sizeof(sidecar), "sdmc:/halo-source/%s.nrl", base);
     if (n3ds_cache_open(candidate, path, 1) ||
@@ -290,6 +308,12 @@ boolean n3ds_engine_map_installed(const char *name)
     for(scan=name;*scan;++scan) if(*scan=='/' || *scan=='\\') base=scan+1;
     if(!*base || strlen(base)>=32) return FALSE;
     for(scan=base;*scan;++scan) if(!((*scan>='a' && *scan<='z') || (*scan>='A' && *scan<='Z') || (*scan>='0' && *scan<='9') || *scan=='_')) return FALSE;
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_UI
+    if (!strcmp(base, "ui")) return n3ds_pc_map_available(base);
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_MAP_ID
+    if (!strcmp(base, HALO_N3DS_EXPERIMENTAL_PC_MAP_ID == 0 ? "bloodgulch" : "timberland")) return n3ds_pc_map_available(base);
+#endif
+#endif
     snprintf(path,sizeof(path),"sdmc:/halo-source/%s.map",base);
     file=fopen(path,"rb");if(!file) return FALSE;
     int read=fread(&header,1,sizeof(header),file)==sizeof(header);
@@ -356,9 +380,16 @@ boolean n3ds_engine_bsp_load(struct scenario_structure_bsp_reference *reference)
     if (index == count) return FALSE;
     instance = n3ds_cache_tag(&native_tags, reference->structure_bsp.index, 'sbsp');
     if (!instance || instance->base_address) return FALSE;
-    bsp_arena_prepare(references,count);
-    snprintf(sidecar, sizeof(sidecar), "sdmc:/halo-source/%s-bsp%ld.nrl", native_name, index);
-    if (load_bsp(&candidate, &native_tags, reference, native_map, sidecar)) goto fail;
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_UI
+    if (n3ds_pc_tags_active()) {
+        if (n3ds_pc_bsp_load(&candidate, reference)) goto fail;
+    } else
+#endif
+    {
+        bsp_arena_prepare(references,count);
+        snprintf(sidecar, sizeof(sidecar), "sdmc:/halo-source/%s-bsp%ld.nrl", native_name, index);
+        if (load_bsp(&candidate, &native_tags, reference, native_map, sidecar)) goto fail;
+    }
     header = (struct cache_file_structure_bsp_header *)candidate.tags;
     if (header->signature != 'sbsp' ||
         !n3ds_cache_resolve(&candidate, header->base_address, sizeof(struct structure_bsp))) goto fail;
@@ -366,7 +397,10 @@ boolean n3ds_engine_bsp_load(struct scenario_structure_bsp_reference *reference)
     cache_generation_advance();
     native_reference = reference;
     cache_files_bind_native_bsp(header, reference->structure_bsp.index);
-    bsp_prefetch_next(references,count,index,native_map);
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_UI
+    if (!n3ds_pc_tags_active())
+#endif
+        bsp_prefetch_next(references,count,index,native_map);
     return TRUE;
 fail:
     bsp_close(&candidate);
@@ -410,6 +444,9 @@ void n3ds_engine_tags_unload(void)
     }
     if (native_tags.tags) {++native_tag_generation;cache_generation_advance();cache_files_bind_native(NULL, NULL);}
     n3ds_cache_close(&native_tags);
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_UI
+    n3ds_pc_tags_close();
+#endif
     native_map[0] = native_name[0] = 0;
     n3ds_files_unlock();
     /* Original models need a contiguous region for the next campaign cache.
@@ -438,6 +475,12 @@ boolean n3ds_engine_cache_read(unsigned long offset, unsigned long bytes, void *
 {
     boolean result=FALSE;
     n3ds_files_lock();
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_UI
+    if (n3ds_pc_tags_active()) {
+        result = n3ds_pc_cache_read(offset, bytes, destination);
+        goto done;
+    }
+#endif
     if (!native_tags.tags || !destination || !bytes || offset < 2048 ||
         offset > (unsigned long)native_tags.header.file_length ||
         bytes > (unsigned long)native_tags.header.file_length-offset) goto done;
