@@ -61,3 +61,10 @@ unverified.
 `setup/PC/Package-Halo3DS-PC.ps1` continues to require an independently
 verified PC runtime binary and matching manifest. The diagnostic binary is
 not that release. No PC runtime package or SD installation is produced yet.
+
+`build.py --experimental-pc-runtime` builds a separate, source-only trial
+launcher with ordinary menu flow. It prefers a valid PC retail v7 map under
+`halo-source/pc-retail/` for each requested map name and uses the Xbox v5
+map under `halo-source/` when the PC map is absent. This option forces no
+map and writes no diagnostic screen capture. Its compatibility is still
+being tested; it does not qualify for the installer manifest.
