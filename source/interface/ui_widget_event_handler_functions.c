@@ -931,9 +931,42 @@ struct event_record;
 #ifdef HALO_N3DS
 #include "engine_cache.h"
 #include "tag_files/tag_files.h"
+#include "tag_files/files.h"
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_ALL_MAPS
+#include "text/text_group.h"
+#include "bitmaps/bitmap_group.h"
+#include "tag_files/tag_groups.h"
+#endif
 void n3ds_log(const char *);
-static char *native_multiplayer_maps[13];
-static short native_multiplayer_map_indices[13],native_multiplayer_map_count;
+static char *native_multiplayer_maps[19];
+static short native_multiplayer_map_indices[19],native_multiplayer_map_count;
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_ALL_MAPS
+int n3ds_pc_tags_active(void);
+/* PC retail ui.map supplies names, descriptions and graphics for these six
+ * ordinals after the original thirteen. Keep Xbox UI at its original size. */
+static char *native_pc_expansion_maps[6]={
+    "levels\\test\\icefields\\icefields",
+    "levels\\test\\deathisland\\deathisland",
+    "levels\\test\\dangercanyon\\dangercanyon",
+    "levels\\test\\infinity\\infinity",
+    "levels\\test\\timberland\\timberland",
+    "levels\\test\\gephyrophobia\\gephyrophobia"
+};
+static boolean native_pc_expansion_ui_assets_ready(void)
+{
+    if(!n3ds_pc_tags_active()) return FALSE;
+    long names=tag_loaded(UNICODE_STRING_LIST_TAG,"ui\\shell\\main_menu\\mp_map_list");
+    long descriptions=tag_loaded(UNICODE_STRING_LIST_TAG,"ui\\shell\\main_menu\\multiplayer_type_select\\mp_map_select\\map_data");
+    long graphics=tag_loaded(BITMAP_GROUP_TAG,"ui\\shell\\bitmaps\\mp_map_grafix");
+    if(names==NONE || descriptions==NONE || graphics==NONE) return FALSE;
+    struct string_list *name_list=unicode_string_list_definition_get(names);
+    struct string_list *description_list=unicode_string_list_definition_get(descriptions);
+    struct bitmap_group *graphic_group=bitmap_group_get(graphics);
+    return name_list && name_list->strings.count>=19 &&
+        description_list && description_list->strings.count>=19 &&
+        graphic_group && graphic_group->bitmaps.count>=19;
+}
+#endif
 short n3ds_ui_multiplayer_map_original_index(short index)
 {
 	assert(index>=0 && index<native_multiplayer_map_count);
@@ -3053,6 +3086,16 @@ static boolean multiplayer_level_list_initialize(
 			native_multiplayer_maps[native_multiplayer_map_count++]=event_handler_functions.multiplayer_levels[i];
 		}
 	}
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_ALL_MAPS
+	if(native_pc_expansion_ui_assets_ready()) for(short i=0;i<6;++i)
+	{
+		if(n3ds_engine_map_installed(native_pc_expansion_maps[i]))
+		{
+			native_multiplayer_map_indices[native_multiplayer_map_count]=13+i;
+			native_multiplayer_maps[native_multiplayer_map_count++]=native_pc_expansion_maps[i];
+		}
+	}
+#endif
 	level_count=native_multiplayer_map_count;
 	widget->generated_list=native_multiplayer_maps;
 	widget->data3C.selected_index=level_count?0:NONE;
@@ -5686,6 +5729,16 @@ static boolean multiplayer_level_select(
 		if (server)
 			network_game_server_change_map_name(server, map_name);
 	}
+#ifdef HALO_N3DS
+	{
+		/* saved_game_file_remember_last_used_multiplayer_map writes a fixed
+		 * MAXIMUM_FILENAME_LENGTH+1 bytes. Expansion paths are string literals,
+		 * so supply a zero-filled buffer of that exact size. */
+		char remembered[MAXIMUM_FILENAME_LENGTH+1]={0};
+		csstrncpy(remembered,map_name,MAXIMUM_FILENAME_LENGTH);
+		saved_game_file_remember_last_used_multiplayer_map(remembered);
+	}
+#else
 	for (level_index = 0; level_index < 13; level_index++)
 	{
 		if (!_stricmp(map_name, event_handler_functions.multiplayer_levels[level_index]))
@@ -5694,6 +5747,7 @@ static boolean multiplayer_level_select(
 			break;
 		}
 	}
+#endif
 	return TRUE;
 }
 
