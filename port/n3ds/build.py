@@ -47,7 +47,7 @@ def main():
     parser.add_argument('--packer', default=os.environ.get('THREEDSXTOOL') or str(ROOT.parent/'3dsxtool.exe'))
     parser.add_argument('--jobs', type=int, default=2, choices=range(1, 9))
     parser.add_argument('--test-frames', type=int, default=0, help='0 produces the playable release; positive values stop after that many frames')
-    parser.add_argument('--diagnostics', action='store_true', help='Enable renderer checks; requires --test-frames')
+    parser.add_argument('--diagnostics', action='store_true', help='Enable renderer checks and material profile; use with --test-frames or --diagnostic-pc-play')
     parser.add_argument('--diagnostic-audio-trace', action='store_true', help='Trace bounded DSP queue and playback state; use with --test-frames or --diagnostic-pc-play')
     parser.add_argument('--original-memory', action='store_true', help='Constrain heap sizes for original-model emulator tests')
     parser.add_argument('--probe-a10', action='store_true', help='Diagnostic only: request the a10 campaign map from the menu')
@@ -78,7 +78,7 @@ def main():
         if (args.diagnostic_pc_arsenal and args.diagnostic_pc_rocket_warthog) or args.diagnostic_pc_play or args.diagnostic_pc_ui or args.diagnostic_pc_campaign or args.experimental_pc_runtime or args.diagnostic_pc_bots or args.diagnostic_pc_fire or args.diagnostic_pc_mode != 'slayer':
             parser.error('PC weapon and vehicle fixtures own their Blood Gulch match and cannot be combined with other PC runtime choices')
         args.diagnostic_pc_play = 'bloodgulch'
-    if args.test_frames<0 or (args.diagnostics and not args.test_frames) or (args.diagnostic_audio_trace and not (args.test_frames or args.diagnostic_pc_play)):
+    if args.test_frames<0 or (args.diagnostics and not (args.test_frames or args.diagnostic_pc_play)) or (args.diagnostic_audio_trace and not (args.test_frames or args.diagnostic_pc_play)):
         parser.error('diagnostics require a positive frame limit or a PC play fixture for audio tracing')
     if args.probe_a10 and args.test_frames:
         parser.error('--probe-a10 uses the normal startup path; omit --test-frames')

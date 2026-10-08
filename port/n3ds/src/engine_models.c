@@ -301,7 +301,7 @@ struct cached_pose {
     int valid;
 };
 static struct decoded_stream {
-    const struct model_vertex_compressed *address;
+    const void *address;
     struct model_vertex_compressed *source;
     struct model_vertex_uncompressed *vertices;
     struct native_render_vertex *local;
@@ -312,7 +312,7 @@ static struct decoded_stream {
     int identity_palette;
     unsigned int single_influence;
     byte palette[NATIVE_GPU_MODEL_BONES];
-    int immutable;
+    int immutable,format,owns_vertices;
     unsigned int count,bytes;
     int valid;
     struct cached_pose poses[STREAM_POSES];
@@ -340,7 +340,8 @@ static void pose_release(struct cached_pose *p)
 static void decode_stream_release(struct decoded_stream *s)
 {
     for(unsigned int i=0;i<STREAM_POSES;++i) pose_release(s->poses+i);
-    free(s->source);free(s->vertices);free(s->local);decoded_bytes-=s->bytes;memset(s,0,sizeof(*s));
+    free(s->source);if(s->owns_vertices) free(s->vertices);
+    free(s->local);decoded_bytes-=s->bytes;memset(s,0,sizeof(*s));
 }
 int n3ds_animation_map_owned(const void *p,unsigned int bytes)
 {const struct n3ds_cache_view *v=n3ds_engine_cache_view(0);return p && v && n3ds_cache_resolve(v,p,bytes)==p;}
@@ -377,34 +378,8 @@ static int decode_vertex_range(void *context,unsigned int begin,unsigned int end
     for(unsigned int i=begin;i<end;++i) if(!n3ds_model_decode_vertex(r->input+i,r->output+i)) return 0;
     return 1;
 }
-static const struct model_vertex_uncompressed *decode_stream(const void *data,unsigned int count,int immutable)
+static const struct model_vertex_uncompressed *classify_stream(struct decoded_stream *s,unsigned int count)
 {
-    if(!data || !count || count>65535) return NULL;
-    unsigned int bytes=count*(sizeof(struct model_vertex_compressed)+sizeof(struct model_vertex_uncompressed)+sizeof(struct native_skin_vertex));
-    if(bytes>DECODE_BYTES) return NULL;
-    unsigned int hint=stream_hint(data);
-    struct decoded_stream *s=decoded_hints[hint];
-    if(!s || s->address!=data || s->count!=count) {
-        s=NULL;
-        for(unsigned int i=0;i<DECODE_STREAMS;++i) if(decoded_streams[i].address==data && decoded_streams[i].count==count) {s=decoded_streams+i;break;}
-    }
-    if(s) {decoded_hints[hint]=s;last_decoded=s;}
-    if(s && s->valid && (s->immutable || !memcmp(s->source,data,count*sizeof(*s->source)))) {s->immutable|=immutable;++decoded_hits;return s->vertices;}
-    ++decoded_misses;
-    if(!s) {
-        s=decoded_streams+(decoded_next++%DECODE_STREAMS);decode_stream_release(s);
-        while(decoded_bytes+bytes>DECODE_BYTES) decode_stream_release(decoded_streams+(decoded_next++%DECODE_STREAMS));
-        s->source=(malloc)(count*sizeof(*s->source));s->vertices=(malloc)(count*sizeof(*s->vertices));s->local=(malloc)(count*sizeof(struct native_skin_vertex));
-        if(!s->source || !s->vertices || !s->local) {decode_stream_release(s);return NULL;}
-        s->bytes=bytes;decoded_bytes+=bytes;s->count=count;s->address=data;
-    }
-    decoded_hints[hint]=s;last_decoded=s;
-    s->valid=0;
-    s->uploaded=NULL;
-    s->immutable=immutable;
-    for(unsigned int i=0;i<STREAM_POSES;++i) s->poses[i].valid=0;
-    struct model_decode_range decode={data,s->vertices};
-    if(!n3ds_parallel_range(decode_vertex_range,&decode,count,256,1)) return NULL;
     /* Accept only exactly rigid streams, including two weights on one bone.
      * Mutable source changes rebuild both the classification and local stream. */
     s->rigid_node=-2;s->gpu_nodes=0;s->identity_palette=0;s->single_influence=0;
@@ -412,6 +387,10 @@ static const struct model_vertex_uncompressed *decode_stream(const void *data,un
     for(unsigned int i=0;i<count;++i) {
         const struct model_vertex_uncompressed *v=s->vertices+i;
         for(int axis=0;axis<3;++axis) if(!isfinite(v->position.n[axis]) || !isfinite(v->normal.n[axis])) return NULL;
+        if(!isfinite(v->texcoord.x) || !isfinite(v->texcoord.y) ||
+           !isfinite(v->node_weights[0]) || !isfinite(v->node_weights[1]) ||
+           v->node_weights[0]<0.f || v->node_weights[1]<0.f ||
+           fabsf(v->node_weights[0]+v->node_weights[1]-1.f)>.0001f) return NULL;
         if(v->node_weights[1]==0.f)++s->single_influence;
         int node=v->node_weights[0]?v->nodes[0]:v->nodes[1];
         if(node<0 || (v->node_weights[0] && v->node_weights[1] && v->nodes[0]!=v->nodes[1])) node=-1;
@@ -447,7 +426,67 @@ static const struct model_vertex_uncompressed *decode_stream(const void *data,un
         memcpy(out->position,&v->position,12);memcpy(out->normal,&v->normal,12);memcpy(out->uv,&v->texcoord,8);
         for(int k=0;k<2;++k) {out->bones[k]=v->node_weights[k]?remap[v->nodes[k]]*3:0;out->bones[k+2]=v->node_weights[k];}
     }
-    memcpy(s->source,data,count*sizeof(*s->source));s->revision=++decoded_revision;s->valid=1;return s->vertices;
+    s->revision=++decoded_revision;s->valid=1;return s->vertices;
+}
+static const struct model_vertex_uncompressed *decode_stream(const void *data,unsigned int count,int immutable)
+{
+    if(!data || !count || count>65535) return NULL;
+    unsigned int bytes=count*(sizeof(struct model_vertex_compressed)+sizeof(struct model_vertex_uncompressed)+sizeof(struct native_skin_vertex));
+    if(bytes>DECODE_BYTES) return NULL;
+    unsigned int hint=stream_hint(data);
+    struct decoded_stream *s=decoded_hints[hint];
+    if(!s || s->address!=data || s->count!=count || s->format!=5) {
+        s=NULL;
+        for(unsigned int i=0;i<DECODE_STREAMS;++i) if(decoded_streams[i].address==data && decoded_streams[i].count==count && decoded_streams[i].format==5) {s=decoded_streams+i;break;}
+    }
+    if(s) {decoded_hints[hint]=s;last_decoded=s;}
+    if(s && s->valid && (s->immutable || !memcmp(s->source,data,count*sizeof(*s->source)))) {s->immutable|=immutable;++decoded_hits;return s->vertices;}
+    ++decoded_misses;
+    if(!s) {
+        s=decoded_streams+(decoded_next++%DECODE_STREAMS);decode_stream_release(s);
+        while(decoded_bytes+bytes>DECODE_BYTES) decode_stream_release(decoded_streams+(decoded_next++%DECODE_STREAMS));
+        s->source=(malloc)(count*sizeof(*s->source));s->vertices=(malloc)(count*sizeof(*s->vertices));s->local=(malloc)(count*sizeof(struct native_skin_vertex));
+        if(!s->source || !s->vertices || !s->local) {s->owns_vertices=1;decode_stream_release(s);return NULL;}
+        s->bytes=bytes;decoded_bytes+=bytes;s->count=count;s->address=data;s->format=5;s->owns_vertices=1;
+    }
+    decoded_hints[hint]=s;last_decoded=s;
+    s->valid=0;s->uploaded=NULL;s->immutable=immutable;
+    for(unsigned int i=0;i<STREAM_POSES;++i) s->poses[i].valid=0;
+    struct model_decode_range decode={data,s->vertices};
+    if(!n3ds_parallel_range(decode_vertex_range,&decode,count,256,1)) return NULL;
+    memcpy(s->source,data,count*sizeof(*s->source));
+    return classify_stream(s,count);
+}
+/* PC retail model streams are already uncompressed. Their checked map-owned
+ * storage stays alive until cache flush, so retain only the local GPU input
+ * instead of re-skinning and re-uploading every vertex on every frame. */
+static const struct model_vertex_uncompressed *uncompressed_stream(const void *data,unsigned int count)
+{
+    if(!data || !count || count>65535) return NULL;
+    unsigned int bytes=count*sizeof(struct native_skin_vertex);
+    if(bytes>DECODE_BYTES) return NULL;
+    unsigned int hint=stream_hint(data);
+    struct decoded_stream *s=decoded_hints[hint];
+    if(!s || s->address!=data || s->count!=count || s->format!=4) {
+        s=NULL;
+        for(unsigned int i=0;i<DECODE_STREAMS;++i) if(decoded_streams[i].address==data && decoded_streams[i].count==count && decoded_streams[i].format==4) {s=decoded_streams+i;break;}
+    }
+    if(s) {decoded_hints[hint]=s;last_decoded=s;}
+    if(s && s->valid) {++decoded_hits;return s->vertices;}
+    ++decoded_misses;
+    if(!s) {
+        s=decoded_streams+(decoded_next++%DECODE_STREAMS);decode_stream_release(s);
+        while(decoded_bytes+bytes>DECODE_BYTES) decode_stream_release(decoded_streams+(decoded_next++%DECODE_STREAMS));
+        s->local=(malloc)(bytes);
+        if(!s->local) {decode_stream_release(s);return NULL;}
+        s->bytes=bytes;decoded_bytes+=bytes;s->count=count;s->address=data;
+        s->vertices=(struct model_vertex_uncompressed *)data;
+        s->format=4;s->immutable=1;
+    }
+    decoded_hints[hint]=s;last_decoded=s;
+    s->valid=0;s->uploaded=NULL;
+    for(unsigned int i=0;i<STREAM_POSES;++i) s->poses[i].valid=0;
+    return classify_stream(s,count);
 }
 const struct model_vertex_uncompressed *n3ds_model_decode_stream(const void *data,unsigned int count)
 {
@@ -482,6 +521,19 @@ int n3ds_model_decode_cache_tests(void)
     }
     const struct model_vertex_uncompressed *again=n3ds_model_decode_stream(evict,1);
     if(!again || again->position.x!=0 || decoded_bytes>DECODE_BYTES) return 0;
+    struct model_vertex_uncompressed native[4]={0};
+    for(unsigned int i=0;i<4;++i) {
+        native[i].position.x=(real)i;
+        native[i].normal.k=1.f;
+        native[i].node_weights[0]=1.f;
+        native[i].nodes[0]=0;
+    }
+    if(uncompressed_stream(native,4)!=native) return 0;
+    struct decoded_stream *resident=find_decoded_vertices(native,4);
+    if(!resident || !resident->immutable || resident->rigid_node!=0 || resident->gpu_nodes!=1 ||
+       resident->owns_vertices || resident->format!=4) return 0;
+    unsigned int hits=decoded_hits;
+    if(uncompressed_stream(native,4)!=native || decoded_hits!=hits+1) return 0;
     n3ds_model_decode_cache_flush();return 1;
 }
 
@@ -991,6 +1043,9 @@ void _rasterizer_model_draw(struct shader *shader, short permutation,
         /* Explicitly publish a checked map-owned immutable vertex buffer.
          * Dynamic staging and standalone tests keep full byte comparisons. */
         long long start=n3ds_engine_ticks();known_decoded=decode_stream(data,count,1);model_profile[0]+=n3ds_engine_ticks()-start;
+    } else if(dynamic_vertices==NONE && !active_merged && type==4 &&
+              n3ds_cache_resolve(tags,data,count*sizeof(struct model_vertex_uncompressed))==data) {
+        long long start=n3ds_engine_ticks();known_decoded=uncompressed_stream(data,count);model_profile[0]+=n3ds_engine_ticks()-start;
     }
     assert(shader && n3ds_cache_resolve(tags,shader,sizeof(*shader))==shader);
     if(depth_only || (shader->base.type!=3 && shader->base.type!=4) || parameters.effect.type==1)

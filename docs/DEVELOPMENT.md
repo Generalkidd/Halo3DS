@@ -99,6 +99,21 @@ bots, generated routes and reached frame 1591 without a fatal error. These
 checks do not establish full match completion, scoring, every mode and map
 combination, or New 3DS hardware performance.
 
+PC retail sound samples can reside in `sounds.map`. The sound cache validates
+the offset against the active PC resource file before allocating a sample;
+the Xbox path still uses its map bounds. A diagnostic Timberland run changed
+from zero DSP submissions to queued and submitted audio in Azahar 2126.2.
+Listening and frame timing on the physical New 3DS XL remain to be checked.
+
+PC retail model streams use uncompressed vertices. The native model cache now
+borrows checked map-owned streams and prepares GPU inputs once, while dynamic
+streams keep their existing path. In identical two-bot Timberland emulator
+scenes, steady render time fell from about 67.6 to 19.5 ms per frame and world
+object draw from about 43.5 to 3.1 ms. A six-bot run measured about 19.8 ms
+render and 9.6 ms simulation at match time 180 and continued past frame 1700.
+The static upper portion of the captured scene matched the earlier build
+pixel for pixel. Hardware results are still required.
+
 `--diagnostic-pc-matrix` builds the runtime matrix fixture. In a private test
 SD, `halo-source/pc-matrix.txt` contains one stock map name and one mode, such
 as `gephyrophobia ctf`. The fixture rejects unknown names and runs with two
@@ -435,6 +450,13 @@ Original gameplay also omits model reflection/detail textures, uses stricter
 authored mesh LODs, thins disconnected foliage islands and limits decorative
 particles. Base textures, cutouts, team colors, emission and native lighting
 remain. These reductions do not change collision meshes or AI update rates.
+
+The texture loader currently uploads one selected mip level per bitmap. On
+Timberland the New-model 64-pixel world setting used about 2 MB of its 4 MB
+gameplay texture cache after loading 123 textures. Citro3D supports mipmapped
+textures, so a near/high and far/low experiment can use a bounded mip chain.
+Measure cache occupancy, loading hitches, steady frame time and close-range
+clarity before changing the release setting.
 
 ## Verification
 
