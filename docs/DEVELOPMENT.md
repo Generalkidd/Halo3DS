@@ -61,6 +61,41 @@ writes `RESULT: PASS` to the game log. This build exits automatically.
 Also select an Original model in the emulator; neither setting replaces a
 test on actual Original 3DS/2DS hardware.
 
+### PC retail multiplayer status
+
+PC retail v7 support is opt-in with `--experimental-pc-runtime`; the default
+launcher still uses the original Xbox cache path. The opt-in build reads PC
+maps from `halo-source/pc-retail` and falls back to installed Xbox maps. The
+original PC `ui.map` supplies the six expansion map names, descriptions and
+graphics. The expansion entries appear only when those UI assets and each map
+cache are present. The original thirteen Xbox menu entries remain available.
+
+For bounded local probes, `--diagnostic-pc-play MAP` accepts the nineteen stock
+PC multiplayer maps. `--diagnostic-pc-mode` selects Slayer, CTF, Oddball, King
+or Race; `--diagnostic-pc-bots N` adds one to fifteen local bots. The isolated
+Azahar smoke sweep entered active Slayer matches with two bots on all nineteen
+stock PC multiplayer maps. Short runs also exercised the five modes on Blood
+Gulch and Timberland, including bot routes and a Warthog driver. These checks
+do not establish full match completion, scoring, all mode and map combinations,
+or New 3DS hardware performance.
+
+`--diagnostic-pc-arsenal` exercises ten map-owned Blood Gulch weapons through
+the original input path, then the PC Rocket Warthog gunner seat. The isolated
+emulator recorded an advanced `game_time_last_fired` for the Assault Rifle,
+Pistol, Shotgun, Plasma Rifle, Plasma Pistol, Needler, Sniper Rifle,
+Flamethrower, multiplayer Fuel Rod Gun, Rocket Launcher and the Rocket Warthog
+mounted gun. Captures showed their visible effects, but effect fidelity and
+damage behavior have not been compared exhaustively with the retail game.
+`--diagnostic-pc-rocket-warthog` isolates the vehicle stage. These flags build
+test executables and are not player release options.
+
+The source for the original game rules remains in `source/`. The PC vehicle
+filter is conditional on a PC cache: PC globals list six multiplayer vehicles,
+including the Rocket Warthog, while the original Xbox filter only accepts the
+first three. Xbox caches continue to use the original rule. PC runtime and
+setup packaging remain experimental until broader gameplay, menu selection,
+saved-state and hardware validation are complete.
+
 ## Building the setup tools
 
 Both setup interfaces prepare 3DS game data using the shared converter in
