@@ -15,6 +15,11 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+# PowerShell forwards WhatIfPreference into provider-backed reads such as
+# Resolve-Path/Get-FileHash. Validate the inputs normally, then return before
+# extraction or writes for a dry run.
+$dryRun = [bool]$WhatIfPreference
+$WhatIfPreference = $false
 if ($null -ne $BotCount -and ($BotCount -lt 0 -or $BotCount -gt 15)) {
     throw 'Bot count must be from 0 to 15 (one player slot is reserved for you).'
 }
@@ -49,7 +54,7 @@ try {
 } finally { $launcherFile.Dispose() }
 
 $relativePaths = @('3ds/Halo3DS-PC/Halo3DS-PC.3dsx')
-if ($WhatIfPreference) {
+if ($dryRun) {
     $selection = if ($MapNames.Count) { $MapNames -join ', ' } else { 'all game maps' }
     Write-Output "What if: read $selection plus PC ui/bitmaps/sounds from the selected ISO, then install under 3ds/Halo3DS-PC and halo-source/pc-retail on $sd"
     if ($null -ne $BotCount) { Write-Output "What if: set solo multiplayer bot count to $BotCount" }

@@ -88,6 +88,49 @@ int n3ds_engine_mission_render(long,long);
 #endif
 #define CHECK(e) do {if(!(e)){n3ds_log("FRONTEND FAIL: " #e);return 1;}}while(0)
 static long current_frame;
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_MENU_KEYS
+struct menu_key_event { long frame; unsigned int mask; };
+static struct menu_key_event menu_key_events[64];
+static unsigned int menu_key_event_count;
+static long menu_key_capture_frame;
+static int menu_keys_load(void)
+{
+    static const struct { const char *name; unsigned int mask; } names[]={
+        {"A",NATIVE_KEY_A},{"B",NATIVE_KEY_B},{"UP",NATIVE_KEY_DUP},
+        {"DOWN",NATIVE_KEY_DDOWN},{"LEFT",NATIVE_KEY_DLEFT},
+        {"RIGHT",NATIVE_KEY_DRIGHT},{"START",NATIVE_KEY_START},{"SELECT",NATIVE_KEY_SELECT}
+    };
+    FILE *file=fopen("sdmc:/halo-source/menu-keys.txt","rb");
+    char line[64],name[16],extra;
+    if(!file) return 1;
+    while(fgets(line,sizeof(line),file)) {
+        long frame;unsigned int mask=0;
+        if(!strchr(line,'\n') && !feof(file)) {fclose(file);return 1;}
+        if(sscanf(line,"capture %ld %c",&frame,&extra)==1) {
+            if(menu_key_capture_frame || frame<1 || frame>2400) {fclose(file);return 1;}
+            menu_key_capture_frame=frame;
+            continue;
+        }
+        if(sscanf(line,"%ld %15s %c",&frame,name,&extra)!=2 || frame<1 || frame>2400 ||
+           menu_key_event_count>=sizeof(menu_key_events)/sizeof(menu_key_events[0])) {fclose(file);return 1;}
+        for(unsigned int i=0;i<sizeof(names)/sizeof(names[0]);++i)
+            if(!strcmp(name,names[i].name)) {mask=names[i].mask;break;}
+        if(!mask) {fclose(file);return 1;}
+        menu_key_events[menu_key_event_count++]=(struct menu_key_event){frame,mask};
+    }
+    int failed=ferror(file) || !menu_key_capture_frame;
+    fclose(file);
+    return failed;
+}
+static void menu_keys_sample(long frame,struct native_input_sample *sample)
+{
+    for(unsigned int i=0;i<menu_key_event_count;++i) if(menu_key_events[i].frame==frame) {
+        char message[96];sample->held|=menu_key_events[i].mask;
+        snprintf(message,sizeof(message),"MENU KEYS: frame=%ld mask=%08x",frame,menu_key_events[i].mask);
+        n3ds_log(message);
+    }
+}
+#endif
 #ifdef HALO_N3DS_EXPERIMENTAL_PC_MATRIX
 /* Test-only runtime selection keeps map/mode sweeps on one identical binary.
  * A bounded two-token file lives on the isolated emulator SD, not in Git. */
@@ -444,6 +487,9 @@ int halo_engine_boot(void)
     CHECK(n3ds_hs_stack_tests());
     n3ds_log("STARTUP: PASS script stack alignment, nested frames, floating-point values and re-entry");
     n3ds_log("STARTUP: main menu ready; entering frame loop");
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_MENU_KEYS
+    CHECK(!menu_keys_load());
+#endif
     for(frame=0;(!HALO_N3DS_MISSION_TICKS || frame<HALO_N3DS_MISSION_TICKS) && n3ds_engine_app_running();++frame) {
         struct native_input_sample sample;
         long long start=n3ds_engine_ticks();long local,player,unit=NONE;
@@ -532,6 +578,9 @@ int halo_engine_boot(void)
         long long services_end=n3ds_engine_ticks();
         n3ds_frontend_trace("input");
         n3ds_input_platform_poll(&sample);
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_MENU_KEYS
+        menu_keys_sample(frame+1,&sample);
+#endif
         n3ds_input_gameplay_controls(game_in_progress() && !main_menu_is_active() &&
             !ui_widgets_active() && player_input_enabled() && !cinematic_in_progress());
 #ifdef HALO_N3DS_EXPERIMENTAL_PC_FIRE
@@ -710,6 +759,12 @@ int halo_engine_boot(void)
         }
         #endif
         CHECK(!n3ds_engine_mission_render(unit,game_time_get()));
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_MENU_KEYS
+        if(frame+1==menu_key_capture_frame) {
+            CHECK(!n3ds_gpu_screen_test());
+            n3ds_log("MENU KEYS: screen capture saved");
+        }
+#endif
 #ifdef HALO_N3DS_EXPERIMENTAL_PC_ARSENAL
         if(unit!=NONE) arsenal_after_render(frame+1,unit);
 #endif

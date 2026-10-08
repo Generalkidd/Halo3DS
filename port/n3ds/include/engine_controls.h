@@ -16,4 +16,10 @@ int n3ds_controls_tests(void);
 int n3ds_ui_pause_menu_active(void);
 void n3ds_gpu_controls_draw(const struct native_control_settings *settings,int selected,int original,int save_error);
 void n3ds_gpu_controls_entry(void);
+#ifdef HALO_N3DS_PC_LOCAL_MENU
+void n3ds_pc_local_menu_filter(struct native_input_sample *sample);
+void n3ds_pc_local_menu_draw(void);
+int n3ds_pc_local_menu_active(void);
+void n3ds_gpu_pc_local_menu(int map,int mode,int bots,int field,int error);
+#endif
 #endif

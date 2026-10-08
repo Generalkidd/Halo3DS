@@ -15,6 +15,7 @@
 #include "cutscene/cinematics.h"
 #include "units/units.h"
 #include "engine_input.h"
+#include "engine_controls.h"
 #include "render/render.h"
 #include "engine_renderer.h"
 #include "engine_textures.h"
@@ -241,6 +242,9 @@ void n3ds_menu_draw_screen(void)
         if(main_menu_is_active()) {extern void n3ds_gpu_campaign_help(void);n3ds_gpu_campaign_help();}
     }
     n3ds_controls_draw();
+#ifdef HALO_N3DS_PC_LOCAL_MENU
+    n3ds_pc_local_menu_draw();
+#endif
     for(int i=0;i<4;++i) *rects[i]=saved[i];
 }
 void n3ds_cinematic_draw_screen(void)

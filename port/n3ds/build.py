@@ -65,9 +65,12 @@ def main():
     parser.add_argument('--diagnostic-pc-arsenal', action='store_true', help='Experimental only: exercise map-owned PC weapons and Rocket Warthog through original input and render paths')
     parser.add_argument('--diagnostic-pc-rocket-warthog', action='store_true', help='Experimental only: isolate the PC Rocket Warthog gunner firing fixture')
     parser.add_argument('--diagnostic-pc-matrix', action='store_true', help='Experimental only: read map and mode from isolated sdmc:/halo-source/pc-matrix.txt for repeated smoke runs with two bots')
+    parser.add_argument('--diagnostic-pc-menu-keys', action='store_true', help='Experimental only: replay bounded menu inputs from isolated sdmc:/halo-source/menu-keys.txt')
     parser.add_argument('--diagnostic-pc-campaign', choices=['a10'], help='Experimental only: load PC retail UI then request a PC campaign map')
     parser.add_argument('--experimental-pc-runtime', action='store_true', help='Experimental only: prefer installed PC retail maps, with Xbox map fallback; no forced map or capture')
     args = parser.parse_args()
+    if args.diagnostic_pc_menu_keys and (args.diagnostic_pc_ui or args.diagnostic_pc_play or args.diagnostic_pc_campaign or args.experimental_pc_runtime or args.diagnostic_pc_matrix or args.diagnostic_pc_arsenal or args.diagnostic_pc_rocket_warthog or args.probe_pc_map or args.probe_a10 or args.probe_solo_bots or args.diagnostic_pc_bots or args.diagnostic_pc_fire or args.diagnostic_pc_mode != 'slayer' or args.test_frames):
+        parser.error('--diagnostic-pc-menu-keys owns its menu and input sequence')
     if args.diagnostic_pc_matrix and (args.diagnostic_pc_ui or args.diagnostic_pc_play or args.diagnostic_pc_campaign or args.experimental_pc_runtime or args.diagnostic_pc_arsenal or args.diagnostic_pc_rocket_warthog or args.probe_pc_map or args.probe_a10 or args.probe_solo_bots or args.diagnostic_pc_bots or args.diagnostic_pc_fire or args.diagnostic_pc_mode != 'slayer' or args.test_frames):
         parser.error('--diagnostic-pc-matrix owns its map, mode and two-bot match')
     if args.diagnostic_pc_arsenal or args.diagnostic_pc_rocket_warthog:
@@ -125,12 +128,15 @@ def main():
         defines.append(f'-DHALO_N3DS_BOT_TEST_MODE={mode_index}')
     if args.probe_pc_map:
         defines.append(f'-DHALO_N3DS_PC_PROBE_MAP={0 if args.probe_pc_map == "ui" else 1}')
-    if args.diagnostic_pc_ui or args.diagnostic_pc_play or args.diagnostic_pc_campaign or args.experimental_pc_runtime or args.diagnostic_pc_matrix:
+    if args.diagnostic_pc_ui or args.diagnostic_pc_play or args.diagnostic_pc_campaign or args.experimental_pc_runtime or args.diagnostic_pc_matrix or args.diagnostic_pc_menu_keys:
         defines.append('-DHALO_N3DS_EXPERIMENTAL_PC_UI=1')
     if args.diagnostic_pc_matrix:
         defines.extend(['-DHALO_N3DS_EXPERIMENTAL_PC_MATRIX=1','-DHALO_N3DS_BOT_TEST_COUNT=2'])
-    if args.experimental_pc_runtime:
+    if args.experimental_pc_runtime or args.diagnostic_pc_menu_keys:
         defines.append('-DHALO_N3DS_EXPERIMENTAL_PC_ALL_MAPS=1')
+        defines.append('-DHALO_N3DS_PC_LOCAL_MENU=1')
+    if args.diagnostic_pc_menu_keys:
+        defines.append('-DHALO_N3DS_EXPERIMENTAL_PC_MENU_KEYS=1')
     if args.diagnostic_pc_play:
         defines.append(f'-DHALO_N3DS_EXPERIMENTAL_PC_MAP_ID={pc_multiplayer_maps.index(args.diagnostic_pc_play)}')
         defines.append(f'-DHALO_N3DS_EXPERIMENTAL_PC_MODE={ ["slayer","ctf","oddball","king","race"].index(args.diagnostic_pc_mode) }')
@@ -147,7 +153,8 @@ def main():
     native = [str(gcc),*COMMON,'-D__3DS__','-I',str(args.libctru/'include'),'-I',str(args.citro3d/'include')]
     game = [args.clang,'--target=arm-none-eabi','-isystem',str(args.devkitarm/'arm-none-eabi/include'),
             *COMMON,'-std=gnu99','-D__STRICT_ANSI__','-DHALO_N3DS','-fsigned-char','-fshort-wchar',
-            '-fms-extensions','-fcommon','-ffp-contract=off','-Werror=implicit-function-declaration',
+            '-fms-extensions','-fcommon','-ffp-contract=off','-fno-builtin-wcslen',
+            '-Werror=implicit-function-declaration',
             '-Werror=incompatible-pointer-types','-Wno-multichar','-Wno-pragma-pack',
             '-Wno-ignored-attributes','-Wno-duplicate-decl-specifier']
     for folder in manifest['include_dirs']: game+=['-I',str(ROOT/folder)]
@@ -206,11 +213,18 @@ def main():
             'diagnostic_pc_arsenal':args.diagnostic_pc_arsenal,
             'diagnostic_pc_rocket_warthog':args.diagnostic_pc_rocket_warthog,
             'diagnostic_pc_matrix':args.diagnostic_pc_matrix,
+            'diagnostic_pc_menu_keys':args.diagnostic_pc_menu_keys,
             'diagnostic_pc_campaign':args.diagnostic_pc_campaign,
             'experimental_pc_runtime':args.experimental_pc_runtime,
             'checkpoint_identity':build_id,'commands':commands,'source_sha256':{e['source']:sha(ROOT/e['source']) for e in entries},
             'linked_inputs':{str(p):sha(p) for p in [*objects,archive]}}
     (out/'boot-build.json').write_text(json.dumps(report,indent=2))
+    if args.experimental_pc_runtime:
+        (out/'pc-runtime.json').write_text(json.dumps({
+            'Runtime':'Halo3DS-PC', 'MapFormat':'HaloCE-PC-retail-v7',
+            'LauncherSha256':report['sha256'], 'BuildCheckpoint':build_id,
+            'Experimental':True
+        },indent=2)+'\n',encoding='utf-8')
     print(f'Built {binary}\nSHA256 {report["sha256"]}')
 
 

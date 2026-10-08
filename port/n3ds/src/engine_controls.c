@@ -2,6 +2,13 @@
 #include "engine_controls.h"
 #include "engine_files.h"
 #include "interface/ui_widget.h"
+#ifdef HALO_N3DS_PC_LOCAL_MENU
+#include "main/main.h"
+#include "game/game_engine.h"
+#include "engine_bots.h"
+#include "pc_diagnostic_maps.h"
+int n3ds_pc_tags_active(void);
+#endif
 
 void n3ds_log(const char *message);
 void n3ds_ui_controls_back(void);
@@ -118,6 +125,56 @@ void n3ds_controls_draw(void)
  if(modal)n3ds_gpu_controls_draw(&settings,selected,n3ds_input_platform_original_model(),save_error);
  else if(n3ds_ui_pause_menu_active())n3ds_gpu_controls_entry();
 }
+#ifdef HALO_N3DS_PC_LOCAL_MENU
+static int pc_menu_open,pc_menu_field,pc_menu_map,pc_menu_mode,pc_menu_bots,pc_menu_error,pc_menu_swallow;
+static unsigned int pc_menu_previous;
+static const char *const pc_menu_modes[]={"slayer","ctf","oddball","king","race"};
+int n3ds_pc_local_menu_active(void){return pc_menu_open;}
+void n3ds_pc_local_menu_filter(struct native_input_sample *sample)
+{
+ unsigned int held=sample->held,fresh=held&~pc_menu_previous;
+ pc_menu_previous=held;
+ if(pc_menu_swallow){if(!held)pc_menu_swallow=0;memset(sample,0,sizeof(*sample));return;}
+ if(!pc_menu_open){
+  if((fresh&NATIVE_KEY_SELECT) && main_menu_is_active() && n3ds_pc_tags_active() && !n3ds_controls_active()){
+   pc_menu_open=1;pc_menu_field=0;pc_menu_error=0;
+   pc_menu_bots=n3ds_bots_requested_count();
+   pc_menu_swallow=1;n3ds_log("PC LOCAL MENU: opened");memset(sample,0,sizeof(*sample));
+  }
+  return;
+ }
+ if(!main_menu_is_active() || !n3ds_pc_tags_active()){
+  pc_menu_open=0;pc_menu_swallow=1;memset(sample,0,sizeof(*sample));return;
+ }
+ if(fresh&NATIVE_KEY_B){pc_menu_open=0;pc_menu_swallow=1;n3ds_log("PC LOCAL MENU: closed");}
+ else if(fresh&NATIVE_KEY_DUP)pc_menu_field=(pc_menu_field+2)%3;
+ else if(fresh&NATIVE_KEY_DDOWN)pc_menu_field=(pc_menu_field+1)%3;
+ else if(fresh&(NATIVE_KEY_DLEFT|NATIVE_KEY_DRIGHT)){
+  int delta=(fresh&NATIVE_KEY_DRIGHT)?1:-1;
+  if(pc_menu_field==0)pc_menu_map=(pc_menu_map+19+delta)%19;
+  else if(pc_menu_field==1)pc_menu_mode=(pc_menu_mode+5+delta)%5;
+  else pc_menu_bots=(pc_menu_bots+16+delta)%16;
+  pc_menu_error=0;
+ }
+ else if(fresh&NATIVE_KEY_A){
+  char map[96],message[192];struct game_variant variant;
+  const char *name=n3ds_pc_diagnostic_maps[pc_menu_map];
+  int length=snprintf(map,sizeof(map),"levels\\test\\%s\\%s",name,name);
+  struct game_variant *chosen=game_engine_get_variant_by_name(&variant,pc_menu_modes[pc_menu_mode]);
+  if(length<0 || length>=(int)sizeof(map) || !chosen || !chosen->game_engine_index ||
+     !n3ds_main_queue_solo_multiplayer(map,&variant,0)){
+   pc_menu_error=1;n3ds_log("PC LOCAL MENU: selected map is unavailable or cannot be queued");
+  }else{
+   n3ds_bots_set_menu_count((short)pc_menu_bots);
+   snprintf(message,sizeof(message),"PC LOCAL MENU: queued %s mode=%s bots=%d",map,pc_menu_modes[pc_menu_mode],pc_menu_bots);
+   n3ds_log(message);pc_menu_open=0;pc_menu_swallow=1;
+  }
+ }
+ memset(sample,0,sizeof(*sample));
+}
+void n3ds_pc_local_menu_draw(void)
+{if(pc_menu_open)n3ds_gpu_pc_local_menu(pc_menu_map,pc_menu_mode,pc_menu_bots,pc_menu_field,pc_menu_error);}
+#endif
 int n3ds_controls_tests(void)
 {
  struct native_control_settings saved=settings;int ok=1;

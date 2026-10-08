@@ -1185,8 +1185,16 @@ static boolean n3ds_bots_is_registered(short queue_index, short identifier)
 		(short)((unsigned long)player_index >> 16) == identifier;
 }
 
+#ifdef HALO_N3DS_PC_LOCAL_MENU
+static short n3ds_menu_bot_count=-1;
+void n3ds_bots_set_menu_count(short count)
+{ n3ds_menu_bot_count=(count>=0 && count<=15)?count:-1; }
+#endif
 short n3ds_bots_requested_count(void)
 {
+#ifdef HALO_N3DS_PC_LOCAL_MENU
+	if(n3ds_menu_bot_count>=0) return n3ds_menu_bot_count;
+#endif
 #ifdef HALO_N3DS_BOT_TEST_COUNT
 	return HALO_N3DS_BOT_TEST_COUNT;
 #else

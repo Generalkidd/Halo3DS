@@ -106,7 +106,11 @@ void n3ds_engine_input_sample(const struct native_input_sample *sample)
     unsigned int i, pressed=0;
     assert(initialized && sample);
     last_sample=*sample;
-    struct native_input_sample filtered=*sample;n3ds_controls_filter(&filtered);sample=&filtered;
+    struct native_input_sample filtered=*sample;
+#ifdef HALO_N3DS_PC_LOCAL_MENU
+    n3ds_pc_local_menu_filter(&filtered);
+#endif
+    n3ds_controls_filter(&filtered);sample=&filtered;
     touch_motion[0]=touch_motion[1]=0;
     boolean touching=(sample->held&NATIVE_KEY_TOUCH)!=0;
     boolean touch_pressed=touching && !touch_was_down;

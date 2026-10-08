@@ -67,8 +67,20 @@ PC retail v7 support is opt-in with `--experimental-pc-runtime`; the default
 launcher still uses the original Xbox cache path. The opt-in build reads PC
 maps from `halo-source/pc-retail` and falls back to installed Xbox maps. The
 original PC `ui.map` supplies the six expansion map names, descriptions and
-graphics. The expansion entries appear only when those UI assets and each map
-cache are present. The original thirteen Xbox menu entries remain available.
+graphics. The map-list adapter exposes an expansion entry only when its UI
+assets and cache are present. The original thirteen Xbox entries stay defined;
+the PC menu's Create Game action still does not launch a local match.
+
+On the PC opt-in build, press **SELECT** while the main menu is open to show
+the native Local Multiplayer selector. Up/down chooses Map, Mode or Bots;
+left/right changes the value; A starts and B returns. It lists all nineteen
+stock PC multiplayer maps, the five original modes and zero to fifteen bots.
+It uses the original local game queue and map loader. The selector supplies
+the bot count for that match; `bots.txt` remains the fallback for other launch
+paths. The PC `Create Game → LAN` widget does not currently start a local
+match. An isolated emulator input replay selected Blood Gulch CTF with two
+bots from the selector, loaded the PC cache, registered both bots and captured
+an active gameplay frame. This is a local single-console match, not LAN play.
 
 For bounded local probes, `--diagnostic-pc-play MAP` accepts the nineteen stock
 PC multiplayer maps. `--diagnostic-pc-mode` selects Slayer, CTF, Oddball, King
@@ -105,8 +117,8 @@ The source for the original game rules remains in `source/`. The PC vehicle
 filter is conditional on a PC cache: PC globals list six multiplayer vehicles,
 including the Rocket Warthog, while the original Xbox filter only accepts the
 first three. Xbox caches continue to use the original rule. PC runtime and
-setup packaging remain experimental until broader gameplay, menu selection,
-saved-state and hardware validation are complete.
+setup packaging remain experimental until broader gameplay, saved-state and
+hardware validation are complete.
 
 ## Building the setup tools
 
