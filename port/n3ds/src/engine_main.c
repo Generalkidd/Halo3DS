@@ -77,6 +77,11 @@ int main(void)
 #endif
     bool new_model=false;APT_CheckNew3DS(&new_model);
     n3ds_log(new_model?"MODEL: New 3DS family; high-speed CPU and L2 cache requested":"MODEL: original 3DS/2DS family; standard CPU speed");
+#ifdef HALO_N3DS_PC_PROBE_MAP
+    extern int n3ds_pc_cache_probe(const char *);
+    int probe_result = n3ds_pc_cache_probe(HALO_N3DS_PC_PROBE_MAP == 0 ? "ui" : "bloodgulch");
+    if (probe_result) n3ds_log("PC PROBE: continuing normal startup after diagnostic failure");
+#endif
     /* Retain capacity for two A10 corridor views and their effects, while
      * keeping every draw and the live command-capacity checks. */
     n3ds_parallel_initialize();

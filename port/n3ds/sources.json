@@ -503,6 +503,14 @@
       ]
     },
     {
+      "source": "port/n3ds/pc/cache_file_formats.c",
+      "compiler": "gcc"
+    },
+    {
+      "source": "port/n3ds/pc/engine_pc_probe.c",
+      "compiler": "gcc"
+    },
+    {
       "source": "port/n3ds/src/engine_cache.c",
       "compiler": "clang",
       "defines": [

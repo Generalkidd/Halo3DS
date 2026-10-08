@@ -52,6 +52,7 @@ def main():
     parser.add_argument('--probe-a10', action='store_true', help='Diagnostic only: request the a10 campaign map from the menu')
     parser.add_argument('--probe-solo-bots', type=int, default=0, help='Diagnostic only: request Blood Gulch solo multiplayer with 1-15 bots')
     parser.add_argument('--probe-solo-mode', choices=['slayer','ctf','oddball','king','race'], default='slayer')
+    parser.add_argument('--probe-pc-map', choices=['ui','bloodgulch'], help='Diagnostic only: validate an owner-supplied PC retail map on ARM')
     args = parser.parse_args()
     if args.test_frames<0 or (args.diagnostics and not args.test_frames):
         parser.error('diagnostics require a positive frame limit')
@@ -59,6 +60,8 @@ def main():
         parser.error('--probe-a10 uses the normal startup path; omit --test-frames')
     if args.probe_solo_bots and (not 1 <= args.probe_solo_bots <= 15 or args.probe_a10 or args.test_frames):
         parser.error('--probe-solo-bots requires 1-15 bots, no other map probe and no frame limit')
+    if args.probe_pc_map and (args.probe_a10 or args.probe_solo_bots or args.test_frames):
+        parser.error('--probe-pc-map cannot be combined with other map probes or a frame limit')
     out = args.output.resolve(); out.mkdir(parents=True, exist_ok=True)
     for name in defaults:
         setattr(args, name, getattr(args, name).resolve())
@@ -92,6 +95,8 @@ def main():
         defines.append(f'-DHALO_N3DS_BOT_TEST_COUNT={args.probe_solo_bots}')
         mode_index=['slayer','ctf','oddball','king','race'].index(args.probe_solo_mode)
         defines.append(f'-DHALO_N3DS_BOT_TEST_MODE={mode_index}')
+    if args.probe_pc_map:
+        defines.append(f'-DHALO_N3DS_PC_PROBE_MAP={0 if args.probe_pc_map == "ui" else 1}')
     native = [str(gcc),*COMMON,'-D__3DS__','-I',str(args.libctru/'include'),'-I',str(args.citro3d/'include')]
     game = [args.clang,'--target=arm-none-eabi','-isystem',str(args.devkitarm/'arm-none-eabi/include'),
             *COMMON,'-std=gnu99','-D__STRICT_ANSI__','-DHALO_N3DS','-fsigned-char','-fshort-wchar',
@@ -145,6 +150,7 @@ def main():
     report={'binary':str(binary),'sha256':sha(binary),'test_frames':args.test_frames,'diagnostics':args.diagnostics,
             'probe_a10':args.probe_a10,
             'probe_solo_bots':args.probe_solo_bots,'probe_solo_mode':args.probe_solo_mode,
+            'probe_pc_map':args.probe_pc_map,
             'checkpoint_identity':build_id,'commands':commands,'source_sha256':{e['source']:sha(ROOT/e['source']) for e in entries},
             'linked_inputs':{str(p):sha(p) for p in [*objects,archive]}}
     (out/'boot-build.json').write_text(json.dumps(report,indent=2))
