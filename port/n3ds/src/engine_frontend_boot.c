@@ -2,6 +2,9 @@
 #ifdef HALO_N3DS_EXPERIMENTAL_PC_MAP_ID
 #include "pc_diagnostic_maps.h"
 #endif
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_ALL_MAPS
+short n3ds_ui_pc_expansion_map_count(void);
+#endif
 /* Original main-menu widgets and lifecycle on the native renderer. */
 #include "cseries.h"
 #include "sound/sound_manager.h"
@@ -274,6 +277,12 @@ int halo_engine_boot(void)
     for(frame=0;(!HALO_N3DS_MISSION_TICKS || frame<HALO_N3DS_MISSION_TICKS) && n3ds_engine_app_running();++frame) {
         struct native_input_sample sample;
         long long start=n3ds_engine_ticks();long local,player,unit=NONE;
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_ALL_MAPS
+        if(frame==120) {
+            snprintf(message,sizeof(message),"EXPERIMENTAL PC MENU: %d expansion maps have matching UI assets and installed caches",n3ds_ui_pc_expansion_map_count());
+            n3ds_log(message);
+        }
+#endif
 #ifdef HALO_N3DS_PROBE_A10
         if(frame==90) {
             main_set_map_name("levels\\a10\\a10");

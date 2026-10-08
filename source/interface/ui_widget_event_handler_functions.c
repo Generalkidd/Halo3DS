@@ -966,6 +966,13 @@ static boolean native_pc_expansion_ui_assets_ready(void)
         description_list && description_list->strings.count>=19 &&
         graphic_group && graphic_group->bitmaps.count>=19;
 }
+short n3ds_ui_pc_expansion_map_count(void)
+{
+    short count=0;
+    if(native_pc_expansion_ui_assets_ready()) for(short i=0;i<6;++i)
+        if(n3ds_engine_map_installed(native_pc_expansion_maps[i])) ++count;
+    return count;
+}
 #endif
 short n3ds_ui_multiplayer_map_original_index(short index)
 {
