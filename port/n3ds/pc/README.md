@@ -49,14 +49,15 @@ storage separately, validates its bounds through the native cache resolver,
 and releases it with the map. In Azahar, `a10.map` loaded 3,724 tags,
 converted 76 models, and reached `MAP READY`; the first mission render
 submitted 178 BSP batches and 40,934 triangles. Its first Chicago shader
-uses a cube map (`type=1`), which the native Chicago path does not yet
-implement. The campaign diagnostic alone records and skips unsupported
-Chicago materials to expose later startup failures. This makes its images
-incomplete and is not a release behavior. A later diagnostic build includes
-a candidate per-vertex cube and two-dimensional map combiner; it compiles
-but has not yet been exercised in the emulator. A subsequent emulator run
-ended during a GPU driver update, so sustained campaign play remains
-unverified.
+uses a cube map (`type=1`). The later diagnostic build evaluates that cube
+and the two-dimensional maps through the authored combiner at posed
+vertices. After the GPU driver update, Azahar decoded the first cube image
+and ran PC retail `a10` past frame 450 with a player unit, a BSP transition,
+and no shader assertion. The frame-300 capture shows the opening Halo-ring
+cinematic. This verifies that scene and engine progression, not the full
+campaign, on-foot combat, or exact material color. The campaign diagnostic
+still records and skips unsupported Chicago layouts that the candidate
+path cannot handle; that skip is not a release behavior.
 
 `setup/PC/Package-Halo3DS-PC.ps1` continues to require an independently
 verified PC runtime binary and matching manifest. The diagnostic binary is
@@ -67,4 +68,8 @@ launcher with ordinary menu flow. It prefers a valid PC retail v7 map under
 `halo-source/pc-retail/` for each requested map name and uses the Xbox v5
 map under `halo-source/` when the PC map is absent. This option forces no
 map and writes no diagnostic screen capture. Its compatibility is still
-being tested; it does not qualify for the installer manifest.
+being tested; it does not qualify for the installer manifest. Azahar booted
+its PC retail UI through frame 511 without a forced map. The updated PC
+Timberland diagnostic ran beyond frame 690 with a player unit; its frame-300
+image matched the earlier PC Timberland capture after the model storage
+change.
