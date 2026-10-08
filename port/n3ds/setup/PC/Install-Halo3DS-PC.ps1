@@ -10,11 +10,13 @@ param(
     [string[]]$MapNames = @(),
     [Nullable[int]]$BotCount = $null,
     [string]$SevenZipPath,
-    [string]$LauncherPath = (Join-Path $PSScriptRoot 'Halo3DS-PC.3dsx'),
-    [string]$RuntimeManifest = (Join-Path $PSScriptRoot 'pc-runtime.json')
+    [string]$LauncherPath,
+    [string]$RuntimeManifest
 )
 
 $ErrorActionPreference = 'Stop'
+if (!$LauncherPath) { $LauncherPath = Join-Path $PSScriptRoot 'Halo3DS-PC.3dsx' }
+if (!$RuntimeManifest) { $RuntimeManifest = Join-Path $PSScriptRoot 'pc-runtime.json' }
 # PowerShell forwards WhatIfPreference into provider-backed reads such as
 # Resolve-Path/Get-FileHash. Validate the inputs normally, then return before
 # extraction or writes for a dry run.
