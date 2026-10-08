@@ -47,6 +47,10 @@ short n3ds_ui_pc_expansion_map_count(void);
 #include "tag_files/tag_groups.h"
 #include "items/weapons.h"
 #endif
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_ARSENAL
+#include "units/unit_definitions.h"
+#include "game/game_globals.h"
+#endif
 #ifdef HALO_N3DS_MAP_CYCLE_TEST
 #include "tag_files/tag_groups.h"
 static const char *native_cycle_maps[]={"a10","a30","a50","b30","b40","c10","c20","c40","d20","d40"};
@@ -84,6 +88,148 @@ int n3ds_engine_mission_render(long,long);
 #endif
 #define CHECK(e) do {if(!(e)){n3ds_log("FRONTEND FAIL: " #e);return 1;}}while(0)
 static long current_frame;
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_ARSENAL
+/* These are the owner supplied PC Blood Gulch tags. The multiplayer Fuel Rod
+ * Gun is named plasma_cannon in the cache; no substitute projectile is used. */
+static const struct { const char *label,*tag; } arsenal_weapons[] = {
+    {"assault-rifle","weapons\\assault rifle\\assault rifle"},
+    {"pistol","weapons\\pistol\\pistol"},
+    {"shotgun","weapons\\shotgun\\shotgun"},
+    {"plasma-rifle","weapons\\plasma rifle\\plasma rifle"},
+    {"plasma-pistol","weapons\\plasma pistol\\plasma pistol"},
+    {"needler","weapons\\needler\\mp_needler"},
+    {"sniper-rifle","weapons\\sniper rifle\\sniper rifle"},
+    {"flamethrower","weapons\\flamethrower\\flamethrower"},
+    {"fuel-rod-gun","weapons\\plasma_cannon\\plasma_cannon"},
+    {"rocket-launcher","weapons\\rocket launcher\\rocket launcher"}
+};
+enum { ARSENAL_FIRST_FRAME=240, ARSENAL_STAGE_FRAMES=105, ARSENAL_COUNT=sizeof(arsenal_weapons)/sizeof(arsenal_weapons[0]),
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_VEHICLE_ONLY
+       ARSENAL_VEHICLE_FRAME=ARSENAL_FIRST_FRAME
+#else
+       ARSENAL_VEHICLE_FRAME=ARSENAL_FIRST_FRAME+ARSENAL_STAGE_FRAMES*ARSENAL_COUNT
+#endif
+};
+static long arsenal_weapon=NONE,arsenal_vehicle=NONE,arsenal_initial_fire=NONE;
+static unsigned int arsenal_fire_passes,arsenal_failures;
+
+static int arsenal_copy_front(const char *label)
+{
+    extern FILE *capture_fopen(const char *,const char *) __asm__("fopen");
+    char path[96];byte buffer[4096];size_t bytes,total=0;
+    if(snprintf(path,sizeof(path),"sdmc:/halo-arsenal-%s.rgb",label)<0) return 1;
+    if(n3ds_gpu_screen_test()) return 1;
+    FILE *source=capture_fopen("sdmc:/halo-native-front.rgb","rb");
+    FILE *capture=capture_fopen(path,"wb");
+    if(!source || !capture) {if(source) fclose(source);if(capture) fclose(capture);return 1;}
+    while((bytes=fread(buffer,1,sizeof(buffer),source))>0) {if(fwrite(buffer,1,bytes,capture)!=bytes) break;total+=bytes;}
+    int failed=ferror(source) || bytes!=0 || total!=400*240*3;
+    failed|=fclose(source)!=0;failed|=fclose(capture)!=0;
+    return failed;
+}
+
+static int arsenal_prepare_weapon(unsigned int stage,long unit)
+{
+    char message[256];
+    long definition=tag_loaded('weap',arsenal_weapons[stage].tag);
+    if(definition==NONE) return 1;
+    struct object_placement_data placement;
+    object_placement_data_new(&placement,definition,NONE);
+    placement.position=unit_get(unit)->object.position;
+    arsenal_weapon=object_new(&placement);
+    if(arsenal_weapon==NONE || !unit_add_weapon_to_inventory(unit,arsenal_weapon,_unit_add_weapon_replace)) return 1;
+    player_control_set_desired_weapon(unit,unit_get(unit)->unit.desired_weapon_index);
+    arsenal_initial_fire=weapon_get(arsenal_weapon)->weapon.game_time_last_fired;
+    snprintf(message,sizeof(message),"ARSENAL START: %s tag=%s object=%08lx initial_fired=%ld",arsenal_weapons[stage].label,
+        arsenal_weapons[stage].tag,arsenal_weapon,arsenal_initial_fire);
+    n3ds_log(message);
+    return 0;
+}
+
+static int arsenal_prepare_vehicle(long unit)
+{
+    char message[192];
+    long definition=tag_loaded('vehi',"vehicles\\rwarthog\\rwarthog");
+    if(definition==NONE) {n3ds_log("ARSENAL ROCKET WARTHOG FAIL: vehicle tag not loaded");return 1;}
+    struct game_globals *globals=scenario_get_game_globals();
+    struct game_globals_multiplayer_information *multiplayer=TAG_BLOCK_GET_ELEMENT(&globals->multiplayer_information,0,struct game_globals_multiplayer_information);
+    snprintf(message,sizeof(message),"ARSENAL ROCKET WARTHOG: globals_vehicle_count=%ld vehicle_set=%d remapped=%08lx",
+        multiplayer->vehicles.count,game_engine_get_variant()->universal_variant.vehicle_set,game_engine_remap_vehicle(definition));n3ds_log(message);
+    for(short i=0;i<multiplayer->vehicles.count && i<16;++i) {
+        struct game_globals_vehicle *entry=TAG_BLOCK_GET_ELEMENT(&multiplayer->vehicles,i,struct game_globals_vehicle);
+        snprintf(message,sizeof(message),"ARSENAL ROCKET WARTHOG: globals_vehicle[%d]=%08lx %s",i,entry->vehicle.index,
+            entry->vehicle.index==NONE?"-":tag_get_name(entry->vehicle.index));n3ds_log(message);
+    }
+    struct object_placement_data placement;
+    object_placement_data_new(&placement,definition,NONE);
+    placement.position=unit_get(unit)->object.position;
+    placement.position.x+=5.f;
+    arsenal_vehicle=object_new(&placement);
+    if(arsenal_vehicle==NONE) {n3ds_log("ARSENAL ROCKET WARTHOG FAIL: original object_new failed");return 1;}
+    struct unit_definition *vehicle_definition=unit_definition_get(definition);
+    if(!vehicle_definition) {n3ds_log("ARSENAL ROCKET WARTHOG FAIL: unit definition unavailable");return 1;}
+    snprintf(message,sizeof(message),"ARSENAL ROCKET WARTHOG: tag=%08lx vehicle=%08lx seats=%ld",definition,arsenal_vehicle,vehicle_definition->unit.seats.count);n3ds_log(message);
+    short gunner=NONE;
+    for(short i=0;i<vehicle_definition->unit.seats.count;++i) {
+        struct unit_seat *seat=TAG_BLOCK_GET_ELEMENT(&vehicle_definition->unit.seats,i,struct unit_seat);
+        snprintf(message,sizeof(message),"ARSENAL ROCKET WARTHOG: seat=%d label=%s flags=%08lx",i,seat->label,seat->flags);n3ds_log(message);
+        if(TEST_FLAG(seat->flags,_unit_seat_gunner_bit)) {gunner=i;break;}
+    }
+    if(gunner==NONE) {n3ds_log("ARSENAL ROCKET WARTHOG FAIL: no gunner seat");return 1;}
+    if(!unit_enter_seat(unit,arsenal_vehicle,gunner)) {n3ds_log("ARSENAL ROCKET WARTHOG FAIL: original unit_enter_seat rejected gunner");return 1;}
+    snprintf(message,sizeof(message),"ARSENAL ROCKET WARTHOG: vehicle=%08lx gunner_seat=%d player=%08lx",arsenal_vehicle,gunner,unit);
+    n3ds_log(message);
+    return 0;
+}
+
+static void arsenal_after_render(long frame,long unit)
+{
+    char message[256];
+    if(frame>=ARSENAL_FIRST_FRAME && frame<ARSENAL_VEHICLE_FRAME) {
+        unsigned int stage=(unsigned int)(frame-ARSENAL_FIRST_FRAME)/ARSENAL_STAGE_FRAMES;
+        unsigned int offset=(unsigned int)(frame-ARSENAL_FIRST_FRAME)%ARSENAL_STAGE_FRAMES;
+        if(offset==61) {
+            int failed=arsenal_copy_front(arsenal_weapons[stage].label);
+            snprintf(message,sizeof(message),"ARSENAL CAPTURE: %s %s",arsenal_weapons[stage].label,failed?"FAILED":"saved");n3ds_log(message);
+            if(failed) ++arsenal_failures;
+        }
+        if(offset==91) {
+            struct weapon_datum *weapon=weapon_try_and_get(arsenal_weapon);
+            long fired=weapon?weapon->weapon.game_time_last_fired:NONE;
+            int pass=weapon && fired>arsenal_initial_fire;
+            if(pass) ++arsenal_fire_passes;else ++arsenal_failures;
+            snprintf(message,sizeof(message),"ARSENAL RESULT: %s fired=%ld initial=%ld rounds=%d %s",arsenal_weapons[stage].label,
+                fired,arsenal_initial_fire,weapon?weapon->weapon.magazines[0].rounds_loaded:NONE,pass?"PASS":"FAIL");n3ds_log(message);
+        }
+    } else if(frame>=ARSENAL_VEHICLE_FRAME && frame<ARSENAL_VEHICLE_FRAME+110) {
+        unsigned int offset=(unsigned int)(frame-ARSENAL_VEHICLE_FRAME);
+        if(offset==61) {
+            int failed=arsenal_copy_front("rocket-warthog");
+            n3ds_log(failed?"ARSENAL CAPTURE: rocket-warthog FAILED":"ARSENAL CAPTURE: rocket-warthog saved");
+            if(failed) ++arsenal_failures;
+        }
+        if(offset==91) {
+            struct unit_datum *vehicle=unit_try_and_get(arsenal_vehicle);
+            long weapon_index=NONE;
+            if(vehicle) for(short i=0;i<MAXIMUM_WEAPONS_PER_UNIT;++i)
+                if(vehicle->unit.weapon_object_indices[i]!=NONE) {weapon_index=vehicle->unit.weapon_object_indices[i];break;}
+            struct weapon_datum *weapon=weapon_try_and_get(weapon_index);
+            long fired=weapon?weapon->weapon.game_time_last_fired:NONE;
+            int pass=weapon && fired>arsenal_initial_fire && unit_get(unit)->object.parent_object_index==arsenal_vehicle;
+            if(pass) ++arsenal_fire_passes;else ++arsenal_failures;
+            snprintf(message,sizeof(message),"ARSENAL RESULT: rocket-warthog vehicle=%08lx gun=%08lx fired=%ld initial=%ld seated=%d %s",
+                arsenal_vehicle,weapon_index,fired,arsenal_initial_fire,unit_get(unit)->object.parent_object_index==arsenal_vehicle,pass?"PASS":"FAIL");n3ds_log(message);
+            snprintf(message,sizeof(message),"ARSENAL SUMMARY: fired=%u/%u failures=%u",arsenal_fire_passes,
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_VEHICLE_ONLY
+                1u,
+#else
+                (unsigned)(ARSENAL_COUNT+1),
+#endif
+                arsenal_failures);n3ds_log(message);
+        }
+    }
+}
+#endif
 #ifdef HALO_N3DS_EXPERIMENTAL_PC_MAP_NAME
 /* Observe the original object placement and game rules without changing them. */
 static void pc_multiplayer_object_trace(long frame)
@@ -361,6 +507,31 @@ int halo_engine_boot(void)
             if(frame+1==260) n3ds_log("EXPERIMENTAL PC FIRE: holding original primary trigger for 30 frames");
         }
 #endif
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_ARSENAL
+        {
+            long fixture_local=local_player_get_next(NONE);
+            long fixture_player=fixture_local==NONE?NONE:local_player_get_player_index(fixture_local);
+            unit=fixture_player==NONE?NONE:player_get(fixture_player)->unit_index;
+        }
+        if(unit!=NONE && frame+1>=ARSENAL_FIRST_FRAME && frame+1<ARSENAL_VEHICLE_FRAME) {
+            unsigned int stage=(unsigned int)(frame+1-ARSENAL_FIRST_FRAME)/ARSENAL_STAGE_FRAMES;
+            unsigned int offset=(unsigned int)(frame+1-ARSENAL_FIRST_FRAME)%ARSENAL_STAGE_FRAMES;
+            if(offset==0) CHECK(!arsenal_prepare_weapon(stage,unit));
+            if(offset>=30 && offset<69) sample.held|=original_model?NATIVE_KEY_L:NATIVE_KEY_ZR;
+        }
+        if(unit!=NONE && frame+1>=ARSENAL_VEHICLE_FRAME && frame+1<ARSENAL_VEHICLE_FRAME+110) {
+            unsigned int offset=(unsigned int)(frame+1-ARSENAL_VEHICLE_FRAME);
+            if(offset==0) CHECK(!arsenal_prepare_vehicle(unit));
+            if(offset==25) {
+                struct unit_datum *vehicle=unit_try_and_get(arsenal_vehicle);
+                if(vehicle) for(short i=0;i<MAXIMUM_WEAPONS_PER_UNIT;++i) {
+                    struct weapon_datum *gun=weapon_try_and_get(vehicle->unit.weapon_object_indices[i]);
+                    if(gun) {arsenal_initial_fire=gun->weapon.game_time_last_fired;break;}
+                }
+            }
+            if(offset>=30 && offset<69) sample.held|=original_model?NATIVE_KEY_L:NATIVE_KEY_ZR;
+        }
+#endif
         if((sample.held&(NATIVE_KEY_START|NATIVE_KEY_SELECT))==(NATIVE_KEY_START|NATIVE_KEY_SELECT)) break;
         n3ds_engine_input_sample(&sample);input_update();input_abstraction_update();
         if(frame%30==0 || memcmp(&sample,&prior,sizeof(sample))) {
@@ -505,6 +676,9 @@ int halo_engine_boot(void)
         }
         #endif
         CHECK(!n3ds_engine_mission_render(unit,game_time_get()));
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_ARSENAL
+        if(unit!=NONE) arsenal_after_render(frame+1,unit);
+#endif
 #if defined(HALO_N3DS_PROBE_A10) || (defined(HALO_N3DS_BOT_TEST_COUNT) && !defined(HALO_N3DS_EXPERIMENTAL_PC_UI)) || (defined(HALO_N3DS_EXPERIMENTAL_PC_UI) && !defined(HALO_N3DS_EXPERIMENTAL_PC_ALL_MAPS))
         if(frame+1==300) {
             int capture_failed=n3ds_gpu_screen_test();

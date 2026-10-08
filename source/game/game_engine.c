@@ -574,6 +574,10 @@ symbols in this file:
 #include "text/unicode.h"
 #include "units/bipeds.h"
 #include "units/units.h"
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_UI
+#include "tag_files/tag_files.h"
+int n3ds_pc_tags_active(void);
+#endif
 
 /* ---------- constants */
 
@@ -6484,6 +6488,33 @@ long game_engine_remap_vehicle(
 		vehicles = &multiplayer_information->vehicles;
 		vehicle1 = TAG_BLOCK_GET_ELEMENT(vehicles, 1, struct game_globals_vehicle);
 		vehicle2 = TAG_BLOCK_GET_ELEMENT(vehicles, 2, struct game_globals_vehicle);
+
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_UI
+		/* PC retail globals list six multiplayer vehicles, including the Rocket
+		 * Warthog. The Xbox rule below only recognizes its first three entries.
+		 * Keep that rule for Xbox caches; use the complete PC list while honoring
+		 * the original variant's vehicle-set restriction. */
+		if(n3ds_pc_tags_active())
+		{
+			boolean listed=FALSE;
+			for(short i=0;i<vehicles->count;++i)
+			{
+				struct game_globals_vehicle *entry=TAG_BLOCK_GET_ELEMENT(vehicles,i,struct game_globals_vehicle);
+				if(entry->vehicle.index==result) {listed=TRUE;break;}
+			}
+			if(!listed || global_variant.universal_variant.vehicle_set==1) return NONE;
+			switch(global_variant.universal_variant.vehicle_set)
+			{
+			case 2:
+				if(result!=vehicle0->vehicle.index &&
+					_stricmp(tag_get_name(result),"vehicles\\rwarthog\\rwarthog")) return NONE;
+				break;
+			case 3: if(result!=vehicle1->vehicle.index) return NONE;break;
+			case 4: if(result!=vehicle2->vehicle.index) return NONE;break;
+			}
+			return result;
+		}
+#endif
 
 		if (result != vehicle0->vehicle.index &&
 			result != vehicle1->vehicle.index &&

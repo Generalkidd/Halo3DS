@@ -62,9 +62,15 @@ def main():
     parser.add_argument('--diagnostic-pc-mode', choices=['slayer','ctf','oddball','king','race'], default='slayer', help='Game variant for --diagnostic-pc-play')
     parser.add_argument('--diagnostic-pc-bots', type=int, default=0, help='With --diagnostic-pc-play, use 1-15 local bot players')
     parser.add_argument('--diagnostic-pc-fire', action='store_true', help='With --diagnostic-pc-play, exercise the original local weapon input path')
+    parser.add_argument('--diagnostic-pc-arsenal', action='store_true', help='Experimental only: exercise map-owned PC weapons and Rocket Warthog through original input and render paths')
+    parser.add_argument('--diagnostic-pc-rocket-warthog', action='store_true', help='Experimental only: isolate the PC Rocket Warthog gunner firing fixture')
     parser.add_argument('--diagnostic-pc-campaign', choices=['a10'], help='Experimental only: load PC retail UI then request a PC campaign map')
     parser.add_argument('--experimental-pc-runtime', action='store_true', help='Experimental only: prefer installed PC retail maps, with Xbox map fallback; no forced map or capture')
     args = parser.parse_args()
+    if args.diagnostic_pc_arsenal or args.diagnostic_pc_rocket_warthog:
+        if (args.diagnostic_pc_arsenal and args.diagnostic_pc_rocket_warthog) or args.diagnostic_pc_play or args.diagnostic_pc_ui or args.diagnostic_pc_campaign or args.experimental_pc_runtime or args.diagnostic_pc_bots or args.diagnostic_pc_fire or args.diagnostic_pc_mode != 'slayer':
+            parser.error('PC weapon and vehicle fixtures own their Blood Gulch match and cannot be combined with other PC runtime choices')
+        args.diagnostic_pc_play = 'bloodgulch'
     if args.test_frames<0 or (args.diagnostics and not args.test_frames):
         parser.error('diagnostics require a positive frame limit')
     if args.probe_a10 and args.test_frames:
@@ -127,6 +133,10 @@ def main():
             defines.append(f'-DHALO_N3DS_BOT_TEST_COUNT={args.diagnostic_pc_bots}')
         if args.diagnostic_pc_fire:
             defines.append('-DHALO_N3DS_EXPERIMENTAL_PC_FIRE=1')
+        if args.diagnostic_pc_arsenal or args.diagnostic_pc_rocket_warthog:
+            defines.append('-DHALO_N3DS_EXPERIMENTAL_PC_ARSENAL=1')
+        if args.diagnostic_pc_rocket_warthog:
+            defines.append('-DHALO_N3DS_EXPERIMENTAL_PC_VEHICLE_ONLY=1')
     if args.diagnostic_pc_campaign:
         defines.append('-DHALO_N3DS_EXPERIMENTAL_PC_A10=1')
     native = [str(gcc),*COMMON,'-D__3DS__','-I',str(args.libctru/'include'),'-I',str(args.citro3d/'include')]
@@ -188,6 +198,8 @@ def main():
             'diagnostic_pc_mode':args.diagnostic_pc_mode,
             'diagnostic_pc_bots':args.diagnostic_pc_bots,
             'diagnostic_pc_fire':args.diagnostic_pc_fire,
+            'diagnostic_pc_arsenal':args.diagnostic_pc_arsenal,
+            'diagnostic_pc_rocket_warthog':args.diagnostic_pc_rocket_warthog,
             'diagnostic_pc_campaign':args.diagnostic_pc_campaign,
             'experimental_pc_runtime':args.experimental_pc_runtime,
             'checkpoint_identity':build_id,'commands':commands,'source_sha256':{e['source']:sha(ROOT/e['source']) for e in entries},
