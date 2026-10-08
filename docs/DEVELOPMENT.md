@@ -225,6 +225,16 @@ Packaged sources preserve repository-relative paths and include this document
 and the main README. They contain the setup utility, not the complete game
 source; use the repository to build the game. Python is never needed at runtime.
 
+The local dual-ISO package uses `Dual/Install-Halo3DS-Both.ps1` as one entry
+point. `Dual/Package-Halo3DS-Both.ps1` builds a fixed-file ZIP containing the
+Xbox console setup tool with its embedded normal launcher, the experimental PC
+launcher and hash manifest, the PC extraction scripts, corresponding Xbox setup
+source, and notices. The user supplies both ISOs at install time. Package
+round trips must inspect the ZIP allowlist, exercise `-WhatIf` from an extracted
+copy, and verify both launcher hashes in an isolated output folder. The current
+local test used the supported Xbox XISO and a small PC retail-format ISO
+fixture; a full owner PC retail ISO install and physical card run remain open.
+
 Verify the game hash extracted from both final EXEs. Check that source archives
 contain the converter, adapters, solutions, scripts, schemas and notices, but no
 maps, Xbox executables, generated relocation files, SDK headers or DSP firmware.

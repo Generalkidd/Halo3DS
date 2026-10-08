@@ -56,6 +56,9 @@ public static class Installer
             }
             catch (FileNotFoundException) { } // Setup will create this child.
             catch (DirectoryNotFoundException) { }
+            // A disconnected card reader may retain its drive letter. The
+            // caller checks Directory.Exists(root) before any installation.
+            catch (IOException) when (!Directory.Exists(Path.GetPathRoot(current)!)) { }
         }
         return result;
     }

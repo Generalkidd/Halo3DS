@@ -7,8 +7,14 @@ This project also aims to support most of the 3DS's native features including 3D
 ## Playing
 
 You will need a modded 3DS/2DS console, a FAT32 SD card with at least 4 GB of free space and your own game files.
-Currently only the 1.0 Halo CE ISO is supported but support for others is being looking into. PC/MCC
-maps are not supported.
+The default upstream release supports the original Xbox Halo CE ISO. PC/MCC
+maps are not supported by that release.
+
+The `local-integration` branch also has an **experimental PC retail v7**
+launcher for local multiplayer. It is built separately from the normal Xbox
+launcher; see the [two-ISO installer](port/n3ds/setup/Dual/README.md). This work
+has been exercised in an emulator, but has not yet been verified on a physical
+New 3DS XL. The default upstream release remains Xbox-only.
 
 ## Setup
 

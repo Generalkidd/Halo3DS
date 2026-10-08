@@ -45,6 +45,8 @@ if($CoreOnly){
     } finally { $archive.Dispose(); $stream.Dispose() }
     & dotnet $compiler @common /target:winexe "/out:$Output/Halo3DS Setup Windows 7.exe" "/win32manifest:$here/app.manifest" "/resource:$GameBuild,HaloSetup.Halo3DS.3dsx" "/resource:$sourceZip,HaloSetup.Source.zip" @core "$here/App.cs" "$here/AssemblyInfo.cs"
     if($LASTEXITCODE -ne 0){throw 'Windows 7 app compilation failed'}
+    & dotnet $compiler @common /target:exe "/out:$Output/Halo3DS-Xbox-Install.exe" "/resource:$GameBuild,HaloSetup.Halo3DS.3dsx" @core "$here/InstallCli.cs"
+    if($LASTEXITCODE -ne 0){throw 'Xbox console installer compilation failed'}
     & dotnet $compiler @common /target:exe "/out:$Output/LegacyTests.exe" @core "$here/Tests.cs"
 }
 if($LASTEXITCODE -ne 0){throw 'Compilation failed'}
