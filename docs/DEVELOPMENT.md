@@ -81,6 +81,8 @@ paths. The PC `Create Game → LAN` widget does not currently start a local
 match. An isolated emulator input replay selected Blood Gulch CTF with two
 bots from the selector, loaded the PC cache, registered both bots and captured
 an active gameplay frame. This is a local single-console match, not LAN play.
+The same replay succeeded with the isolated emulator's player profile set aside,
+so a saved profile is not required to enter this local match.
 
 For bounded local probes, `--diagnostic-pc-play MAP` accepts the nineteen stock
 PC multiplayer maps. `--diagnostic-pc-mode` selects Slayer, CTF, Oddball, King
