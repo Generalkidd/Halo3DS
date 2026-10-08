@@ -1,5 +1,5 @@
 #include "engine_checkpoint.h"
-#ifdef HALO_N3DS_EXPERIMENTAL_PC_MAP_ID
+#if defined(HALO_N3DS_EXPERIMENTAL_PC_MAP_ID) || defined(HALO_N3DS_EXPERIMENTAL_PC_MATRIX)
 #include "pc_diagnostic_maps.h"
 #endif
 #ifdef HALO_N3DS_EXPERIMENTAL_PC_ALL_MAPS
@@ -88,6 +88,30 @@ int n3ds_engine_mission_render(long,long);
 #endif
 #define CHECK(e) do {if(!(e)){n3ds_log("FRONTEND FAIL: " #e);return 1;}}while(0)
 static long current_frame;
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_MATRIX
+/* Test-only runtime selection keeps map/mode sweeps on one identical binary.
+ * A bounded two-token file lives on the isolated emulator SD, not in Git. */
+static int pc_matrix_choice(char map[96],const char **mode)
+{
+    static const char *const modes[]={"slayer","ctf","oddball","king","race"};
+    char line[80],map_name[32],mode_name[16],extra;
+    FILE *file=fopen("sdmc:/halo-source/pc-matrix.txt","rb");
+    if(!file) return 1;
+    int valid=fgets(line,sizeof(line),file)!=NULL && fgetc(file)==EOF;
+    fclose(file);
+    if(!valid || sscanf(line,"%31s %15s %c",map_name,mode_name,&extra)!=2) return 1;
+    int found=0;
+    for(unsigned i=0;i<sizeof(n3ds_pc_diagnostic_maps)/sizeof(n3ds_pc_diagnostic_maps[0]);++i)
+        if(!strcmp(map_name,n3ds_pc_diagnostic_maps[i])) {found=1;break;}
+    if(!found) return 1;
+    found=0;
+    for(unsigned i=0;i<sizeof(modes)/sizeof(modes[0]);++i)
+        if(!strcmp(mode_name,modes[i])) {*mode=modes[i];found=1;break;}
+    if(!found) return 1;
+    int length=snprintf(map,96,"levels\\test\\%s\\%s",map_name,map_name);
+    return length<0 || length>=96;
+}
+#endif
 #ifdef HALO_N3DS_EXPERIMENTAL_PC_ARSENAL
 /* These are the owner supplied PC Blood Gulch tags. The multiplayer Fuel Rod
  * Gun is named plasma_cannon in the cache; no substitute projectile is used. */
@@ -454,7 +478,17 @@ int halo_engine_boot(void)
             n3ds_log(message);
         }
 #endif
-#if defined(HALO_N3DS_BOT_TEST_COUNT) && !defined(HALO_N3DS_EXPERIMENTAL_PC_MAP_NAME)
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_MATRIX
+        if(frame==90) {
+            struct game_variant variant;
+            char map[96];const char *mode=NULL;
+            CHECK(!pc_matrix_choice(map,&mode));
+            CHECK(game_engine_get_variant_by_name(&variant,mode)->game_engine_index!=0);
+            CHECK(n3ds_main_queue_solo_multiplayer(map,&variant,0));
+            snprintf(message,sizeof(message),"EXPERIMENTAL PC MATRIX: queued %s %s with 2 bots",map,mode);n3ds_log(message);
+        }
+#endif
+#if defined(HALO_N3DS_BOT_TEST_COUNT) && !defined(HALO_N3DS_EXPERIMENTAL_PC_MAP_NAME) && !defined(HALO_N3DS_EXPERIMENTAL_PC_MATRIX)
         if(frame==90) {
             struct game_variant variant;
             static const char *modes[]={"slayer","ctf","oddball","king","race"};

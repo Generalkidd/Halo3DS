@@ -274,7 +274,7 @@ static int load_tag_candidate(const char *name,struct n3ds_cache_view *candidate
         if (!((*scan >= 'a' && *scan <= 'z') || (*scan >= 'A' && *scan <= 'Z') ||
               (*scan >= '0' && *scan <= '9') || *scan == '_')) return 1;
 #ifdef HALO_N3DS_EXPERIMENTAL_PC_UI
-#ifdef HALO_N3DS_EXPERIMENTAL_PC_ALL_MAPS
+#if defined(HALO_N3DS_EXPERIMENTAL_PC_ALL_MAPS) || defined(HALO_N3DS_EXPERIMENTAL_PC_MATRIX)
     if (n3ds_pc_map_available(base)) {
 #else
     if (!strcmp(base, "ui")
@@ -319,7 +319,7 @@ boolean n3ds_engine_map_installed(const char *name)
     if(!*base || strlen(base)>=32) return FALSE;
     for(scan=base;*scan;++scan) if(!((*scan>='a' && *scan<='z') || (*scan>='A' && *scan<='Z') || (*scan>='0' && *scan<='9') || *scan=='_')) return FALSE;
 #ifdef HALO_N3DS_EXPERIMENTAL_PC_UI
-#ifdef HALO_N3DS_EXPERIMENTAL_PC_ALL_MAPS
+#if defined(HALO_N3DS_EXPERIMENTAL_PC_ALL_MAPS) || defined(HALO_N3DS_EXPERIMENTAL_PC_MATRIX)
     if (n3ds_pc_map_available(base)) return TRUE;
 #else
     if (!strcmp(base, "ui")) return n3ds_pc_map_available(base);

@@ -64,9 +64,12 @@ def main():
     parser.add_argument('--diagnostic-pc-fire', action='store_true', help='With --diagnostic-pc-play, exercise the original local weapon input path')
     parser.add_argument('--diagnostic-pc-arsenal', action='store_true', help='Experimental only: exercise map-owned PC weapons and Rocket Warthog through original input and render paths')
     parser.add_argument('--diagnostic-pc-rocket-warthog', action='store_true', help='Experimental only: isolate the PC Rocket Warthog gunner firing fixture')
+    parser.add_argument('--diagnostic-pc-matrix', action='store_true', help='Experimental only: read map and mode from isolated sdmc:/halo-source/pc-matrix.txt for repeated smoke runs with two bots')
     parser.add_argument('--diagnostic-pc-campaign', choices=['a10'], help='Experimental only: load PC retail UI then request a PC campaign map')
     parser.add_argument('--experimental-pc-runtime', action='store_true', help='Experimental only: prefer installed PC retail maps, with Xbox map fallback; no forced map or capture')
     args = parser.parse_args()
+    if args.diagnostic_pc_matrix and (args.diagnostic_pc_ui or args.diagnostic_pc_play or args.diagnostic_pc_campaign or args.experimental_pc_runtime or args.diagnostic_pc_arsenal or args.diagnostic_pc_rocket_warthog or args.probe_pc_map or args.probe_a10 or args.probe_solo_bots or args.diagnostic_pc_bots or args.diagnostic_pc_fire or args.diagnostic_pc_mode != 'slayer' or args.test_frames):
+        parser.error('--diagnostic-pc-matrix owns its map, mode and two-bot match')
     if args.diagnostic_pc_arsenal or args.diagnostic_pc_rocket_warthog:
         if (args.diagnostic_pc_arsenal and args.diagnostic_pc_rocket_warthog) or args.diagnostic_pc_play or args.diagnostic_pc_ui or args.diagnostic_pc_campaign or args.experimental_pc_runtime or args.diagnostic_pc_bots or args.diagnostic_pc_fire or args.diagnostic_pc_mode != 'slayer':
             parser.error('PC weapon and vehicle fixtures own their Blood Gulch match and cannot be combined with other PC runtime choices')
@@ -122,8 +125,10 @@ def main():
         defines.append(f'-DHALO_N3DS_BOT_TEST_MODE={mode_index}')
     if args.probe_pc_map:
         defines.append(f'-DHALO_N3DS_PC_PROBE_MAP={0 if args.probe_pc_map == "ui" else 1}')
-    if args.diagnostic_pc_ui or args.diagnostic_pc_play or args.diagnostic_pc_campaign or args.experimental_pc_runtime:
+    if args.diagnostic_pc_ui or args.diagnostic_pc_play or args.diagnostic_pc_campaign or args.experimental_pc_runtime or args.diagnostic_pc_matrix:
         defines.append('-DHALO_N3DS_EXPERIMENTAL_PC_UI=1')
+    if args.diagnostic_pc_matrix:
+        defines.extend(['-DHALO_N3DS_EXPERIMENTAL_PC_MATRIX=1','-DHALO_N3DS_BOT_TEST_COUNT=2'])
     if args.experimental_pc_runtime:
         defines.append('-DHALO_N3DS_EXPERIMENTAL_PC_ALL_MAPS=1')
     if args.diagnostic_pc_play:
@@ -200,6 +205,7 @@ def main():
             'diagnostic_pc_fire':args.diagnostic_pc_fire,
             'diagnostic_pc_arsenal':args.diagnostic_pc_arsenal,
             'diagnostic_pc_rocket_warthog':args.diagnostic_pc_rocket_warthog,
+            'diagnostic_pc_matrix':args.diagnostic_pc_matrix,
             'diagnostic_pc_campaign':args.diagnostic_pc_campaign,
             'experimental_pc_runtime':args.experimental_pc_runtime,
             'checkpoint_identity':build_id,'commands':commands,'source_sha256':{e['source']:sha(ROOT/e['source']) for e in entries},

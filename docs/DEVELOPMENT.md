@@ -75,9 +75,20 @@ PC multiplayer maps. `--diagnostic-pc-mode` selects Slayer, CTF, Oddball, King
 or Race; `--diagnostic-pc-bots N` adds one to fifteen local bots. The isolated
 Azahar smoke sweep entered active Slayer matches with two bots on all nineteen
 stock PC multiplayer maps. Short runs also exercised the five modes on Blood
-Gulch and Timberland, including bot routes and a Warthog driver. These checks
+Gulch and Timberland, including bot routes and a Warthog driver. A runtime
+matrix fixture additionally reached frame 300 with two bots and routes on
+Gephyrophobia CTF, Death Island Oddball, Ice Fields King, Infinity Race and
+Timberland Slayer. PC Blood Gulch CTF registered fifteen of fifteen bots,
+maintained sixteen active bipeds through frame 600, and generated routes.
+These checks
 do not establish full match completion, scoring, all mode and map combinations,
 or New 3DS hardware performance.
+
+`--diagnostic-pc-matrix` builds the runtime matrix fixture. In a private test
+SD, `halo-source/pc-matrix.txt` contains one stock map name and one mode, such
+as `gephyrophobia ctf`. The fixture rejects unknown names and runs with two
+bots. It is meant for repeated emulator checks with one identical binary; the
+normal launcher does not read this file.
 
 `--diagnostic-pc-arsenal` exercises ten map-owned Blood Gulch weapons through
 the original input path, then the PC Rocket Warthog gunner seat. The isolated
