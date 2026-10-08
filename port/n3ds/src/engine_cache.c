@@ -12,6 +12,9 @@
 #include "structure_bsp_definitions.h"
 #include "collision_bsp_definitions.h"
 #include "collision_bsp.h"
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_MAP_ID
+#include "pc_diagnostic_maps.h"
+#endif
 #ifdef HALO_N3DS_EXPERIMENTAL_PC_UI
 #include "../pc/engine_pc_runtime.h"
 #endif
@@ -275,8 +278,8 @@ static int load_tag_candidate(const char *name,struct n3ds_cache_view *candidate
     if (n3ds_pc_map_available(base)) {
 #else
     if (!strcmp(base, "ui")
-#ifdef HALO_N3DS_EXPERIMENTAL_PC_MAP_ID
-        || !strcmp(base, HALO_N3DS_EXPERIMENTAL_PC_MAP_ID == 0 ? "bloodgulch" : "timberland")
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_MAP_NAME
+        || !strcmp(base, HALO_N3DS_EXPERIMENTAL_PC_MAP_NAME)
 #endif
 #ifdef HALO_N3DS_EXPERIMENTAL_PC_A10
         || !strcmp(base, "a10")
@@ -320,8 +323,8 @@ boolean n3ds_engine_map_installed(const char *name)
     if (n3ds_pc_map_available(base)) return TRUE;
 #else
     if (!strcmp(base, "ui")) return n3ds_pc_map_available(base);
-#ifdef HALO_N3DS_EXPERIMENTAL_PC_MAP_ID
-    if (!strcmp(base, HALO_N3DS_EXPERIMENTAL_PC_MAP_ID == 0 ? "bloodgulch" : "timberland")) return n3ds_pc_map_available(base);
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_MAP_NAME
+    if (!strcmp(base, HALO_N3DS_EXPERIMENTAL_PC_MAP_NAME)) return n3ds_pc_map_available(base);
 #endif
 #ifdef HALO_N3DS_EXPERIMENTAL_PC_A10
     if (!strcmp(base, "a10")) return n3ds_pc_map_available(base);

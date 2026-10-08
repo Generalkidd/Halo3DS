@@ -1,4 +1,7 @@
 #include "engine_checkpoint.h"
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_MAP_ID
+#include "pc_diagnostic_maps.h"
+#endif
 /* Original main-menu widgets and lifecycle on the native renderer. */
 #include "cseries.h"
 #include "sound/sound_manager.h"
@@ -36,7 +39,7 @@
 #include "engine_cache.h"
 #include "cache_reader.h"
 #include "physics/collision_usage.h"
-#ifdef HALO_N3DS_EXPERIMENTAL_PC_MAP_ID
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_MAP_NAME
 #include "objects/objects.h"
 #include "tag_files/tag_groups.h"
 #include "items/weapons.h"
@@ -78,7 +81,7 @@ int n3ds_engine_mission_render(long,long);
 #endif
 #define CHECK(e) do {if(!(e)){n3ds_log("FRONTEND FAIL: " #e);return 1;}}while(0)
 static long current_frame;
-#ifdef HALO_N3DS_EXPERIMENTAL_PC_MAP_ID
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_MAP_NAME
 /* Observe the original object placement and game rules without changing them. */
 static void pc_multiplayer_object_trace(long frame)
 {
@@ -283,20 +286,20 @@ int halo_engine_boot(void)
             n3ds_log("EXPERIMENTAL PC: requested PC retail a10 campaign map");
         }
 #endif
-#ifdef HALO_N3DS_EXPERIMENTAL_PC_MAP_ID
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_MAP_NAME
         if(frame==90) {
             struct game_variant variant;
             static const char *modes[]={"slayer","ctf","oddball","king","race"};
-            const char *map=HALO_N3DS_EXPERIMENTAL_PC_MAP_ID == 0
-                ? "levels\\test\\bloodgulch\\bloodgulch"
-                : "levels\\test\\timberland\\timberland";
+            const char *name=HALO_N3DS_EXPERIMENTAL_PC_MAP_NAME;
+            char map[96];
+            CHECK((unsigned int)snprintf(map,sizeof(map),"levels\\test\\%s\\%s",name,name)<sizeof(map));
             CHECK(game_engine_get_variant_by_name(&variant,modes[HALO_N3DS_EXPERIMENTAL_PC_MODE])->game_engine_index!=0);
             CHECK(n3ds_main_queue_solo_multiplayer(map,&variant,0));
             snprintf(message,sizeof(message),"EXPERIMENTAL PC: queued PC retail %s solo %s",map,modes[HALO_N3DS_EXPERIMENTAL_PC_MODE]);
             n3ds_log(message);
         }
 #endif
-#if defined(HALO_N3DS_BOT_TEST_COUNT) && !defined(HALO_N3DS_EXPERIMENTAL_PC_MAP_ID)
+#if defined(HALO_N3DS_BOT_TEST_COUNT) && !defined(HALO_N3DS_EXPERIMENTAL_PC_MAP_NAME)
         if(frame==90) {
             struct game_variant variant;
             static const char *modes[]={"slayer","ctf","oddball","king","race"};
@@ -418,7 +421,7 @@ int halo_engine_boot(void)
             n3ds_log(message);
         }
 #endif
-#ifdef HALO_N3DS_EXPERIMENTAL_PC_MAP_ID
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_MAP_NAME
         if (unit!=NONE && frame+1>=300 && (frame+1)%150==0)
             pc_multiplayer_object_trace(frame+1);
 #endif

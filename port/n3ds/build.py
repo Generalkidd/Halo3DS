@@ -54,7 +54,11 @@ def main():
     parser.add_argument('--probe-solo-mode', choices=['slayer','ctf','oddball','king','race'], default='slayer')
     parser.add_argument('--probe-pc-map', choices=['ui','bloodgulch'], help='Diagnostic only: validate an owner-supplied PC retail map on ARM')
     parser.add_argument('--diagnostic-pc-ui', action='store_true', help='Experimental only: hand PC retail ui.map to the original engine')
-    parser.add_argument('--diagnostic-pc-play', choices=['bloodgulch','timberland'], help='Experimental only: load PC retail UI then enter a PC solo multiplayer map')
+    pc_multiplayer_maps = ['beavercreek','bloodgulch','boardingaction','carousel','chillout',
+                           'damnation','dangercanyon','deathisland','gephyrophobia',
+                           'hangemhigh','icefields','infinity','longest','prisoner',
+                           'putput','ratrace','sidewinder','timberland','wizard']
+    parser.add_argument('--diagnostic-pc-play', choices=pc_multiplayer_maps, help='Experimental only: load PC retail UI then enter a PC multiplayer map')
     parser.add_argument('--diagnostic-pc-mode', choices=['slayer','ctf','oddball','king','race'], default='slayer', help='Game variant for --diagnostic-pc-play')
     parser.add_argument('--diagnostic-pc-bots', type=int, default=0, help='With --diagnostic-pc-play, use 1-15 local bot players')
     parser.add_argument('--diagnostic-pc-fire', action='store_true', help='With --diagnostic-pc-play, exercise the original local weapon input path')
@@ -117,7 +121,7 @@ def main():
     if args.experimental_pc_runtime:
         defines.append('-DHALO_N3DS_EXPERIMENTAL_PC_ALL_MAPS=1')
     if args.diagnostic_pc_play:
-        defines.append(f'-DHALO_N3DS_EXPERIMENTAL_PC_MAP_ID={0 if args.diagnostic_pc_play == "bloodgulch" else 1}')
+        defines.append(f'-DHALO_N3DS_EXPERIMENTAL_PC_MAP_ID={pc_multiplayer_maps.index(args.diagnostic_pc_play)}')
         defines.append(f'-DHALO_N3DS_EXPERIMENTAL_PC_MODE={ ["slayer","ctf","oddball","king","race"].index(args.diagnostic_pc_mode) }')
         if args.diagnostic_pc_bots:
             defines.append(f'-DHALO_N3DS_BOT_TEST_COUNT={args.diagnostic_pc_bots}')

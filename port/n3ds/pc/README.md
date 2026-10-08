@@ -93,3 +93,10 @@ list. The optional bot controller now takes partial waypoints from the
 original path builder in that case and re-searches after advancing. No
 original pathfinding or multiplayer rule was replaced. Long route completion,
 scoring and physical New 3DS XL behavior remain unverified.
+
+`--diagnostic-pc-play` now accepts all 19 stock PC retail multiplayer map
+names for individual compatibility checks. This exposes the original game's
+direct solo match handoff without making the PC adapter a release default.
+An Azahar Gephyrophobia CTF run with two local bots reached the original match
+loop past frame 450, placed two flags and four Warthogs, and found four-step
+bot routes on its BSP. Match completion and scoring remain to be checked.
