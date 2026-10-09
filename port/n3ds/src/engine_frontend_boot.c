@@ -116,7 +116,7 @@ static long menu_b30_initial_fired;
 static int menu_keys_load(void)
 {
     static const struct { const char *name; unsigned int mask; } names[]={
-        {"A",NATIVE_KEY_A},{"B",NATIVE_KEY_B},{"UP",NATIVE_KEY_DUP},
+        {"A",NATIVE_KEY_A},{"B",NATIVE_KEY_B},{"X",NATIVE_KEY_X},{"UP",NATIVE_KEY_DUP},
         {"DOWN",NATIVE_KEY_DDOWN},{"LEFT",NATIVE_KEY_DLEFT},
         {"RIGHT",NATIVE_KEY_DRIGHT},{"START",NATIVE_KEY_START},{"SELECT",NATIVE_KEY_SELECT},
         {"TAP_EXTRAS",NATIVE_KEY_TOUCH},

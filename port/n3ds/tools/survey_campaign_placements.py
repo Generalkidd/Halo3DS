@@ -94,11 +94,18 @@ def survey(path):
         starts = []
         for pos in block(0x354, 0x34):
             starts.append([round(v, 2) for v in struct.unpack_from("<fff", data, pos)])
+        netgame_equipment = []
+        for pos in block(0x384, 0x90):
+            index = u32(data, pos + 0x5c) & 0xffff
+            xyz = [round(v, 2) for v in struct.unpack_from("<fff", data, pos + 0x40)]
+            netgame_equipment.append({"collection": tags[index]["name"] if index < len(tags) else f"index:{index}",
+                                      "xyz": xyz, "respawn": struct.unpack_from("<h", data, pos + 0xe)[0]})
         candidates = [t["name"] for t in tags if t["group"] in ("weap", "vehi") and
                       any(word in t["name"].lower() for word in ("flamethrower", "fuel rod", "fuel_rod", "rwarthog", "rocket warthog"))]
         return {"map": path.stem, "version": version, "tag_count": count,
                 "pc_extra_tags": candidates,
                 "player_starts": starts,
+                "netgame_equipment": netgame_equipment,
                 "vehicles": object_list(0x240, 0x78, 0x24c),
                 "weapons": object_list(0x270, 0x5c, 0x27c)}
 

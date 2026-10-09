@@ -576,6 +576,10 @@ symbols in this file:
 #include "units/units.h"
 #ifdef HALO_N3DS_EXPERIMENTAL_PC_UI
 #include "tag_files/tag_files.h"
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_MENU_KEYS
+#include <stdio.h>
+#include <string.h>
+#endif
 int n3ds_pc_tags_active(void);
 #endif
 
@@ -6574,6 +6578,22 @@ long game_engine_remap_weapon(
 		return weapon_definition_index;
 	}
 
+#if defined(HALO_N3DS_EXPERIMENTAL_PC_UI) && defined(HALO_N3DS_PC_LOCAL_MENU)
+	if(n3ds_pc_tags_active() && n3ds_main_is_solo_multiplayer()) {
+		extern int n3ds_pc_local_weapon_override(void);
+		int override=n3ds_pc_local_weapon_override();
+		if(override)return list_index_to_weapon_definition_index(override==1?1:14);
+	}
+#endif
+
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_UI
+	if (n3ds_pc_tags_active())
+	{
+		if (global_variant.universal_variant.weapon_set == 10)
+			return NONE;
+	}
+	else
+#endif
 	if (weapon_list_index == 1)
 		weapon_list_index = 7;
 
@@ -6655,6 +6675,11 @@ long game_engine_remap_weapon(
 		case 9:
 			weapon_list_index = 8;
 			break;
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_UI
+		case 14:
+			if (n3ds_pc_tags_active()) weapon_list_index = 8;
+			break;
+#endif
 		}
 		break;
 
@@ -6669,6 +6694,12 @@ long game_engine_remap_weapon(
 		case 5:
 			weapon_list_index = 4;
 			break;
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_UI
+		case 14:
+		case 15:
+			if (n3ds_pc_tags_active()) weapon_list_index = 0;
+			break;
+#endif
 		}
 		break;
 	}
@@ -7479,6 +7510,19 @@ static void game_engine_update_item_spawn(
 				object_index = object_new(&placement_data);
 				if (object_index != NONE)
 				{
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_MENU_KEYS
+					if(n3ds_pc_tags_active()) {
+						static unsigned int reported;
+						const char *actual=tag_get_name(object_get(object_index)->definition_index);
+						unsigned int bit=actual && strstr(actual,"flamethrower")?1u:
+							actual && strstr(actual,"plasma_cannon")?2u:0u;
+						if(bit && !(reported&bit)) {
+							extern void n3ds_log(const char *);
+							char message[150];snprintf(message,sizeof(message),"PC PICKUP SPAWN: %s",actual);
+							n3ds_log(message);reported|=bit;
+						}
+					}
+#endif
 					struct item_datum *item = item_get(object_index);
 
 					object_set_garbage(object_index, FALSE);

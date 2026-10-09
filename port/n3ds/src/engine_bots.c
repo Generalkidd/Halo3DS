@@ -51,6 +51,7 @@ static boolean n3ds_bots_is_registered(short queue_index, short identifier);
 static long n3ds_bot_players[MAXIMUM_NUMBER_OF_PLAYERS];
 static long n3ds_star_bot_index = NONE;
 static unsigned long n3ds_bot_match_serial;
+static short n3ds_bot_difficulty=1;
 static const char *const n3ds_bot_guest_names[]={
 	"Sleepy","Dopey","Grumpy","Mopey","Hollywood","Crazy","Saucy","Wheezy",
 	"Cupid","Killer","The Big L","Butcher","Darling","Disco","Donut","Hambone",
@@ -381,6 +382,25 @@ static real combat_bot_weapon_value(long weapon_index, real enemy_distance2)
 	return 2.f;
 }
 
+static real combat_bot_fire_range(struct unit_datum const *unit)
+{
+	struct weapon_datum *weapon;
+	char const *name;
+	if (!unit || unit->unit.current_weapon_index == NONE)
+		return 35.f;
+	weapon = weapon_try_and_get(unit->unit.weapon_object_indices[unit->unit.current_weapon_index]);
+	name = weapon ? tag_get_name(weapon->definition_index) : NULL;
+	if (!name)
+		return 35.f;
+	if (strstr(name,"sniper"))
+		return 512.f;
+	if (strstr(name,"rocket launcher") || strstr(name,"rocket_launcher"))
+		return 100.f;
+	if (strstr(name,"pistol"))
+		return 60.f;
+	return 35.f;
+}
+
 static void combat_bot_scan_objects(struct combat_bot_state *state, struct unit_datum *unit,
 	long unit_index, real enemy_distance2, real_point3d const *enemy_position,
 	long enemy_index, boolean race_mode)
@@ -699,7 +719,8 @@ void n3ds_bots_fill_action(short queue_index, short identifier,
 	if (!unit)
 		return;
 	tick = game_time_initialized() ? game_time_get() : 0;
-	shot_interval = combat_bot_is_star(queue_index) ? 12 : 15;
+	shot_interval = combat_bot_is_star(queue_index) ? 12 :
+		(n3ds_bot_difficulty==0?20:n3ds_bot_difficulty==2?11:15);
 	if (state->identifier != identifier || tick < state->last_tick)
 	{
 		csmemset(state, 0, sizeof(*state));
@@ -1058,7 +1079,10 @@ void n3ds_bots_fill_action(short queue_index, short identifier,
 			action->throttle.i = best_distance2 > 6.f * 6.f ? 1.f : 0.3f;
 		else
 		{
-			action->primary_trigger = best_distance2 < 35.f * 35.f ? 1.f : 0.f;
+			{
+				real fire_range=combat_bot_fire_range(unit);
+				action->primary_trigger = best_distance2 < fire_range * fire_range ? 1.f : 0.f;
+			}
 			if (vehicle && vehicle->unit.gunner_object_index == bot->unit_index &&
 				queue_index < 8 && tick % 300 == 0)
 			{
@@ -1079,7 +1103,10 @@ void n3ds_bots_fill_action(short queue_index, short identifier,
 		action->throttle.i = best_distance2 > desired_range * desired_range ? 1.f :
 			best_distance2 < 2.f * 2.f ? -0.3f : 0.f;
 		action->throttle.j = ((tick / 90 + queue_index) & 1) ? 0.55f : -0.55f;
-		action->primary_trigger = best_distance2 < 35.f * 35.f ? 1.f : 0.f;
+		{
+			real fire_range=combat_bot_fire_range(unit);
+			action->primary_trigger = best_distance2 < fire_range * fire_range ? 1.f : 0.f;
+		}
 	}
 	else
 		action->throttle.i = 0.5f;
@@ -1090,7 +1117,8 @@ void n3ds_bots_fill_action(short queue_index, short identifier,
 			unsigned long roll = combat_bot_accuracy_roll(queue_index, tick, shot_interval);
 			real fraction = (real)((roll >> 16) & 255) / 255.f;
 			real side = (roll & 0x100UL) ? 1.f : -1.f;
-			accurate_shot = roll % 100 < (combat_bot_is_star(queue_index) ? 93 : 85);
+			accurate_shot = roll % 100 < (combat_bot_is_star(queue_index) ? 93 :
+				(n3ds_bot_difficulty==0?70:n3ds_bot_difficulty==2?93:85));
 			action->desired_facing.yaw += side *
 				(accurate_shot ? 0.002f + 0.007f * fraction : 0.045f + 0.025f * fraction);
 			action->desired_facing.pitch += ((roll & 0x200UL) ? 1.f : -1.f) *
@@ -1287,6 +1315,8 @@ static boolean n3ds_bots_is_registered(short queue_index, short identifier)
 static short n3ds_menu_bot_count=-1;
 void n3ds_bots_set_menu_count(short count)
 { n3ds_menu_bot_count=(count>=0 && count<=15)?count:-1; }
+void n3ds_bots_set_menu_difficulty(short difficulty)
+{ if(difficulty>=0 && difficulty<=2)n3ds_bot_difficulty=difficulty; }
 #endif
 short n3ds_bots_requested_count(void)
 {
@@ -1326,6 +1356,7 @@ short n3ds_bots_create(short count)
 	short named_slot = NONE;
 	unsigned long seed;
 	unsigned char guest_order[NUMBEROF(n3ds_bot_guest_names)];
+	unsigned char color_order[16];
 	short guest_count=0;
 	n3ds_bots_reset();
 	if (count < 0 || count > 15)
@@ -1333,7 +1364,8 @@ short n3ds_bots_create(short count)
 	seed = (unsigned long)system_seconds() ^
 		((unsigned long)system_milliseconds() * 0x85ebca6bUL) ^
 		(++n3ds_bot_match_serial * 0x9e3779b9UL);
-	if (count && seed_random_range(&seed, 0, 4) == 0)
+	if (count && seed_random_range(&seed, 0,
+		(n3ds_bot_difficulty==0?12:n3ds_bot_difficulty==2?3:4)) == 0)
 		named_slot = seed_random_range(&seed, 0, count);
 	for (i=0;i<NUMBEROF(guest_order);++i) guest_order[i]=(unsigned char)i;
 	for (i=NUMBEROF(guest_order)-1;i>0;--i) {
@@ -1341,6 +1373,14 @@ short n3ds_bots_create(short count)
 		unsigned char prior=guest_order[i];
 		guest_order[i]=guest_order[chosen];
 		guest_order[chosen]=prior;
+	}
+	for (i=0;i<NUMBEROF(color_order);++i)
+		color_order[i]=(unsigned char)(i<6?i:i+1);
+	for (i=NUMBEROF(color_order)-1;i>0;--i) {
+		short chosen=seed_random_range(&seed,0,i+1);
+		unsigned char prior=color_order[i];
+		color_order[i]=color_order[chosen];
+		color_order[chosen]=prior;
 	}
 	for (i = 0; i < count; ++i)
 	{
@@ -1356,7 +1396,8 @@ short n3ds_bots_create(short count)
 			snprintf(name, sizeof(name), "%s", n3ds_bot_guest_names[guest_order[guest_count++]]);
 		for (n = 0; name[n] && n < 11; ++n)
 			profile.name[n] = (wchar_t)(unsigned char)name[n];
-		profile.primary_color_index = i & 1;
+		profile.primary_color_index = i == named_slot ? 6 :
+			color_order[i < named_slot || named_slot == NONE ? i : i-1];
 		profile.machine_index = (char)machine;
 		profile.controller_index = (char)(slot % 4);
 		profile.player_list_index = (char)slot;
@@ -1369,11 +1410,13 @@ short n3ds_bots_create(short count)
 		n3ds_bot_players[DATUM_INDEX_TO_ABSOLUTE_INDEX(player_index)] = player_index;
 		if (i == named_slot)
 			n3ds_star_bot_index = player_index;
-		platform_log("BOTS: player %d profile %s", slot, name);
+		platform_log("BOTS: player %d profile %s color %d", slot, name,
+			profile.primary_color_index);
 #ifdef HALO_N3DS_EXPERIMENTAL_PC_MENU_KEYS
 		{
 			char message[64];
-			snprintf(message, sizeof(message), "BOTS: player %d profile %s", slot, name);
+			snprintf(message, sizeof(message), "BOTS: player %d profile %s color %d", slot,
+			name, profile.primary_color_index);
 			n3ds_log(message);
 		}
 #endif

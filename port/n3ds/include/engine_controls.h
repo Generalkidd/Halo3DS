@@ -21,6 +21,6 @@ void n3ds_gpu_controls_entry(void);
 void n3ds_pc_local_menu_filter(struct native_input_sample *sample);
 void n3ds_pc_local_menu_draw(void);
 int n3ds_pc_local_menu_active(void);
-void n3ds_gpu_pc_local_menu(int map,int mode,int bots,int field,int error,int high_textures,int original);
+void n3ds_gpu_pc_local_menu(int map,int mode,int bots,int difficulty,int weapon_set,int vehicle_choice,int page,int field,int error,int high_textures,int original);
 #endif
 #endif

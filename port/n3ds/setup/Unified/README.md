@@ -32,10 +32,17 @@ your own prior installation. ISO extraction needs 7-Zip; pass `-SevenZipPath`
 if it is not found. The Xbox converter uses .NET Framework 3.5.
 
 The Xbox main menu starts Campaign and Xbox multiplayer. Press **SELECT** for
-PC Local Multiplayer, then choose a PC map, mode, bot count, and on New 3DS,
+PC Local Multiplayer, then choose a PC map, mode, bot count, difficulty, and on New 3DS,
 tap **PC textures** to switch between standard 64-pixel textures and the
 experimental 128-pixel texture with mip. This choice saves immediately and
-applies when the map loads. `-BotCount`
+applies when the map loads. Difficulty changes ordinary bot accuracy and firing
+rate; Easy also makes the occasional named bot less frequent. Press **X** or tap
+**X: Gear** to choose a weapon set and vehicle set before the match. **Normal
+(PC map)** keeps each PC map's original pickups, including Flamethrower and
+Fuel Rod placements where the map has them. The extra **Flamethrowers** and
+**Fuel Rods** sets replace weapon pickups across the chosen PC map. **All PC
+vehicles** enables every vehicle type that the map places, including Rocket
+Warthog and Banshee where present. `-BotCount`
 sets a default from 0 to 15. On the campaign difficulty screen, the bottom
 touch screen toggles **PC weapons and vehicles in campaign**. It starts ON for
 testing and persists until changed there. The added pickups are beside

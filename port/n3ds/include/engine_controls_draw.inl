@@ -54,30 +54,45 @@ void n3ds_gpu_controls_draw(const struct native_control_settings *s,int selected
  n3ds_gpu_hud_screen(0);n3ds_gpu_texture_bind(0,saved);n3ds_gpu_world_state_restore();
 }
 #ifdef HALO_N3DS_PC_LOCAL_MENU
-void n3ds_gpu_pc_local_menu(int map,int mode,int bots,int field,int error,int high_textures,int original)
+void n3ds_gpu_pc_local_menu(int map,int mode,int bots,int difficulty,int weapon_set,int vehicle_choice,int page,int field,int error,int high_textures,int original)
 {
  static const char *const maps[]={"Beaver Creek","Blood Gulch","Boarding Action","Derelict","Chill Out","Damnation","Danger Canyon","Death Island","Gephyrophobia","Hang 'Em High","Ice Fields","Infinity","Longest","Prisoner","Chiron TL-34","Rat Race","Sidewinder","Timberland","Wizard"};
  static const char *const modes[]={"Slayer","CTF","Oddball","King","Race"};
+ static const char *const difficulties[]={"Easy","Normal","Hard"};
+ static const char *const weapons[]={"Normal (PC map)","Pistols","Rifles","Plasma","Snipers","No sniping","Rockets","Shotguns","Short range","Human","None","Flamethrowers","Fuel Rods"};
+ static const char *const vehicles[]={"Mode default","All PC vehicles","None","Warthog + Rocket","Ghost","Scorpion"};
  char line[48];void *saved=n3ds_gpu_texture_bound(0);
  n3ds_gpu_hud_layout(0);n3ds_gpu_hud_screen(1);
  controls_quad(0,0,400,240,0xff24150c,1);
- controls_text(104,48,"LOCAL MULTIPLAYER",0xffffffff,1);
- controls_text(48,90,"Choose a PC retail map and original game mode.",0xffe9d6aa,1);
- controls_text(80,120,"The match runs on this 3DS with bots.",0xffe9d6aa,1);
- controls_text(96,170,"SELECT: open  B: back",0xffffffff,1);
+ controls_text(104,48,page?"MATCH EQUIPMENT":"LOCAL MULTIPLAYER",0xffffffff,1);
+ controls_text(48,90,page?"Pick map weapon and vehicle rules.":"Choose a PC retail map and original game mode.",0xffe9d6aa,1);
+ controls_text(80,120,page?"Normal keeps PC map weapon pickups.":"The match runs on this 3DS with bots.",0xffe9d6aa,1);
+ controls_text(96,170,page?"X: match setup  B: back":"X: equipment  B: back",0xffffffff,1);
  n3ds_gpu_hud_screen(0);controls_quad(0,0,320,240,0xff24150c,0);
- controls_text(72,10,"LOCAL MULTIPLAYER",0xffffffff,0);
- for(int row=0;row<(original?3:4);++row){
-  float y=32+row*37;controls_quad(12,y,296,34,field==row?0xff674826:0xff35251a,0);
-  if(row==0)snprintf(line,sizeof(line),"Map %02d/19: %s",map+1,maps[map]);
-  else if(row==1)snprintf(line,sizeof(line),"Mode: %s",modes[mode]);
-  else if(row==2)snprintf(line,sizeof(line),"Bots: %d",bots);
-  else snprintf(line,sizeof(line),"PC textures: %s",high_textures?"128 + mip":"64 standard");
-  controls_text(20,y+12,line,0xffffffff,0);
+ controls_text(72,10,page?"MATCH EQUIPMENT":"LOCAL MULTIPLAYER",0xffffffff,0);
+ if(page){
+  for(int row=0;row<2;++row){
+   float y=40+row*42;controls_quad(12,y,296,36,field==row?0xff674826:0xff35251a,0);
+   snprintf(line,sizeof(line),"%s: %s",row?"Vehicles":"Weapons",row?vehicles[vehicle_choice]:weapons[weapon_set]);
+   controls_text(20,y+13,line,0xffffffff,0);
+  }
+  controls_text(18,143,"Normal uses original PC placements.",0xffe9d6aa,0);
+  controls_text(18,160,"All adds Rocket Hog + Banshee",0xffe9d6aa,0);
+  controls_text(18,174,"on maps that support them.",0xffe9d6aa,0);
+ }else{
+  for(int row=0;row<(original?4:5);++row){
+   float y=27+row*33;controls_quad(12,y,296,30,field==row?0xff674826:0xff35251a,0);
+   if(row==0)snprintf(line,sizeof(line),"Map %02d/19: %s",map+1,maps[map]);
+   else if(row==1)snprintf(line,sizeof(line),"Mode: %s",modes[mode]);
+   else if(row==2)snprintf(line,sizeof(line),"Bots: %d",bots);
+   else if(row==3)snprintf(line,sizeof(line),"Difficulty: %s",difficulties[difficulty]);
+   else snprintf(line,sizeof(line),"PC textures: %s",high_textures?"128 + mip":"64 standard");
+   controls_text(20,y+10,line,0xffffffff,0);
+  }
  }
- controls_text(16,183,error?"Save or launch failed":"Tap textures or use left/right",error?0xff70a0ff:0xffe9d6aa,0);
- controls_quad(16,197,136,32,0xff674826,0);controls_quad(168,197,136,32,0xff53391a,0);
- controls_text(55,209,"A: START",0xffffffff,0);controls_text(206,209,"B: BACK",0xffffffff,0);
+ controls_text(16,191,error?"Save or launch failed":"Tap choice or use left/right",error?0xff70a0ff:0xffe9d6aa,0);
+ controls_quad(16,202,136,30,0xff674826,0);controls_quad(168,202,136,30,0xff53391a,0);
+ controls_text(55,214,page?"A: DONE":"A: START",0xffffffff,0);controls_text(206,214,page?"X: BACK":"X: GEAR",0xffffffff,0);
  n3ds_gpu_hud_screen(0);n3ds_gpu_texture_bind(0,saved);n3ds_gpu_world_state_restore();
 }
 #endif

@@ -88,6 +88,10 @@ symbols in this file:
 #include "render/render_sprite.h"
 #include "saved games/game_state.h"
 #include "scenario/scenario.h"
+#include "tag_files/tag_files.h"
+#ifdef HALO_N3DS
+#include "engine_combat_fx.h"
+#endif
 
 /* ---------- constants */
 
@@ -640,7 +644,8 @@ static void particle_system_new_particles(
  extern int n3ds_input_platform_original_model(void);
  /* Only unattached, dense decorative emitters. No weapon/vehicle attachments
   * or damage objects use this budget; the emitter's state clock still runs. */
- if(system->object_index==NONE && (type_definition->initial_particle_count>=16 || type->variables.particle_creation_rate>=30.f)) {
+ if(system->object_index==NONE && !n3ds_combat_fx_name(tag_get_name(system->definition_index)) &&
+    (type_definition->initial_particle_count>=16 || type->variables.particle_creation_rate>=30.f)) {
   int original=n3ds_input_platform_original_model();native_density=original?.25f:.6f;native_cap=original?12:32;
  }
 #endif
@@ -1366,6 +1371,7 @@ static void particle_system_render(
 #ifdef HALO_N3DS
     extern int n3ds_input_platform_original_model(void);
     int native_original=n3ds_input_platform_original_model();
+    int native_combat=n3ds_combat_fx_name(tag_get_name(system->definition_index));
 #endif
 
 	for (type_index = 0; type_index < definition->types.count; type_index++)
@@ -1392,12 +1398,12 @@ static void particle_system_render(
                  * Simulation, damage, contrails and projectiles are unchanged.
                  * Original detached dense emitters keep 1/4; preserve the
                  * existing attached effects and New-model 3/4 selection. */
-                boolean native_dense=type_definition->initial_particle_count>=16 ||
-                    type->variables.particle_creation_rate>=30.f;
+                boolean native_dense=!native_combat && (type_definition->initial_particle_count>=16 ||
+                    type->variables.particle_creation_rate>=30.f);
                 unsigned int native_slot=(unsigned short)particle_index;
                 boolean native_keep=!native_dense ||
                     (native_original?(system->object_index==NONE?(native_slot&3)==0:(native_slot&1)==0):(native_slot&3)!=3);
-                if(system->object_index==NONE && native_system_draws>=(native_original?64u:192u))native_keep=FALSE;
+                if(!native_combat && system->object_index==NONE && native_system_draws>=(native_original?64u:192u))native_keep=FALSE;
                 if(native_keep && particle->valid && render_location_visible(&particle->location)) {
                  ++native_particle_selected;if(system->object_index==NONE)++native_system_draws;
                 }else ++native_particle_omitted;

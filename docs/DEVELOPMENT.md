@@ -82,9 +82,17 @@ entry only when its UI assets and cache are present. The original thirteen Xbox 
 the PC menu's Create Game action still does not launch a local match.
 
 On the PC opt-in build, press **SELECT** while the main menu is open to show
-the native Local Multiplayer selector. Up/down chooses Map, Mode, Bots or,
-on New 3DS, PC textures. Left/right changes the selected value; A starts and
-B returns. Touching the PC textures row changes and saves it before launch.
+the native Local Multiplayer selector. Up/down chooses Map, Mode, Bots,
+Difficulty or, on New 3DS, PC textures. Left/right changes the selected value;
+A starts and B returns. Touching Difficulty cycles Easy, Normal and Hard for
+ordinary bots. Touching the PC textures row changes and saves it before launch.
+X or the bottom right Gear button opens the weapon and vehicle set page.
+Normal preserves the stock PC map item collections; PC-only Flamethrowers and
+Fuel Rods sets replace weapon pickups. Vehicle choices include the original
+mode default and All PC vehicles. PC maps with stock Flamethrower collections
+now keep those weapons instead of applying the Xbox Flamethrower to Rocket
+Launcher remap. The stock PC maps choose their own placements; Beaver Creek
+does not place a Flamethrower, while the special PC-only set can add one there.
 The choice applies on the next map load. It lists all nineteen
 stock PC multiplayer maps, the five original modes and zero to fifteen bots.
 It uses the original local game queue and map loader. The selector supplies

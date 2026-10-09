@@ -143,7 +143,10 @@ void n3ds_controls_draw(void)
  else if(n3ds_ui_pause_menu_active())n3ds_gpu_controls_entry();
 }
 #ifdef HALO_N3DS_PC_LOCAL_MENU
-static int pc_menu_open,pc_menu_field,pc_menu_map,pc_menu_mode,pc_menu_bots,pc_menu_error,pc_menu_swallow;
+static int pc_menu_open,pc_menu_page,pc_menu_field,pc_menu_map,pc_menu_mode,pc_menu_bots,pc_menu_difficulty=1;
+static int pc_menu_weapon_set,pc_menu_vehicle_choice,pc_menu_error,pc_menu_swallow;
+static int pc_match_weapon_override;
+int n3ds_pc_local_weapon_override(void){return pc_match_weapon_override;}
 static unsigned int pc_menu_previous;
 static const char *const pc_menu_modes[]={"slayer","ctf","oddball","king","race"};
 static int pc_menu_available(void)
@@ -155,7 +158,7 @@ static int pc_menu_available(void)
 #endif
 }
 static int pc_menu_field_count(void)
-{return n3ds_input_platform_original_model()?3:4;}
+{return pc_menu_page?2:n3ds_input_platform_original_model()?4:5;}
 static void pc_menu_toggle_textures(void)
 {
  n3ds_controls_initialize();
@@ -178,7 +181,7 @@ void n3ds_pc_local_menu_filter(struct native_input_sample *sample)
  if(pc_menu_swallow){if(!held)pc_menu_swallow=0;memset(sample,0,sizeof(*sample));return;}
  if(!pc_menu_open){
   if((fresh&NATIVE_KEY_SELECT) && pc_menu_available() && !n3ds_controls_active()){
-   pc_menu_open=1;pc_menu_field=0;pc_menu_error=0;
+   pc_menu_open=1;pc_menu_page=0;pc_menu_field=0;pc_menu_error=0;
    pc_menu_bots=n3ds_bots_requested_count();
    pc_menu_swallow=1;n3ds_log("PC LOCAL MENU: opened");memset(sample,0,sizeof(*sample));
   }
@@ -187,45 +190,72 @@ void n3ds_pc_local_menu_filter(struct native_input_sample *sample)
  if(!pc_menu_available()){
   pc_menu_open=0;pc_menu_swallow=1;memset(sample,0,sizeof(*sample));return;
  }
- if(fresh&NATIVE_KEY_B){pc_menu_open=0;pc_menu_swallow=1;n3ds_log("PC LOCAL MENU: closed");}
+ if(fresh&NATIVE_KEY_B){
+  if(pc_menu_page){pc_menu_page=0;pc_menu_field=0;}
+  else {pc_menu_open=0;pc_menu_swallow=1;n3ds_log("PC LOCAL MENU: closed");}
+ }
+ else if((fresh&NATIVE_KEY_X) || ((fresh&NATIVE_KEY_TOUCH) &&
+         sample->touch_y>=202 && sample->touch_y<234 && sample->touch_x>=168 && sample->touch_x<304)){
+  pc_menu_page^=1;pc_menu_field=0;pc_menu_error=0;
+ }
  else if(fresh&NATIVE_KEY_DUP)pc_menu_field=(pc_menu_field+pc_menu_field_count()-1)%pc_menu_field_count();
  else if(fresh&NATIVE_KEY_DDOWN)pc_menu_field=(pc_menu_field+1)%pc_menu_field_count();
  else if(fresh&(NATIVE_KEY_DLEFT|NATIVE_KEY_DRIGHT)){
   int delta=(fresh&NATIVE_KEY_DRIGHT)?1:-1;
-  if(pc_menu_field==0)pc_menu_map=(pc_menu_map+19+delta)%19;
+  if(pc_menu_page){
+   if(pc_menu_field==0)pc_menu_weapon_set=(pc_menu_weapon_set+13+delta)%13;
+   else pc_menu_vehicle_choice=(pc_menu_vehicle_choice+6+delta)%6;
+  }else if(pc_menu_field==0)pc_menu_map=(pc_menu_map+19+delta)%19;
   else if(pc_menu_field==1)pc_menu_mode=(pc_menu_mode+5+delta)%5;
   else if(pc_menu_field==2)pc_menu_bots=(pc_menu_bots+16+delta)%16;
+  else if(pc_menu_field==3)pc_menu_difficulty=(pc_menu_difficulty+3+delta)%3;
   else {pc_menu_toggle_textures();delta=0;}
   if(delta)pc_menu_error=0;
  }
  else if((fresh&NATIVE_KEY_TOUCH) && sample->touch_x>=12 && sample->touch_x<308 &&
-         sample->touch_y>=32 && sample->touch_y<180){
-  int row=(sample->touch_y-32)/37;
+         sample->touch_y>=(pc_menu_page?40:27) && sample->touch_y<(pc_menu_page?124:192)){
+  int row=pc_menu_page?(sample->touch_y-40)/42:(sample->touch_y-27)/33;
   if(row<pc_menu_field_count()){
    pc_menu_field=row;
-   if(row==3)pc_menu_toggle_textures();
+   if(pc_menu_page){
+    if(row==0)pc_menu_weapon_set=(pc_menu_weapon_set+1)%13;
+    else pc_menu_vehicle_choice=(pc_menu_vehicle_choice+1)%6;
+   }else if(row==3)pc_menu_difficulty=(pc_menu_difficulty+1)%3;
+   else if(row==4)pc_menu_toggle_textures();
    else pc_menu_error=0;
   }
  }
- else if(fresh&NATIVE_KEY_A){
+ else if(pc_menu_page && ((fresh&NATIVE_KEY_A) || ((fresh&NATIVE_KEY_TOUCH) &&
+         sample->touch_y>=202 && sample->touch_y<234 && sample->touch_x>=16 && sample->touch_x<152))){
+  pc_menu_page=0;pc_menu_field=0;
+ }
+ else if((fresh&NATIVE_KEY_A) || ((fresh&NATIVE_KEY_TOUCH) &&
+         sample->touch_y>=202 && sample->touch_y<234 && sample->touch_x>=16 && sample->touch_x<152)){
   char map[96],message[192];struct game_variant variant;
   const char *name=n3ds_pc_diagnostic_maps[pc_menu_map];
   int length=snprintf(map,sizeof(map),"levels\\test\\%s\\%s",name,name);
   struct game_variant *chosen=game_engine_get_variant_by_name(&variant,pc_menu_modes[pc_menu_mode]);
+  if(chosen){
+   variant.universal_variant.weapon_set=pc_menu_weapon_set<11?pc_menu_weapon_set:0;
+   if(pc_menu_vehicle_choice)variant.universal_variant.vehicle_set=pc_menu_vehicle_choice-1;
+  }
   if(length<0 || length>=(int)sizeof(map) || !chosen || !chosen->game_engine_index ||
      !n3ds_main_queue_solo_multiplayer(map,&variant,0)){
    pc_menu_error=1;n3ds_log("PC LOCAL MENU: selected map is unavailable or cannot be queued");
   }else{
    n3ds_bots_set_menu_count((short)pc_menu_bots);
-   snprintf(message,sizeof(message),"PC LOCAL MENU: queued %s mode=%s bots=%d",map,pc_menu_modes[pc_menu_mode],pc_menu_bots);
+   n3ds_bots_set_menu_difficulty((short)pc_menu_difficulty);
+   pc_match_weapon_override=pc_menu_weapon_set==11?1:pc_menu_weapon_set==12?2:0;
+   snprintf(message,sizeof(message),"PC LOCAL MENU: queued %s mode=%s bots=%d difficulty=%d weapons=%d vehicles=%d",map,pc_menu_modes[pc_menu_mode],pc_menu_bots,pc_menu_difficulty,pc_menu_weapon_set,variant.universal_variant.vehicle_set);
    n3ds_log(message);pc_menu_open=0;pc_menu_swallow=1;
   }
  }
  memset(sample,0,sizeof(*sample));
 }
 void n3ds_pc_local_menu_draw(void)
-{if(pc_menu_open)n3ds_gpu_pc_local_menu(pc_menu_map,pc_menu_mode,pc_menu_bots,
- pc_menu_field,pc_menu_error,n3ds_controls_high_textures(),n3ds_input_platform_original_model());}
+{if(pc_menu_open)n3ds_gpu_pc_local_menu(pc_menu_map,pc_menu_mode,pc_menu_bots,pc_menu_difficulty,
+ pc_menu_weapon_set,pc_menu_vehicle_choice,pc_menu_page,pc_menu_field,pc_menu_error,
+ n3ds_controls_high_textures(),n3ds_input_platform_original_model());}
 #endif
 int n3ds_controls_tests(void)
 {
