@@ -9,6 +9,7 @@
 #include "engine_textures.h"
 #include "engine_bitmaps.h"
 #include "engine_input.h"
+#include "engine_controls.h"
 #include "engine_files.h"
 #include "s3tc.h"
 #include "rasterizer/rasterizer_swizzle.h"
@@ -70,8 +71,10 @@ static boolean menu_cache(void)
 static unsigned int texture_total_budget(void)
 {
     unsigned int total=menu_cache()?NATIVE_MENU_TEXTURE_BUDGET:NATIVE_TEXTURE_BUDGET;
-#ifdef HALO_N3DS_HIGH_TEXTURE_TEST
-    if(!menu_cache() && !n3ds_input_platform_original_model()) total=8*1024*1024;
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_UI
+    extern int n3ds_pc_tags_active(void);
+    if(!menu_cache() && !n3ds_input_platform_original_model() &&
+       texture_resolution>=128 && n3ds_pc_tags_active()) total=8*1024*1024;
 #endif
     return total;
 }
@@ -93,6 +96,21 @@ int n3ds_engine_texture_resolution(unsigned int limit)
     if(texture_count || (limit!=32 && limit!=64 && limit!=128)) return 0;
     texture_resolution=limit;
     return 1;
+}
+int n3ds_engine_texture_apply_saved_profile(void)
+{
+    int high=n3ds_controls_high_textures();
+#ifdef HALO_N3DS_HIGH_TEXTURE_TEST
+    high=1;
+#endif
+    int original=n3ds_input_platform_original_model();
+    int applied=n3ds_engine_texture_resolution(original?32:high?128:64);
+    if(applied) {
+        char message[100];
+        snprintf(message,sizeof(message),"TEXTURE PROFILE: %s",original?"original 32":high?"New 128 requested for PC maps":"New standard 64");
+        n3ds_log(message);
+    }
+    return applied;
 }
 void texture_cache_debug_render(void)
 {
@@ -596,12 +614,15 @@ static void *load_bitmap_now(struct bitmap_data *bitmap, boolean block, boolean 
     boolean raw=bitmap && ((bitmap->format>=0 && bitmap->format<=3) || bitmap->format==6 ||
         (bitmap->format>=8 && bitmap->format<=11) || bitmap->format==17);
     unsigned int pixel_stride=bitmap && (bitmap->format<=2 || bitmap->format==17)?1:bitmap && bitmap->format>=10?4:2;
+    int pc_bitmap=0,pc_world=0;
 #ifdef HALO_N3DS_EXPERIMENTAL_PC_UI
     extern int n3ds_pc_tags_active(void);
     extern int n3ds_pc_overlay_contains(const void *, unsigned long);
-    int pc_bitmap=n3ds_pc_tags_active() ||
+    pc_world=n3ds_pc_tags_active();
+    pc_bitmap=pc_world ||
         n3ds_pc_overlay_contains(bitmap,bitmap?sizeof(*bitmap):0);
 #endif
+    if(!menu_cache() && !pc_world && !n3ds_input_platform_original_model())resolution=64;
     assert(load || !block);
     if (!initialized || !opened) return NULL;
     resource=cached_bitmap_resource(bitmap);if(resource) return resource;
@@ -680,10 +701,9 @@ static void *load_bitmap_now(struct bitmap_data *bitmap, boolean block, boolean 
     target_height = MAX(8,MIN(height,resolution));
     output_bytes = target_width*target_height*4;
     allocated_bytes=output_bytes;
-#ifdef HALO_N3DS_HIGH_TEXTURE_TEST
-    int two_mips=!menu_cache() && !lightmap && target_width>=16 && target_height>=16;
+    int two_mips=pc_world && !menu_cache() && !lightmap &&
+        texture_resolution>=128 && target_width>=16 && target_height>=16;
     if(two_mips) allocated_bytes+=output_bytes/4;
-#endif
     if (!texture_make_room(allocated_bytes)) return NULL;
     bytes = raw ? width*height*pixel_stride : ((width+3)/4)*((height+3)/4)*block_bytes;
     if (skip > (unsigned)bitmap->pixels_size || bytes > (unsigned)bitmap->pixels_size-skip ||
@@ -747,12 +767,8 @@ static void *load_bitmap_now(struct bitmap_data *bitmap, boolean block, boolean 
      * C3D_TexInit avoids holding both decode scratch and final GPU storage. */
     texture_scratch_free(compressed,compressed_linear);compressed=NULL;compressed_linear=FALSE;
     texture_scratch_free(rgba,rgba_linear);rgba=NULL;rgba_linear=FALSE;
-#ifdef HALO_N3DS_HIGH_TEXTURE_TEST
     resource = two_mips?n3ds_gpu_texture_create_two_mips(tiled,target_width,target_height):
         n3ds_gpu_texture_create(tiled,target_width,target_height);
-#else
-    resource = n3ds_gpu_texture_create(tiled, target_width, target_height);
-#endif
     if (!resource) goto done;
     for (i = 0; i < output_bytes; ++i) hash = (hash ^ ((byte *)tiled)[i])*16777619U;
     /* Verify the published PICA allocation contains exactly the converted bytes. */

@@ -563,9 +563,18 @@ The 3DS port maps that confirmed PC action to normal application shutdown.
 Other PC-only menu actions need individual mapping and testing before relying
 on them; the SELECT Local Multiplayer menu remains the tested PC match path.
 
-`--diagnostic-high-textures` is an opt-in PC match comparison on New 3DS. It
-uses 128-pixel world texture bases, a generated 64-pixel mip level, and an
-8 MiB gameplay texture cache. A six-bot Timberland Azahar run reached 900
-frames without a fatal error, with about 7.7 MiB cached and a steady 18.6 ms
-render interval at game time 900. Initial loading cost increased, so the
-release launcher keeps the established texture profile until physical testing.
+On New 3DS, the bottom-screen Controller Settings page has a **PC high
+textures** switch. It defaults OFF and saves with the other controller
+settings. Turn it ON, save, then reload the PC map to compare 128-pixel
+texture bases, a generated 64-pixel mip level, and an 8 MiB gameplay cache
+against the standard 64-pixel profile. The original 3DS and Xbox maps keep
+their established profile. Existing version-one controller settings load with
+the switch OFF and are upgraded on save. `--diagnostic-high-textures` still
+forces the experimental profile in a PC match fixture; `--diagnostic-texture-clip`
+captures a repeatable Timberland walk for visual comparison.
+
+In the earlier opt-in six-bot Timberland experiment, Azahar reached 900 frames
+without a fatal error, with about 7.7 MiB cached and a steady 18.6 ms render
+interval at game time 900. Initial loading cost increased. New 3DS XL frame
+time and memory headroom need physical measurement before considering a new
+default.

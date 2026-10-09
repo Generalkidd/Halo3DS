@@ -124,10 +124,12 @@ static int menu_keys_load(void)
         {"LOAD_B30",0x08000000u},
         {"GOTO_C20_EXTRA",0x10000000u},{"GOTO_B30_EXTRA",0x04000000u},
         {"SURVEY_EXTRAS",0x02000000u},{"ENTER_B30_EXTRA",0x01000000u},
-        {"TRY_B30_EXTRA",0x00800000u}
+        {"TRY_B30_EXTRA",0x00800000u},
+        {"OPEN_SETTINGS",0x00400000u},{"TAP_HIGH_TEXTURES",0x00200000u},
+        {"TAP_SAVE_SETTINGS",0x00080000u}
     };
     FILE *file=fopen("sdmc:/halo-source/menu-keys.txt","rb");
-    char line[64],name[16],extra;
+    char line[64],name[32],extra;
     if(!file) return 1;
     while(fgets(line,sizeof(line),file)) {
         long frame;unsigned int mask=0;
@@ -137,7 +139,7 @@ static int menu_keys_load(void)
             menu_key_capture_frame=frame;
             continue;
         }
-        if(sscanf(line,"%ld %15s %c",&frame,name,&extra)!=2 || frame<1 || frame>2400 ||
+        if(sscanf(line,"%ld %31s %c",&frame,name,&extra)!=2 || frame<1 || frame>2400 ||
            menu_key_event_count>=sizeof(menu_key_events)/sizeof(menu_key_events[0])) {fclose(file);return 1;}
         for(unsigned int i=0;i<sizeof(names)/sizeof(names[0]);++i)
             if(!strcmp(name,names[i].name)) {mask=names[i].mask;break;}
@@ -163,6 +165,14 @@ static void menu_keys_sample(long frame,struct native_input_sample *sample)
         else if(mask==0x02000000u) menu_survey_extras=1;
         else if(mask==0x01000000u) menu_enter_b30_extra=1;
         else if(mask==0x00800000u) menu_try_b30_extra=1;
+        else if(mask==0x00400000u) {
+            extern void n3ds_controls_open(int);
+            n3ds_controls_open(0);
+        } else if(mask==0x00200000u || mask==0x00080000u) {
+            sample->held|=NATIVE_KEY_TOUCH;
+            sample->touch_x=280;
+            sample->touch_y=mask==0x00200000u?166:214;
+        }
         else sample->held|=mask;
         if(menu_key_events[i].mask==NATIVE_KEY_TOUCH) {sample->touch_x=160;sample->touch_y=120;}
         snprintf(message,sizeof(message),"MENU KEYS: frame=%ld mask=%08x",frame,menu_key_events[i].mask);
@@ -729,15 +739,10 @@ int halo_engine_boot(void)
     n3ds_log("STARTUP: sprite allocation checks");
     CHECK(!empty_sprite_tests());
     int original_model=n3ds_input_platform_original_model();
-#ifdef HALO_N3DS_HIGH_TEXTURE_TEST
-    CHECK(n3ds_engine_texture_resolution(original_model?32:128));
-    n3ds_log("DIAGNOSTIC TEXTURES: New-model world base 128, gameplay cache 8 MiB");
-#else
-    CHECK(n3ds_engine_texture_resolution(original_model?32:64));
-#endif
+    CHECK(n3ds_engine_texture_apply_saved_profile());
     n3ds_log(original_model?
         "PERFORMANCE PROFILE: original; world 320x192 adaptive/RGB565, textures32, LOD gameplay1/cinematic1/weapon2/distant0, foliage1/4-1/6, base-lit materials, particles48/draw64, emitter cap12, sprite layers2, radar16; full-rate controls/HUD":
-        "PERFORMANCE PROFILE: New; world textures64, LOD gameplay3/closeup cinematics/distant1-2, cosmetic particles144/draw192, dense emitter cap32, large sprite layers8, radar32; full-rate controls/HUD");
+        "PERFORMANCE PROFILE: New; PC world textures64 standard/128+mip high, LOD gameplay3/closeup cinematics/distant1-2, cosmetic particles144/draw192, dense emitter cap32, large sprite layers8, radar32; full-rate controls/HUD");
     if(HALO_N3DS_MISSION_TICKS) {
         CHECK(!n3ds_gpu_plasma_lut_tests());
         CHECK(!n3ds_gpu_texture_plasma_tests());
@@ -921,6 +926,10 @@ int halo_engine_boot(void)
         long long services_end=n3ds_engine_ticks();
         n3ds_frontend_trace("input");
         n3ds_input_platform_poll(&sample);
+#ifdef HALO_N3DS_TEXTURE_CLIP
+        if(n3ds_main_is_solo_multiplayer() && game_time_get()>=120 && game_time_get()<360 &&
+           player_input_enabled()) sample.circle_y=95;
+#endif
 #ifdef HALO_N3DS_EXPERIMENTAL_PC_MENU_KEYS
         menu_keys_sample(frame+1,&sample);
         if(menu_b30_fire_start && frame+1>=menu_b30_fire_start &&
@@ -1118,6 +1127,13 @@ int halo_engine_boot(void)
         }
         #endif
         CHECK(!n3ds_engine_mission_render(unit,game_time_get()));
+#ifdef HALO_N3DS_TEXTURE_CLIP
+        if(n3ds_main_is_solo_multiplayer() && game_time_get()>=120 && game_time_get()<360 &&
+           (game_time_get()-120)%4==0) {
+            extern int n3ds_gpu_texture_clip_frame(unsigned int);
+            CHECK(n3ds_gpu_texture_clip_frame((unsigned int)game_time_get()));
+        }
+#endif
 #ifdef HALO_N3DS_EXPERIMENTAL_PC_MENU_KEYS
         if(frame+1==menu_key_capture_frame) {
             CHECK(!n3ds_gpu_screen_test());

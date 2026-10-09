@@ -474,6 +474,7 @@ void n3ds_engine_tags_unload(void)
     extern void n3ds_engine_mission_batches_release(void);
     n3ds_engine_mission_batches_release();
     texture_cache_flush();
+    {int applied=n3ds_engine_texture_apply_saved_profile();assert(applied);}
     if (native_reference) n3ds_engine_bsp_unload(native_reference);
     n3ds_cache_close(&bsp_arena);bsp_arena_attempted=0;bsp_reads_clear();
     extern void n3ds_gpu_model_cache_release(void);

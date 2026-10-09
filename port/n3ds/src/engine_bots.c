@@ -51,6 +51,13 @@ static boolean n3ds_bots_is_registered(short queue_index, short identifier);
 static long n3ds_bot_players[MAXIMUM_NUMBER_OF_PLAYERS];
 static long n3ds_star_bot_index = NONE;
 static unsigned long n3ds_bot_match_serial;
+static const char *const n3ds_bot_guest_names[]={
+	"Sleepy","Dopey","Grumpy","Mopey","Hollywood","Crazy","Saucy","Wheezy",
+	"Cupid","Killer","The Big L","Butcher","Darling","Disco","Donut","Hambone",
+	"Dasher","Prancer","Noodle","Weasel","Snake","Shadow","Caboose","King",
+	"Sneak","The Bear","Ghost","Penguin","Howard","Jack","Whisp","Whicker",
+	"Wilshire","Pirate","Walla Walla","Tooth","Goat","Stumpy","Stompy","Winky"
+};
 static boolean combat_bot_is_star(short queue_index)
 {
 	return n3ds_star_bot_index != NONE &&
@@ -1318,6 +1325,8 @@ short n3ds_bots_create(short count)
 	short i, created = 0;
 	short named_slot = NONE;
 	unsigned long seed;
+	unsigned char guest_order[NUMBEROF(n3ds_bot_guest_names)];
+	short guest_count=0;
 	n3ds_bots_reset();
 	if (count < 0 || count > 15)
 		return 0;
@@ -1326,6 +1335,13 @@ short n3ds_bots_create(short count)
 		(++n3ds_bot_match_serial * 0x9e3779b9UL);
 	if (count && seed_random_range(&seed, 0, 4) == 0)
 		named_slot = seed_random_range(&seed, 0, count);
+	for (i=0;i<NUMBEROF(guest_order);++i) guest_order[i]=(unsigned char)i;
+	for (i=NUMBEROF(guest_order)-1;i>0;--i) {
+		short chosen=seed_random_range(&seed,0,i+1);
+		unsigned char prior=guest_order[i];
+		guest_order[i]=guest_order[chosen];
+		guest_order[chosen]=prior;
+	}
 	for (i = 0; i < count; ++i)
 	{
 		struct network_player profile = {0};
@@ -1337,7 +1353,7 @@ short n3ds_bots_create(short count)
 		if (i == named_slot)
 			snprintf(name, sizeof(name), "ChaoticSP1");
 		else
-			snprintf(name, sizeof(name), "AIBot%02d", i + 1);
+			snprintf(name, sizeof(name), "%s", n3ds_bot_guest_names[guest_order[guest_count++]]);
 		for (n = 0; name[n] && n < 11; ++n)
 			profile.name[n] = (wchar_t)(unsigned char)name[n];
 		profile.primary_color_index = i & 1;
@@ -1354,6 +1370,13 @@ short n3ds_bots_create(short count)
 		if (i == named_slot)
 			n3ds_star_bot_index = player_index;
 		platform_log("BOTS: player %d profile %s", slot, name);
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_MENU_KEYS
+		{
+			char message[64];
+			snprintf(message, sizeof(message), "BOTS: player %d profile %s", slot, name);
+			n3ds_log(message);
+		}
+#endif
 		++created;
 	}
 	{

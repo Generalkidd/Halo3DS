@@ -24,9 +24,7 @@ const struct bitmap_data *n3ds_engine_bitmap_metadata(int group_index,int index)
 int n3ds_engine_bitmap_bind_sampler(unsigned int stage,const struct bitmap_data *bitmap,unsigned int flags);
 int n3ds_gpu_texture_sampling_test(unsigned int stage, const unsigned int expected_corners[4]);
 void *n3ds_gpu_texture_create(const unsigned int *pixels, unsigned int width, unsigned int height);
-#ifdef HALO_N3DS_HIGH_TEXTURE_TEST
 void *n3ds_gpu_texture_create_two_mips(const unsigned int *pixels, unsigned int width, unsigned int height);
-#endif
 void *n3ds_gpu_texture_create_rgba4(const void *pixels, unsigned int width, unsigned int height);
 /* Six row-major RGBA byte faces in Xbox +X,-X,+Y,-Y,+Z,-Z order. */
 void *n3ds_gpu_texture_create_cube(const unsigned char *rgba,unsigned int side);
@@ -48,6 +46,7 @@ unsigned int n3ds_engine_texture_count(void);
 unsigned int n3ds_engine_texture_bytes(void);
 /* Change quality only with an empty cache; dimensions stay power-of-two. */
 int n3ds_engine_texture_resolution(unsigned int limit);
+int n3ds_engine_texture_apply_saved_profile(void);
 int halo_engine_texture_tests(void);
 int n3ds_engine_sampled_texture_tests(void);
 /* Immutable alpha-first copy for PICA plasma bump lookup; shares owner lifetime.

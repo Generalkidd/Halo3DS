@@ -4,6 +4,8 @@ The New 3DS runtime can add 0 to 15 local AI players to a solo multiplayer match
 
 Bots are local players in the original engine's player and action queues. There is no network bot process. The controller in `src/engine_bots.c` looks for enemies, weapons, grenades, vehicles, and mode objectives; uses BSP routes and short detours; and submits movement, aim, melee, grenade, and weapon actions. The game's pickup, damage, and scoring code remains in charge. Team bots leave a flag or ball held by an ally alone and select the nearest eligible one. A disappearing ground weapon target is checked before use.
 
+Each match assigns ordinary bots distinct random names from the forty built-in Xbox guest names in the owner's `ui.map`, including Donut. The 11-character profile limit accommodates every name in that list.
+
 Mode goals:
 
 - Slayer: seek and fight an enemy, with item and vehicle choices.

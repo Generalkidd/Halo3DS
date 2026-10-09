@@ -34,16 +34,19 @@ void n3ds_gpu_controls_draw(const struct native_control_settings *s,int selected
  controls_text(96,128,"Press START to save and return.",0xffe9d6aa,1);
  controls_text(48,168,s->xbox_buttons?"Xbox: B = jump, Y = reload / interact":"Nintendo: A = jump, X = reload / interact",0xffffffff,1);
  controls_text(64,188,original?"L: fire  R: grenade  Up: zoom":s->swap_shoulders?"R: fire  L: grenade  ZR: zoom":"ZR: fire  ZL: grenade  R: zoom",0xffe9d6aa,1);
+ if(!original)controls_text(64,208,"PC high textures apply next map load.",0xffe9d6aa,1);
  n3ds_gpu_hud_screen(1);controls_quad(0,0,320,240,0xff24150c,0);
  controls_text(84,16,"CONTROLLER SETTINGS",0xffffffff,0);
- const char *labels[]={"C-stick aim","Touch aim","ABXY layout","Swap L/ZL + R/ZR"};
- for(int row=0;row<4;++row){int enabled=row!=3 || !original;unsigned int color=enabled?0xffffffff:0xff7e7066;
-  float y=42+row*32;controls_quad(12,y,296,30,selected==row?0xff674826:0xff35251a,0);
+ const char *labels[]={"C-stick aim","Touch aim","ABXY layout","Swap L/ZL + R/ZR","PC high textures"};
+ for(int row=0;row<(original?3:5);++row){unsigned int color=0xffffffff;
+  float y=34+row*30;controls_quad(12,y,296,28,selected==row?0xff674826:0xff35251a,0);
   controls_text(20,y+4,labels[row],color,0);char value[40];
   if(row<2)snprintf(value,sizeof(value),"%u%%",row?s->touch:s->cstick);
-  else snprintf(value,sizeof(value),"%s",row==2?(s->xbox_buttons?"Xbox positions":"Nintendo letters"):original?"New models only":s->swap_shoulders?"On":"Off");
-  controls_text(20,y+17,value,color,0);
-  if(enabled){controls_quad(218,y+3,38,24,0xff735333,0);controls_quad(264,y+3,38,24,0xff735333,0);controls_text(233,y+11,"-",color,0);controls_text(279,y+11,"+",color,0);}
+  else snprintf(value,sizeof(value),"%s",row==2?(s->xbox_buttons?"Xbox positions":"Nintendo letters"):
+      row==3?(s->swap_shoulders?"On":"Off"):(s->high_textures?"128 + mip (exp)":"64 standard"));
+  controls_text(20,y+16,value,color,0);
+  controls_quad(218,y+2,38,24,0xff735333,0);controls_quad(264,y+2,38,24,0xff735333,0);
+  controls_text(233,y+10,"-",color,0);controls_text(279,y+10,"+",color,0);
  }
  controls_text(16,184,save_error?"Save failed. START retry / B cancel":"Up/down: select  Left/right: change",save_error?0xff70a0ff:0xffe9d6aa,0);
  controls_quad(16,202,134,30,0xff53391a,0);controls_quad(170,202,134,30,0xff674826,0);

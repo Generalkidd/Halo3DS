@@ -41,6 +41,12 @@ original Warthog in b30. Original map files and placements are not edited.
 The Rocket Warthog needs PC Blood Gulch on the SD card; if those assets are
 unavailable, the Xbox mission still loads without the extra vehicle.
 
+On New 3DS, open Controller Settings and tap **PC high textures** to compare
+the experimental 128-pixel textures and 64-pixel mip with standard 64-pixel
+textures. Save the setting, then reload the PC map. It starts OFF; the high
+mode can take longer to load and may affect frame rate. Xbox maps and original
+3DS use their standard texture profile.
+
 One launcher replaces the normal Xbox setup launcher only after both sources
 pass preflight. The previous 3DSX is archived under
 `halo-source/launcher-backups/`. Saves and unrelated Homebrew Launcher folders

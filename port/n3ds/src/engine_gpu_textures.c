@@ -270,7 +270,6 @@ static void *texture_create(const void *pixels, unsigned int width, unsigned int
 }
 void *n3ds_gpu_texture_create(const unsigned int *pixels, unsigned int width, unsigned int height)
 { return texture_create(pixels,width,height,GPU_RGBA8); }
-#ifdef HALO_N3DS_HIGH_TEXTURE_TEST
 static unsigned int mip_texel(unsigned int width,unsigned int x,unsigned int y)
 {
     static const unsigned int spread[8]={0,1,4,5,16,17,20,21};
@@ -306,7 +305,6 @@ void *n3ds_gpu_texture_create_two_mips(const unsigned int *pixels,unsigned int w
     }
     return texture;
 }
-#endif
 void *n3ds_gpu_texture_create_rgba4(const void *pixels, unsigned int width, unsigned int height)
 { return texture_create(pixels,width,height,GPU_RGBA4); }
 void *n3ds_gpu_texture_create_cube(const unsigned char *rgba,unsigned int side)

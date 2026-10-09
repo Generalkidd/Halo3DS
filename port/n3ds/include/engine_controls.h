@@ -1,13 +1,14 @@
 #ifndef HALO_N3DS_ENGINE_CONTROLS_H
 #define HALO_N3DS_ENGINE_CONTROLS_H
 #include "engine_input.h"
-struct native_control_settings { unsigned int cstick, touch, xbox_buttons, swap_shoulders; };
+struct native_control_settings { unsigned int cstick, touch, xbox_buttons, swap_shoulders, high_textures; };
 void n3ds_controls_initialize(void);
 void n3ds_controls_open(int from_main);
 int n3ds_controls_active(void);
 void n3ds_controls_filter(struct native_input_sample *sample);
 unsigned int n3ds_controls_buttons(unsigned int held,int original,int gameplay);
 float n3ds_controls_sensitivity(int touch);
+int n3ds_controls_high_textures(void);
 void n3ds_controls_draw(void);
 /* Tests restore runtime preferences without writing the user's file. */
 void n3ds_controls_get(struct native_control_settings *settings);

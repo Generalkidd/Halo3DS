@@ -2701,6 +2701,26 @@ int n3ds_gpu_readback(unsigned int *pixels,unsigned int count)
     return 1;
 }
 
+#ifdef HALO_N3DS_TEXTURE_CLIP
+int n3ds_gpu_texture_clip_frame(unsigned int game_tick)
+{
+    if(n3ds_gpu_screen_test())return 0;
+    char path[96];
+    snprintf(path,sizeof(path),"sdmc:/halo-source/texture-clip/frame%04u.rgba",game_tick);
+    FILE *source=fopen("sdmc:/halo-native-target.rgba","rb");
+    FILE *file=fopen(path,"wb");
+    if(!source || !file){if(source)fclose(source);if(file)fclose(file);return 0;}
+    unsigned char bytes[4096];size_t count,total=0;int ok=1;
+    while((count=fread(bytes,1,sizeof(bytes),source))>0){
+        if(fwrite(bytes,1,count,file)!=count){ok=0;break;}
+        total+=count;
+    }
+    ok=ok && !ferror(source) && total==240*400*4;
+    ok=!fclose(source) && ok;
+    ok=!fclose(file) && ok;
+    return ok;
+}
+#endif
 int n3ds_gpu_screen_test(void)
 {
     char capture_memory[160];
