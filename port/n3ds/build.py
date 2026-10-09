@@ -70,7 +70,10 @@ def main():
     parser.add_argument('--diagnostic-pc-menu-keys', action='store_true', help='Experimental only: replay bounded menu inputs from isolated sdmc:/halo-source/menu-keys.txt')
     parser.add_argument('--diagnostic-pc-campaign', choices=['a10'], help='Experimental only: load PC retail UI then request a PC campaign map')
     parser.add_argument('--experimental-pc-runtime', action='store_true', help='Experimental only: prefer installed PC retail maps, with Xbox map fallback; no forced map or capture')
+    parser.add_argument('--unified-ui', action='store_true', help='With a PC runtime or menu fixture, use the Xbox main menu and campaign alongside PC multiplayer maps')
     args = parser.parse_args()
+    if args.unified_ui and not (args.experimental_pc_runtime or args.diagnostic_pc_menu_keys):
+        parser.error('--unified-ui requires --experimental-pc-runtime or --diagnostic-pc-menu-keys')
     if args.diagnostic_pc_menu_keys and (args.diagnostic_pc_ui or args.diagnostic_pc_play or args.diagnostic_pc_campaign or args.experimental_pc_runtime or args.diagnostic_pc_matrix or args.diagnostic_pc_arsenal or args.diagnostic_pc_rocket_warthog or args.probe_pc_map or args.probe_a10 or args.probe_solo_bots or args.diagnostic_pc_bots or args.diagnostic_pc_fire or args.diagnostic_pc_mode != 'slayer' or args.test_frames):
         parser.error('--diagnostic-pc-menu-keys owns its menu and input sequence')
     if args.diagnostic_pc_matrix and (args.diagnostic_pc_ui or args.diagnostic_pc_play or args.diagnostic_pc_campaign or args.experimental_pc_runtime or args.diagnostic_pc_arsenal or args.diagnostic_pc_rocket_warthog or args.probe_pc_map or args.probe_a10 or args.probe_solo_bots or args.diagnostic_pc_bots or args.diagnostic_pc_fire or args.diagnostic_pc_mode != 'slayer' or args.test_frames):
@@ -79,7 +82,7 @@ def main():
         if (args.diagnostic_pc_arsenal and args.diagnostic_pc_rocket_warthog) or args.diagnostic_pc_play or args.diagnostic_pc_ui or args.diagnostic_pc_campaign or args.experimental_pc_runtime or args.diagnostic_pc_bots or args.diagnostic_pc_fire or args.diagnostic_pc_mode != 'slayer':
             parser.error('PC weapon and vehicle fixtures own their Blood Gulch match and cannot be combined with other PC runtime choices')
         args.diagnostic_pc_play = 'bloodgulch'
-    if args.test_frames<0 or (args.diagnostics and not (args.test_frames or args.diagnostic_pc_play)) or (args.diagnostic_audio_trace and not (args.test_frames or args.diagnostic_pc_play)):
+    if args.test_frames<0 or (args.diagnostics and not (args.test_frames or args.diagnostic_pc_play)) or (args.diagnostic_audio_trace and not (args.test_frames or args.diagnostic_pc_play or args.diagnostic_pc_menu_keys)):
         parser.error('diagnostics require a positive frame limit or a PC play fixture for audio tracing')
     if args.probe_a10 and args.test_frames:
         parser.error('--probe-a10 uses the normal startup path; omit --test-frames')
@@ -143,6 +146,8 @@ def main():
         defines.append('-DHALO_N3DS_PC_LOCAL_MENU=1')
     if args.diagnostic_pc_menu_keys:
         defines.append('-DHALO_N3DS_EXPERIMENTAL_PC_MENU_KEYS=1')
+    if args.unified_ui:
+        defines.append('-DHALO_N3DS_UNIFIED_UI=1')
     if args.diagnostic_pc_play:
         defines.append(f'-DHALO_N3DS_EXPERIMENTAL_PC_MAP_ID={pc_multiplayer_maps.index(args.diagnostic_pc_play)}')
         defines.append(f'-DHALO_N3DS_EXPERIMENTAL_PC_MODE={ ["slayer","ctf","oddball","king","race"].index(args.diagnostic_pc_mode) }')
@@ -222,12 +227,15 @@ def main():
             'diagnostic_pc_menu_keys':args.diagnostic_pc_menu_keys,
             'diagnostic_pc_campaign':args.diagnostic_pc_campaign,
             'experimental_pc_runtime':args.experimental_pc_runtime,
+            'unified_ui':args.unified_ui,
             'checkpoint_identity':build_id,'commands':commands,'source_sha256':{e['source']:sha(ROOT/e['source']) for e in entries},
             'linked_inputs':{str(p):sha(p) for p in [*objects,archive]}}
     (out/'boot-build.json').write_text(json.dumps(report,indent=2))
     if args.experimental_pc_runtime:
-        (out/'pc-runtime.json').write_text(json.dumps({
-            'Runtime':'Halo3DS-PC', 'MapFormat':'HaloCE-PC-retail-v7',
+        manifest_name='unified-runtime.json' if args.unified_ui else 'pc-runtime.json'
+        (out/manifest_name).write_text(json.dumps({
+            'Runtime':'Halo3DS-Unified' if args.unified_ui else 'Halo3DS-PC',
+            'MapFormat':'HaloCE-PC-retail-v7',
             'LauncherSha256':report['sha256'], 'BuildCheckpoint':build_id,
             'Experimental':True
         },indent=2)+'\n',encoding='utf-8')

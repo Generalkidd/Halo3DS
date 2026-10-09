@@ -341,6 +341,7 @@ symbols in this file:
 #include "interface/ui_widget_definitions.h"
 #ifdef HALO_N3DS
 #include "interface/ui_widget_event_handler_functions.h"
+int n3ds_pc_tags_active(void);
 #endif
 #include "interface/ui_widget_game_data_input_functions.h"
 #include "interface/hud_messaging.h"
@@ -837,6 +838,13 @@ void difficulty_select_menu_update_extended_description(
 	struct widget_instance *description_text;
 	struct widget_instance *child;
 	short index;
+
+#ifdef HALO_N3DS
+	/* The PC difficulty screen supplies its own description layout. The Xbox
+	 * two-child animation callback must not interpret that different widget. */
+	if (n3ds_pc_tags_active() && description_definition->child_count != 2)
+		return;
+#endif
 
 	match_vassert(
 		"c:\\halo\\SOURCE\\interface\\ui_widget_game_data_input_functions.c",

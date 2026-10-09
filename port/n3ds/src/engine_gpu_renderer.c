@@ -2480,8 +2480,23 @@ static void loading_text(void)
 void n3ds_gpu_campaign_help(void)
 {
     struct native_control_settings s;n3ds_controls_get(&s);
+#ifdef HALO_N3DS_UNIFIED_UI
+    const char *lines[]={"Campaign uses the Xbox retail maps.",s.xbox_buttons?"B: Start mission   R + B: Resume save":"A: Start mission   R + A: Resume save","SELECT: PC maps, modes and bots"};
+    n3ds_gpu_hud_screen(1);status_text(lines,3,1);
+    {
+        extern int n3ds_ui_difficulty_menu_active(void);
+        extern int n3ds_campaign_extras_enabled(void);
+        extern int n3ds_campaign_options_save_error(void);
+        if(n3ds_ui_difficulty_menu_active()) {
+            controls_quad(16,94,288,64,0xff674826,0);
+            controls_text(28,108,n3ds_campaign_extras_enabled()?"PC campaign extras: ON":"PC campaign extras: OFF",0xffffffff,0);
+            controls_text(28,128,n3ds_campaign_options_save_error()?"Save failed - tap to retry":"Tap here before mission to switch",0xffe9d6aa,0);
+        }
+    }
+#else
     const char *lines[]={"At difficulty selection:",s.xbox_buttons?"B: Start mission   R + B: Resume save":"A: Start mission   R + A: Resume save"};
     n3ds_gpu_hud_screen(1);status_text(lines,2,1);
+#endif
     n3ds_gpu_hud_screen(0);n3ds_gpu_world_state_restore();
 }
 

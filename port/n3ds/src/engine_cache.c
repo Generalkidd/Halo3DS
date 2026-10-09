@@ -18,6 +18,9 @@
 #ifdef HALO_N3DS_EXPERIMENTAL_PC_UI
 #include "../pc/engine_pc_runtime.h"
 #endif
+#ifdef HALO_N3DS_UNIFIED_UI
+#include "engine_campaign_overlay.h"
+#endif
 
 void n3ds_log(const char *message);
 void n3ds_cache_progress(const char *stage,unsigned long done,unsigned long total)
@@ -260,6 +263,16 @@ const struct n3ds_cache_view *n3ds_engine_cache_view(int bsp)
     return bsp ? &native_bsp : &native_tags;
 }
 
+#if defined(HALO_N3DS_EXPERIMENTAL_PC_ALL_MAPS) || defined(HALO_N3DS_EXPERIMENTAL_PC_MATRIX)
+static int n3ds_is_campaign_map(const char *base)
+{
+    static const char *const names[]={"a10","a30","a50","b30","b40","c10","c20","c40","d20","d40"};
+    for(unsigned int i=0;i<sizeof(names)/sizeof(names[0]);++i)
+        if(!strcmp(base,names[i])) return 1;
+    return 0;
+}
+#endif
+
 static int load_tag_candidate(const char *name,struct n3ds_cache_view *candidate,char *path,char *base_name)
 {
     struct cache_file_tag_instance *scenario;
@@ -275,7 +288,11 @@ static int load_tag_candidate(const char *name,struct n3ds_cache_view *candidate
               (*scan >= '0' && *scan <= '9') || *scan == '_')) return 1;
 #ifdef HALO_N3DS_EXPERIMENTAL_PC_UI
 #if defined(HALO_N3DS_EXPERIMENTAL_PC_ALL_MAPS) || defined(HALO_N3DS_EXPERIMENTAL_PC_MATRIX)
-    if (n3ds_pc_map_available(base)) {
+    if (!n3ds_is_campaign_map(base)
+#ifdef HALO_N3DS_UNIFIED_UI
+        && strcmp(base,"ui")
+#endif
+        && n3ds_pc_map_available(base)) {
 #else
     if (!strcmp(base, "ui")
 #ifdef HALO_N3DS_EXPERIMENTAL_PC_MAP_NAME
@@ -298,6 +315,9 @@ static int load_tag_candidate(const char *name,struct n3ds_cache_view *candidate
         _stricmp(candidate->header.name, base) || relocate(candidate, sidecar, NULL)) goto fail;
     scenario = n3ds_cache_tag(candidate, candidate->tag_header->scenario_tag_index, 'scnr');
     if (!scenario || !n3ds_cache_resolve(candidate, scenario->base_address, sizeof(struct scenario))) goto fail;
+#ifdef HALO_N3DS_UNIFIED_UI
+    n3ds_campaign_overlay_open(candidate,base);
+#endif
     strcpy(base_name,base);
     return 0;
 fail:
@@ -320,7 +340,11 @@ boolean n3ds_engine_map_installed(const char *name)
     for(scan=base;*scan;++scan) if(!((*scan>='a' && *scan<='z') || (*scan>='A' && *scan<='Z') || (*scan>='0' && *scan<='9') || *scan=='_')) return FALSE;
 #ifdef HALO_N3DS_EXPERIMENTAL_PC_UI
 #if defined(HALO_N3DS_EXPERIMENTAL_PC_ALL_MAPS) || defined(HALO_N3DS_EXPERIMENTAL_PC_MATRIX)
-    if (n3ds_pc_map_available(base)) return TRUE;
+    if (!n3ds_is_campaign_map(base)
+#ifdef HALO_N3DS_UNIFIED_UI
+        && strcmp(base,"ui")
+#endif
+        && n3ds_pc_map_available(base)) return TRUE;
 #else
     if (!strcmp(base, "ui")) return n3ds_pc_map_available(base);
 #ifdef HALO_N3DS_EXPERIMENTAL_PC_MAP_NAME
@@ -460,6 +484,9 @@ void n3ds_engine_tags_unload(void)
         char message[160];snprintf(message,sizeof(message),"MAP READ STREAM: opens=%u reads=%u bytes=%u closed=%d",native_stream_opens,native_stream_reads,native_stream_bytes,closed);n3ds_log(message);
     }
     if (native_tags.tags) {++native_tag_generation;cache_generation_advance();cache_files_bind_native(NULL, NULL);}
+#ifdef HALO_N3DS_UNIFIED_UI
+    n3ds_campaign_overlay_close();
+#endif
     n3ds_cache_close(&native_tags);
 #ifdef HALO_N3DS_EXPERIMENTAL_PC_UI
     n3ds_pc_tags_close();
@@ -493,7 +520,7 @@ boolean n3ds_engine_cache_read(unsigned long offset, unsigned long bytes, void *
     boolean result=FALSE;
     n3ds_files_lock();
 #ifdef HALO_N3DS_EXPERIMENTAL_PC_UI
-    if (n3ds_pc_tags_active()) {
+    if (n3ds_pc_tags_active() || (n3ds_pc_tags_loaded() && offset >= 0x40000000UL)) {
         result = n3ds_pc_cache_read(offset, bytes, destination);
         goto done;
     }

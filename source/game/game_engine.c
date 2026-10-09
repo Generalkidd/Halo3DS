@@ -1886,7 +1886,7 @@ static void game_engine_rasterize_in_game_score(
 					row_string,
 					L"\t%s\t%s\t%s",
 					place_string,
-					player->name,
+					player_display_name(player),
 					status_string);
 
 				if (has_teams)
@@ -2127,7 +2127,7 @@ void game_engine_post_rasterize_post_game(
 				draw_string_set_color(
 					&team_colors[PIN(team_index, 0, 1)]);
 			}
-			usnprintf(row_string, NUMBEROF(row_string), L" \t \t%s", player->name);
+			usnprintf(row_string, NUMBEROF(row_string), L" \t \t%s", player_display_name(player));
 			row_string[NUMBEROF(row_string) - 1] = 0;
 			drawline(row_string, draw_row, 0);
 			draw_string_set_color(&winner_color);
@@ -7061,13 +7061,13 @@ static void internal_rasterize_target_name(
 	if (player->unknown7c != NONE)
 	{
 		struct player_datum *target_player = player_get(player->unknown7c);
-		wchar_t target_name[12] = { 0 };
+		wchar_t target_name[20] = { 0 };
 		long hold_time = player->target_hold_time;
 		real alpha;
 
 		if (hold_time >= 10)
 			hold_time = 10;
-		ustrncpy(target_name, target_player->name, NUMBEROF(target_name) - 1);
+		ustrncpy(target_name, player_display_name(target_player), NUMBEROF(target_name) - 1);
 		target_name[NUMBEROF(target_name) - 1] = 0;
 		alpha = (real)pow((double)(hold_time * 0.1f), 1.9f) * 0.5f;
 		game_engine_rasterize_message(target_name, alpha);
@@ -7142,28 +7142,28 @@ static boolean internal_rasterize_score(
 			message,
 			message_character_count,
 			GET_GAME_ENGINE_HUD_FORMAT(0x4A),
-			player->name);
+			player_display_name(player));
 		break;
 	case 1:
 		usnprintf(
 			message,
 			message_character_count,
 			GET_GAME_ENGINE_HUD_FORMAT(0x4B),
-			player->name);
+			player_display_name(player));
 		break;
 	case 2:
 		usnprintf(
 			message,
 			message_character_count,
 			GET_GAME_ENGINE_HUD_FORMAT(0x4C),
-			player->name);
+			player_display_name(player));
 		break;
 	case 3:
 		usnprintf(
 			message,
 			message_character_count,
 			GET_GAME_ENGINE_HUD_FORMAT(0x4D),
-			player->name);
+			player_display_name(player));
 		break;
 	case 4:
 		other_player = player_get(parameter2);
@@ -7171,8 +7171,8 @@ static boolean internal_rasterize_score(
 			message,
 			message_character_count,
 			GET_GAME_ENGINE_HUD_FORMAT(0x4E),
-			player->name,
-			other_player->name);
+			player_display_name(player),
+			player_display_name(other_player));
 		break;
 	case 5:
 		other_player = player_get(parameter2);
@@ -7180,8 +7180,8 @@ static boolean internal_rasterize_score(
 			message,
 			message_character_count,
 			GET_GAME_ENGINE_HUD_FORMAT(0x4F),
-			player->name,
-			other_player->name);
+			player_display_name(player),
+			player_display_name(other_player));
 		break;
 	case 28:
 		other_player = player_get(parameter2);
@@ -7189,14 +7189,14 @@ static boolean internal_rasterize_score(
 			message,
 			message_character_count,
 			GET_GAME_ENGINE_HUD_FORMAT(0x50),
-			other_player->name);
+			player_display_name(other_player));
 		break;
 	case 6:
 		usnprintf(
 			message,
 			message_character_count,
 			GET_GAME_ENGINE_HUD_FORMAT(0x51),
-			player->name);
+			player_display_name(player));
 		break;
 	case 13:
 		other_player = player_get(parameter2);
@@ -7204,7 +7204,7 @@ static boolean internal_rasterize_score(
 			message,
 			message_character_count,
 			GET_GAME_ENGINE_HUD_FORMAT(0x52),
-			other_player->name);
+			player_display_name(other_player));
 		break;
 	case 10:
 		ustrncpy(
@@ -7247,7 +7247,7 @@ static boolean internal_rasterize_score(
 			message,
 			message_character_count,
 			GET_GAME_ENGINE_HUD_FORMAT(0x58),
-			other_player->name);
+			player_display_name(other_player));
 		break;
 	case 14:
 		usnprintf(
@@ -7295,7 +7295,7 @@ static boolean internal_rasterize_score(
 			message,
 			message_character_count,
 			GET_GAME_ENGINE_HUD_FORMAT(0x5E),
-			other_player->name,
+			player_display_name(other_player),
 			score);
 		break;
 	case 23:

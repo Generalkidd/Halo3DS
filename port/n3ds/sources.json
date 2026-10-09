@@ -1170,6 +1170,27 @@
       ]
     },
     {
+      "source": "port/n3ds/src/engine_campaign_options.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "port/n3ds/src/engine_campaign_overlay.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "port/n3ds/src/engine_campaign_extras.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
       "source": "port/n3ds/src/engine_save_codec.c",
       "compiler": "gcc"
     },
@@ -1231,6 +1252,14 @@
     {
       "source": "port/n3ds/src/engine_audio_platform.c",
       "compiler": "gcc"
+    },
+    {
+      "source": "port/n3ds/vendor/stb_vorbis.c",
+      "compiler": "gcc",
+      "defines": [
+        "STB_VORBIS_NO_STDIO=1",
+        "STB_VORBIS_NO_PUSHDATA_API=1"
+      ]
     },
     {
       "source": "port/n3ds/src/engine_audio_codec.c",

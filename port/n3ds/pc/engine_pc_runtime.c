@@ -39,6 +39,7 @@ static struct {
     struct resource_map resource_storage[NUMBER_OF_RESOURCE_MAP_TYPES];
     struct resource_map *resources[NUMBER_OF_RESOURCE_MAP_TYPES];
 } pc;
+static int pc_overlay_mode;
 
 static int read_at(void *context, uint32_t offset, uint32_t size, void *buffer)
 {
@@ -104,16 +105,27 @@ void n3ds_pc_tags_close(void)
     }
     close_file(&pc.map);
     memset(&pc, 0, sizeof(pc));
+    pc_overlay_mode = 0;
 }
 
-int n3ds_pc_tags_active(void) { return pc.active; }
+int n3ds_pc_tags_active(void) { return pc.active && !pc_overlay_mode; }
+int n3ds_pc_tags_loaded(void) { return pc.active; }
+void n3ds_pc_tags_use_overlay(void) { if (pc.active) pc_overlay_mode = 1; }
+
+int n3ds_pc_overlay_contains(const void *address, unsigned long bytes)
+{
+    uintptr_t base = (uintptr_t)pc.tags;
+    uintptr_t pointer = (uintptr_t)address;
+    return pc.active && pc_overlay_mode && base && pointer >= base &&
+        pointer - base <= pc.capacity && bytes <= pc.capacity - (pointer - base);
+}
 
 void *n3ds_pc_model_resolve_external(const struct n3ds_cache_view *view,
     const void *address, unsigned long bytes)
 {
     uintptr_t base = (uintptr_t)pc.model_geometry;
     uintptr_t pointer = (uintptr_t)address;
-    if (!pc.active || !view || view->tags != pc.tags || !base ||
+    if (!pc.active || !view || (!pc_overlay_mode && view->tags != pc.tags) || !base ||
         pointer < base || pointer - base > pc.model_geometry_bytes ||
         bytes > pc.model_geometry_bytes - (pointer - base)) return NULL;
     return (void *)address;
@@ -234,7 +246,7 @@ int n3ds_pc_bsp_load(struct n3ds_cache_view *view,
     enum cache_file_status status;
     uint32_t address, size, file_offset, base, difference;
     char message[160];
-    if (!pc.active || !view || !reference) return 1;
+    if (!n3ds_pc_tags_active() || !view || !reference) return 1;
     address = (uint32_t)(uintptr_t)reference->base_address;
     size = (uint32_t)reference->file_size;
     file_offset = (uint32_t)reference->file_offset;
@@ -288,6 +300,10 @@ int n3ds_pc_tags_open(const char *name, struct n3ds_cache_view *view)
 { (void)name; (void)view; return 1; }
 void n3ds_pc_tags_close(void) {}
 int n3ds_pc_tags_active(void) { return 0; }
+int n3ds_pc_tags_loaded(void) { return 0; }
+void n3ds_pc_tags_use_overlay(void) {}
+int n3ds_pc_overlay_contains(const void *address, unsigned long bytes)
+{ (void)address; (void)bytes; return 0; }
 int n3ds_pc_cache_read(unsigned long offset, unsigned long bytes, void *destination)
 { (void)offset; (void)bytes; (void)destination; return 0; }
 int n3ds_pc_cache_range_valid(unsigned long offset, unsigned long bytes)

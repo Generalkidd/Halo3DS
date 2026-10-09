@@ -863,7 +863,7 @@ boolean race_engine_display_score(
 			}
 			else
 				string = L"";
-			usnprintf(buffer, buffer_size, string, other_player->name);
+			usnprintf(buffer, buffer_size, string, player_display_name(other_player));
 		}
 		break;
 
@@ -878,7 +878,7 @@ boolean race_engine_display_score(
 			}
 			else
 				string = L"";
-			usnprintf(buffer, buffer_size, string, other_player->name);
+			usnprintf(buffer, buffer_size, string, player_display_name(other_player));
 		}
 		break;
 
@@ -920,7 +920,7 @@ boolean race_engine_display_score(
 			buffer,
 			buffer_size,
 			string,
-			other_player->name,
+			player_display_name(other_player),
 			other_player->statistics.multiplayer_statistics.race_statistics.laps + 1);
 		break;
 
@@ -938,7 +938,7 @@ boolean race_engine_display_score(
 			buffer,
 			buffer_size,
 			string,
-			other_player->name,
+			player_display_name(other_player),
 			other_player->statistics.multiplayer_statistics.race_statistics.laps);
 		break;
 

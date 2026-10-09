@@ -2395,7 +2395,11 @@ long sound_new_impulse(
 
 	if (sound_manager_globals.initialized && sound_manager_globals.enabled)
 	{
-		if (definition->compression == _sound_compression_xbox_adpcm &&
+		if ((definition->compression == _sound_compression_xbox_adpcm
+#ifdef HALO_N3DS
+			|| definition->compression == _sound_compression_ogg
+#endif
+			) &&
 			((definition->encoding == _sound_encoding_mono &&
 				definition->sample_rate == 0) ||
 				definition->encoding == _sound_encoding_stereo))

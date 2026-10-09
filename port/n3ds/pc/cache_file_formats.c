@@ -431,6 +431,7 @@ names in reads and messages) */
 none and Xbox ADPCM; Custom Edition also has Ogg Vorbis, 3) */
 #define SOUND_COMPRESSION_NONE 0
 #define SOUND_COMPRESSION_XBOX_ADPCM 1
+#define SOUND_COMPRESSION_OGG 3
 
 /* font (BlamLib Misc.cs, font_group: 156 bytes, 36 bytes of padding after
 the heights; the block offsets below hold for every font in loc.map) */
@@ -4967,11 +4968,9 @@ static void bitmaps_prepare(
 /* Gives every permutation of the sound at `sound_offset` (tag `handle`)
 the state the game expects of one it has not played: its tag is its own
 (sounds.map holds the handles of whatever map it was built with), with no
-cache block or samples. A sound whose compression this build cannot decode
-is made unplayable: this build plays Xbox ADPCM (and refuses uncompressed
-sounds), and Custom Edition also has Ogg Vorbis, which would be decoded as
-ADPCM noise. With no pitch ranges the game neither plays nor loads it
-(sound_manager.c, sound_definition_is_playable). */
+cache block or samples. Unsupported compression is made unplayable by
+clearing pitch ranges. The 3DS build has an Ogg Vorbis decoder; other builds
+retain their prior behavior. */
 static void sound_prepare(
 	struct load_state const *state,
 	uint32_t sound_offset,
@@ -4980,7 +4979,11 @@ static void sound_prepare(
 {
 	uint8_t *sound = state->tag_cache + sound_offset;
 	int16_t compression = read_s16(sound + SOUND_COMPRESSION_OFFSET);
-	int decodable = compression == SOUND_COMPRESSION_NONE || compression == SOUND_COMPRESSION_XBOX_ADPCM;
+	int decodable = compression == SOUND_COMPRESSION_NONE || compression == SOUND_COMPRESSION_XBOX_ADPCM
+#ifdef __3DS__
+		|| compression == SOUND_COMPRESSION_OGG
+#endif
+		;
 	int32_t pitch_range_count;
 	uint32_t pitch_ranges_offset;
 	int32_t pitch_range_index;
@@ -5021,7 +5024,11 @@ static void sound_prepare(
 			write_u32(permutation + SOUND_PERMUTATION_CACHE_BASE_ADDRESS_OFFSET, 0);
 			write_u32(permutation + SOUND_PERMUTATION_CACHE_TAG_INDEX_OFFSET, handle);
 			write_u32(permutation + SOUND_PERMUTATION_RUNTIME_TAG_INDEX_OFFSET, handle);
-			if (permutation_compression != SOUND_COMPRESSION_NONE && permutation_compression != SOUND_COMPRESSION_XBOX_ADPCM)
+			if (permutation_compression != SOUND_COMPRESSION_NONE && permutation_compression != SOUND_COMPRESSION_XBOX_ADPCM
+#ifdef __3DS__
+				&& permutation_compression != SOUND_COMPRESSION_OGG
+#endif
+				)
 			{
 				decodable = 0;
 			}

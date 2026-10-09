@@ -9,6 +9,9 @@ int n3ds_pc_map_available(const char *name);
 int n3ds_pc_tags_open(const char *name, struct n3ds_cache_view *view);
 void n3ds_pc_tags_close(void);
 int n3ds_pc_tags_active(void);
+int n3ds_pc_tags_loaded(void);
+void n3ds_pc_tags_use_overlay(void);
+int n3ds_pc_overlay_contains(const void *address, unsigned long bytes);
 int n3ds_pc_cache_read(unsigned long offset, unsigned long bytes, void *destination);
 int n3ds_pc_cache_range_valid(unsigned long offset, unsigned long bytes);
 int n3ds_pc_bsp_load(struct n3ds_cache_view *view,

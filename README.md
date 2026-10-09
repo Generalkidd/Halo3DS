@@ -10,11 +10,13 @@ You will need a modded 3DS/2DS console, a FAT32 SD card with at least 4 GB of fr
 The default upstream release supports the original Xbox Halo CE ISO. PC/MCC
 maps are not supported by that release.
 
-The `local-integration` branch also has an **experimental PC retail v7**
-launcher for local multiplayer. It is built separately from the normal Xbox
-launcher; see the [two-ISO installer](port/n3ds/setup/Dual/README.md). This work
-has been exercised in an emulator, but has not yet been verified on a physical
-New 3DS XL. The default upstream release remains Xbox-only.
+The `local-integration` branch also has an **experimental unified New 3DS**
+launcher for Xbox campaign and PC retail v7 local multiplayer. Its
+[two-ISO installer](port/n3ds/setup/Unified/README.md) places one launcher on
+the SD card. The campaign difficulty screen can enable extra PC weapons and a
+Rocket Warthog while preserving the original Xbox map files. Emulator checks
+are in progress; physical New 3DS XL testing remains. The default upstream
+release remains Xbox-only.
 
 ## Setup
 
@@ -63,6 +65,8 @@ Check logs before sharing them, and don't include game files or firmware.
 
 [Developer notes](docs/DEVELOPMENT.md) cover building the game and both setup
 tools, the code layout, testing, and details to watch out for when making changes.
+The [modding guide](port/n3ds/MODDING.md) points to gameplay, bot, renderer,
+cache and campaign extension code.
 For the setup tools, start with the [Visual Studio solution instructions](docs/DEVELOPMENT.md#visual-studio).
 
 ## Origin and notices

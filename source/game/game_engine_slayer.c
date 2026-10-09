@@ -532,7 +532,7 @@ static boolean slayer_engine_display_score(
 			buffer,
 			buffer_character_count,
 			GET_MULTIPLAYER_GAME_TEXT(_string_new_target_name),
-			target_player->name);
+			player_display_name(target_player));
 		break;
 
 	case _game_engine_message_show_score:

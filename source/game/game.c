@@ -761,6 +761,9 @@ void game_initialize_for_new_map(
 	real_math_reset_precision();
 	rasterizer_initialize_for_new_map();
 	game_state_initialize_for_new_map();
+#ifdef HALO_N3DS_UNIFIED_UI
+	{extern void n3ds_campaign_extras_for_new_map(void);n3ds_campaign_extras_for_new_map();}
+#endif
 	game_time_initialize_for_new_map();
 	interface_initialize_for_new_map();
 	game_allegiance_initialize_for_new_map();

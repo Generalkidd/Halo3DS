@@ -27,3 +27,11 @@ Its source is maintained separately from the setup utility under `source/`
 and `port/n3ds/`. This utility does not supply the original Xbox game or any rights
 to its assets. The setup utility's source/license notices do not relicense the
 port executable, original game, or generated user data.
+
+## Ogg Vorbis decoder
+
+The unified Halo3DS build includes `stb_vorbis.c` version 1.22 by Sean
+Barrett. The pinned source and its public domain or MIT license text are in
+`port/n3ds/vendor/`; its provenance and SHA-256 are documented in
+`port/n3ds/vendor/README.md`. The decoder processes owner supplied PC retail
+sound data at runtime. No sound data is included in this package.

@@ -21,6 +21,7 @@
 #include "math/periodic_functions.h"
 
 static int models_active, model_active, first_person_active;
+static int model_scope_depth, batch_allowed_stack[4];
 static int scenery_batch_allowed;
 static void scenery_batch_flush(void),scenery_batch_release(void);
 void n3ds_scenery_report(void);
@@ -221,16 +222,34 @@ void rasterizer_model_ambient_reflection_tint(real alpha,real red,real green,rea
 void _rasterizer_models_begin(boolean skip_obscurer_test)
 {
     (void)skip_obscurer_test;
-    assert(n3ds_engine_window_active() && !models_active && !model_active);
+    assert(n3ds_engine_window_active() && !model_active);
+    /* Flag cloth and King hill geometry open their own model scope while the
+     * object renderer's scope is active. Keep the outer GPU batch alive and
+     * flush its queued scenery before the dynamic geometry is submitted. */
+    if(models_active) {
+        assert(model_scope_depth>0 && model_scope_depth<4);
+        scenery_batch_flush();n3ds_gpu_model_batch_flush();
+        batch_allowed_stack[model_scope_depth]=scenery_batch_allowed;
+        scenery_batch_allowed=0;++model_scope_depth;
+        return;
+    }
+    assert(model_scope_depth==0);
+    model_scope_depth=1;
     models_active=1;scenery_batch_allowed=1;
     n3ds_gpu_model_batch_begin();
     memset(&counters,0,sizeof(counters));
 }
 void _rasterizer_models_end(void)
 {
-    assert(models_active && !model_active);
+    assert(models_active && !model_active && model_scope_depth>0);
+    if(model_scope_depth>1) {
+        n3ds_gpu_model_batch_flush();
+        --model_scope_depth;
+        scenery_batch_allowed=batch_allowed_stack[model_scope_depth];
+        return;
+    }
     scenery_batch_flush();scenery_batch_allowed=0;
-    n3ds_gpu_model_batch_end();models_active=0;
+    n3ds_gpu_model_batch_end();models_active=0;model_scope_depth=0;
 }
 void _rasterizer_model_begin(const struct rasterizer_model_begin_parameters *input, boolean preserve_z)
 {

@@ -14,6 +14,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("ui_map", type=Path)
     parser.add_argument("--extended", action="store_true", help="Show every widget using a function index absent from the Xbox table")
+    parser.add_argument("--name", help="Print all handlers for widgets whose tag name contains this text")
     args = parser.parse_args()
     data = args.ui_map.read_bytes()
     if len(data) < 2048 or data[:4] != b"daeh" or u32(data, 4) != 7 or data[2044:2048] != b"toof":
@@ -51,9 +52,12 @@ def main():
         for h in range(handler_count):
             item = handlers + h * 0x48
             flags, event_type, function = struct.unpack_from("<Ihh", data, item)
-            if not args.extended or (flags & 0x80 and function >= 102):
+            if args.name or not args.extended or (flags & 0x80 and function >= 102):
                 rows.append((h, flags, event_type, function))
-        if args.extended and not rows or not args.extended and "quit" not in name.lower():
+        if args.name:
+            if args.name.lower() not in name.lower():
+                continue
+        elif args.extended and not rows or not args.extended and "quit" not in name.lower():
             continue
         print(f"{index} {name} handlers={handler_count}")
         for h, flags, event_type, function in rows:

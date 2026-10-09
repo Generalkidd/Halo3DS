@@ -598,7 +598,9 @@ static void *load_bitmap_now(struct bitmap_data *bitmap, boolean block, boolean 
     unsigned int pixel_stride=bitmap && (bitmap->format<=2 || bitmap->format==17)?1:bitmap && bitmap->format>=10?4:2;
 #ifdef HALO_N3DS_EXPERIMENTAL_PC_UI
     extern int n3ds_pc_tags_active(void);
-    int pc_bitmap=n3ds_pc_tags_active();
+    extern int n3ds_pc_overlay_contains(const void *, unsigned long);
+    int pc_bitmap=n3ds_pc_tags_active() ||
+        n3ds_pc_overlay_contains(bitmap,bitmap?sizeof(*bitmap):0);
 #endif
     assert(load || !block);
     if (!initialized || !opened) return NULL;

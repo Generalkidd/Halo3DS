@@ -615,7 +615,7 @@ boolean king_engine_display_score(
 				}
 				else
 					string = L"";
-				usnprintf(buffer, buffer_size, string, other_player->name, score);
+				usnprintf(buffer, buffer_size, string, player_display_name(other_player), score);
 			}
 			else if (message == king_message_enemy_on_the_hill)
 			{
@@ -628,7 +628,7 @@ boolean king_engine_display_score(
 				}
 				else
 					string = L"";
-				usnprintf(buffer, buffer_size, string, other_player->name, score);
+				usnprintf(buffer, buffer_size, string, player_display_name(other_player), score);
 			}
 			else
 			{

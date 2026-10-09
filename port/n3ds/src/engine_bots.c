@@ -49,6 +49,21 @@ static void platform_log(char const *format, ...)
 static boolean n3ds_bots_is_registered(short queue_index, short identifier);
 #define MAXIMUM_NUMBER_OF_PLAYERS 16
 static long n3ds_bot_players[MAXIMUM_NUMBER_OF_PLAYERS];
+static long n3ds_star_bot_index = NONE;
+static unsigned long n3ds_bot_match_serial;
+static boolean combat_bot_is_star(short queue_index)
+{
+	return n3ds_star_bot_index != NONE &&
+		DATUM_INDEX_TO_ABSOLUTE_INDEX(n3ds_star_bot_index) == queue_index;
+}
+wchar_t const *n3ds_bots_display_name(struct player_datum const *player)
+{
+	/* must keep */
+	if (player && n3ds_star_bot_index != NONE &&
+		player == player_try_and_get(n3ds_star_bot_index))
+		return L"ChaoticSPARTAN1";
+	return player ? player->name : L"";
+}
 struct scenario_netgame_flag
 {
 	real_point3d position;
@@ -74,6 +89,8 @@ struct combat_bot_state
 	long last_action_tick;
 	long last_grenade_tick;
 	long last_melee_tick;
+	unsigned long accuracy_attempts;
+	unsigned long accuracy_hits;
 	long melee_until_tick;
 	long last_position_tick;
 	long evade_until_tick;
@@ -103,6 +120,21 @@ static real combat_bot_distance_squared(real_point3d const *a, real_point3d cons
 	real dy = b->y - a->y;
 	real dz = b->z - a->z;
 	return dx * dx + dy * dy + dz * dz;
+}
+
+/* Stable for one 15-tick firing interval, independent of the game's RNG.
+ * A missed shot changes the visible aim and cannot receive fallback damage. */
+static unsigned long combat_bot_accuracy_roll(short queue_index, long tick,
+	short shot_interval)
+{
+	unsigned long value = (unsigned long)(tick / shot_interval) ^
+		((unsigned long)(queue_index + 1) * 0x9e3779b9UL);
+	value ^= value >> 16;
+	value *= 0x7feb352dUL;
+	value ^= value >> 15;
+	value *= 0x846ca68bUL;
+	value ^= value >> 16;
+	return value;
 }
 
 static boolean combat_bot_flag_held_by_ally(struct weapon_datum const *weapon,
@@ -643,15 +675,15 @@ void n3ds_bots_fill_action(short queue_index, short identifier,
 	long objective_index = NONE;
 	long route_object_index = NONE;
 	boolean target_visible = FALSE;
+	boolean accurate_shot = TRUE;
 	short mode = 0; /* fight, weapon, vehicle, driving, equipment, flag, capture, ball, hill, evade */
 	short slot;
 	short desired_seat_index = NONE;
 	boolean desired_turret = FALSE;
+	short shot_interval;
 	long tick;
 
-	if (!n3ds_bots_is_registered(queue_index, identifier) || !bot || bot->name[0] != L'A' || bot->name[1] != L'I' ||
-		bot->name[2] != L'B' || bot->name[3] != L'o' || bot->name[4] != L't' ||
-		bot->unit_index == NONE)
+	if (!n3ds_bots_is_registered(queue_index, identifier) || !bot || bot->unit_index == NONE)
 		return;
 	bot_unit = object_try_and_get(bot->unit_index);
 	if (!bot_unit || TEST_FLAG(bot_unit->object.damage_flags, _object_dead_bit))
@@ -660,6 +692,7 @@ void n3ds_bots_fill_action(short queue_index, short identifier,
 	if (!unit)
 		return;
 	tick = game_time_initialized() ? game_time_get() : 0;
+	shot_interval = combat_bot_is_star(queue_index) ? 12 : 15;
 	if (state->identifier != identifier || tick < state->last_tick)
 	{
 		csmemset(state, 0, sizeof(*state));
@@ -1044,7 +1077,20 @@ void n3ds_bots_fill_action(short queue_index, short identifier,
 	else
 		action->throttle.i = 0.5f;
 	if (action->primary_trigger > 0.f)
+	{
+		if (target)
+		{
+			unsigned long roll = combat_bot_accuracy_roll(queue_index, tick, shot_interval);
+			real fraction = (real)((roll >> 16) & 255) / 255.f;
+			real side = (roll & 0x100UL) ? 1.f : -1.f;
+			accurate_shot = roll % 100 < (combat_bot_is_star(queue_index) ? 93 : 85);
+			action->desired_facing.yaw += side *
+				(accurate_shot ? 0.002f + 0.007f * fraction : 0.045f + 0.025f * fraction);
+			action->desired_facing.pitch += ((roll & 0x200UL) ? 1.f : -1.f) *
+				(accurate_shot ? 0.002f + 0.004f * fraction : 0.012f + 0.010f * fraction);
+		}
 		action->control_flags |= FLAG(_unit_control_weapon_primary_trigger_bit);
+	}
 	if (mode == 0 && target && tick < state->melee_until_tick && best_distance2 > 0.7f * 0.7f)
 	{
 		action->throttle.i = 0.75f;
@@ -1150,9 +1196,9 @@ void n3ds_bots_fill_action(short queue_index, short identifier,
 				}
 			}
 		}
-		/* The fake client cannot report a projectile hit. Apply the current
-		   weapon's damage only to a target in sight and within gun range. */
-		if (action->primary_trigger > 0.f && tick % 15 == queue_index % 15 &&
+		/* The fake client cannot report a projectile hit. The fallback applies
+		   damage only to a visible target when this shot's aim roll hit. */
+		if (action->primary_trigger > 0.f && tick % shot_interval == queue_index % shot_interval &&
 			unit->unit.current_weapon_index != NONE)
 		{
 			long weapon_index = unit->unit.weapon_object_indices[unit->unit.current_weapon_index];
@@ -1176,6 +1222,9 @@ void n3ds_bots_fill_action(short queue_index, short identifier,
 				if (damage_index != NONE &&
 					aim_assist_clear_line_of_sight(&start, &end, bot->unit_index, target_object_index))
 				{
+				++state->accuracy_attempts;
+				if (accurate_shot)
+				{
 					struct damage_data damage;
 					damage_data_new(&damage, damage_index);
 					damage.owner_player_index = bot_index;
@@ -1188,9 +1237,15 @@ void n3ds_bots_fill_action(short queue_index, short identifier,
 					damage.scale = 0.25f;
 					scenario_location_from_point(&damage.location, &damage.epicenter);
 					object_cause_damage(&damage, target_object_index, NONE, NONE, NONE, NULL);
+					++state->accuracy_hits;
 					if (queue_index < 5)
 						platform_log("combat bot: tick %ld player %d hit player %d", tick,
 							queue_index, (int)DATUM_INDEX_TO_ABSOLUTE_INDEX(target - (struct player_datum *)player_data->data));
+				}
+				if (queue_index < 5 && state->accuracy_attempts % 20 == 0)
+					platform_log("combat bot accuracy: player %d shots %lu hits %lu misses %lu",
+						queue_index, state->accuracy_attempts, state->accuracy_hits,
+						state->accuracy_attempts - state->accuracy_hits);
 				}
 			}
 		}
@@ -1207,6 +1262,7 @@ void n3ds_bots_reset(void)
 	short i;
 	for (i = 0; i < MAXIMUM_NUMBER_OF_PLAYERS; ++i)
 		n3ds_bot_players[i] = NONE;
+	n3ds_star_bot_index = NONE;
 	csmemset(combat_bot_states, 0, sizeof(combat_bot_states));
 }
 
@@ -1260,9 +1316,16 @@ short n3ds_bots_requested_count(void)
 short n3ds_bots_create(short count)
 {
 	short i, created = 0;
+	short named_slot = NONE;
+	unsigned long seed;
 	n3ds_bots_reset();
 	if (count < 0 || count > 15)
 		return 0;
+	seed = (unsigned long)system_seconds() ^
+		((unsigned long)system_milliseconds() * 0x85ebca6bUL) ^
+		(++n3ds_bot_match_serial * 0x9e3779b9UL);
+	if (count && seed_random_range(&seed, 0, 4) == 0)
+		named_slot = seed_random_range(&seed, 0, count);
 	for (i = 0; i < count; ++i)
 	{
 		struct network_player profile = {0};
@@ -1271,7 +1334,10 @@ short n3ds_bots_create(short count)
 		short machine = (short)(slot / 4);
 		char name[12];
 		short n;
-		snprintf(name, sizeof(name), "AIBot%02d", i + 1);
+		if (i == named_slot)
+			snprintf(name, sizeof(name), "ChaoticSP1");
+		else
+			snprintf(name, sizeof(name), "AIBot%02d", i + 1);
 		for (n = 0; name[n] && n < 11; ++n)
 			profile.name[n] = (wchar_t)(unsigned char)name[n];
 		profile.primary_color_index = i & 1;
@@ -1285,6 +1351,9 @@ short n3ds_bots_create(short count)
 			break;
 		}
 		n3ds_bot_players[DATUM_INDEX_TO_ABSOLUTE_INDEX(player_index)] = player_index;
+		if (i == named_slot)
+			n3ds_star_bot_index = player_index;
+		platform_log("BOTS: player %d profile %s", slot, name);
 		++created;
 	}
 	{

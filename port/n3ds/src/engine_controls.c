@@ -129,6 +129,14 @@ void n3ds_controls_draw(void)
 static int pc_menu_open,pc_menu_field,pc_menu_map,pc_menu_mode,pc_menu_bots,pc_menu_error,pc_menu_swallow;
 static unsigned int pc_menu_previous;
 static const char *const pc_menu_modes[]={"slayer","ctf","oddball","king","race"};
+static int pc_menu_available(void)
+{
+#ifdef HALO_N3DS_UNIFIED_UI
+ return main_menu_is_active();
+#else
+ return main_menu_is_active() && n3ds_pc_tags_active();
+#endif
+}
 int n3ds_pc_local_menu_active(void){return pc_menu_open;}
 void n3ds_pc_local_menu_filter(struct native_input_sample *sample)
 {
@@ -136,14 +144,14 @@ void n3ds_pc_local_menu_filter(struct native_input_sample *sample)
  pc_menu_previous=held;
  if(pc_menu_swallow){if(!held)pc_menu_swallow=0;memset(sample,0,sizeof(*sample));return;}
  if(!pc_menu_open){
-  if((fresh&NATIVE_KEY_SELECT) && main_menu_is_active() && n3ds_pc_tags_active() && !n3ds_controls_active()){
+  if((fresh&NATIVE_KEY_SELECT) && pc_menu_available() && !n3ds_controls_active()){
    pc_menu_open=1;pc_menu_field=0;pc_menu_error=0;
    pc_menu_bots=n3ds_bots_requested_count();
    pc_menu_swallow=1;n3ds_log("PC LOCAL MENU: opened");memset(sample,0,sizeof(*sample));
   }
   return;
  }
- if(!main_menu_is_active() || !n3ds_pc_tags_active()){
+ if(!pc_menu_available()){
   pc_menu_open=0;pc_menu_swallow=1;memset(sample,0,sizeof(*sample));return;
  }
  if(fresh&NATIVE_KEY_B){pc_menu_open=0;pc_menu_swallow=1;n3ds_log("PC LOCAL MENU: closed");}

@@ -272,6 +272,13 @@ void player_handle_powerup_equipment(
 extern struct data_array *player_data;
 extern struct players_globals *players_globals;
 
+#ifdef HALO_N3DS
+wchar_t const *n3ds_bots_display_name(struct player_datum const *player);
+#define player_display_name(player) n3ds_bots_display_name(player)
+#else
+#define player_display_name(player) ((player)->name)
+#endif
+
 /* ---------- public code */
 
 #endif // __PLAYERS_H

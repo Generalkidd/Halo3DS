@@ -34,6 +34,8 @@ short n3ds_ui_pc_expansion_map_count(void);
 #include "camera/observer.h"
 #include "interface/ui_widget.h"
 #include "scenario/scenario.h"
+#include "scenario/scenario_definitions.h"
+#include "objects/objects.h"
 #include "player_control.h"
 #include "cutscene/cinematics.h"
 #include "render/render_sprite.h"
@@ -50,6 +52,12 @@ short n3ds_ui_pc_expansion_map_count(void);
 #ifdef HALO_N3DS_EXPERIMENTAL_PC_ARSENAL
 #include "units/unit_definitions.h"
 #include "game/game_globals.h"
+#endif
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_MENU_KEYS
+#include "units/unit_definitions.h"
+#include "tag_files/tag_groups.h"
+#include "items/weapons.h"
+boolean unit_get_seat_entrance_point(long,long,short,real_point3d *,real_point3d *,real_point3d *);
 #endif
 #ifdef HALO_N3DS_MAP_CYCLE_TEST
 #include "tag_files/tag_groups.h"
@@ -93,12 +101,30 @@ struct menu_key_event { long frame; unsigned int mask; };
 static struct menu_key_event menu_key_events[64];
 static unsigned int menu_key_event_count;
 static long menu_key_capture_frame;
+static int menu_go_to_extra;
+static int menu_go_to_b30_extra;
+static int menu_survey_extras;
+static int menu_enter_b30_extra;
+static int menu_b30_wait_logged;
+static int menu_try_b30_extra;
+static long menu_b30_action_frame;
+static long menu_b30_natural_vehicle;
+static long menu_b30_fire_start;
+static long menu_b30_vehicle;
+static long menu_b30_weapon;
+static long menu_b30_initial_fired;
 static int menu_keys_load(void)
 {
     static const struct { const char *name; unsigned int mask; } names[]={
         {"A",NATIVE_KEY_A},{"B",NATIVE_KEY_B},{"UP",NATIVE_KEY_DUP},
         {"DOWN",NATIVE_KEY_DDOWN},{"LEFT",NATIVE_KEY_DLEFT},
-        {"RIGHT",NATIVE_KEY_DRIGHT},{"START",NATIVE_KEY_START},{"SELECT",NATIVE_KEY_SELECT}
+        {"RIGHT",NATIVE_KEY_DRIGHT},{"START",NATIVE_KEY_START},{"SELECT",NATIVE_KEY_SELECT},
+        {"TAP_EXTRAS",NATIVE_KEY_TOUCH},
+        {"LOAD_C20",0x80000000u},{"LOAD_C40",0x40000000u},{"LOAD_D20",0x20000000u},
+        {"LOAD_B30",0x08000000u},
+        {"GOTO_C20_EXTRA",0x10000000u},{"GOTO_B30_EXTRA",0x04000000u},
+        {"SURVEY_EXTRAS",0x02000000u},{"ENTER_B30_EXTRA",0x01000000u},
+        {"TRY_B30_EXTRA",0x00800000u}
     };
     FILE *file=fopen("sdmc:/halo-source/menu-keys.txt","rb");
     char line[64],name[16],extra;
@@ -125,9 +151,318 @@ static int menu_keys_load(void)
 static void menu_keys_sample(long frame,struct native_input_sample *sample)
 {
     for(unsigned int i=0;i<menu_key_event_count;++i) if(menu_key_events[i].frame==frame) {
-        char message[96];sample->held|=menu_key_events[i].mask;
+        char message[96];
+        unsigned int mask=menu_key_events[i].mask;
+        if(mask==0x80000000u || mask==0x40000000u || mask==0x20000000u || mask==0x08000000u) {
+            const char *name=mask==0x80000000u?"c20":mask==0x40000000u?"c40":
+                mask==0x20000000u?"d20":"b30";
+            char path[40];snprintf(path,sizeof(path),"levels\\%s\\%s",name,name);
+            main_set_map_name(path);
+        } else if(mask==0x10000000u) menu_go_to_extra=1;
+        else if(mask==0x04000000u) menu_go_to_b30_extra=1;
+        else if(mask==0x02000000u) menu_survey_extras=1;
+        else if(mask==0x01000000u) menu_enter_b30_extra=1;
+        else if(mask==0x00800000u) menu_try_b30_extra=1;
+        else sample->held|=mask;
+        if(menu_key_events[i].mask==NATIVE_KEY_TOUCH) {sample->touch_x=160;sample->touch_y=120;}
         snprintf(message,sizeof(message),"MENU KEYS: frame=%ld mask=%08x",frame,menu_key_events[i].mask);
         n3ds_log(message);
+    }
+}
+static void menu_keys_enter_b30_extra(long frame,long unit)
+{
+    if(menu_enter_b30_extra && unit!=NONE &&
+       !strcmp(main_get_map_name(),"levels\\b30\\b30")) {
+        if(unit_get(unit)->object.parent_object_index!=NONE) {
+            if(!menu_b30_wait_logged) {
+                n3ds_log("MENU KEYS: b30 waiting for player to leave cinematic transport");
+                menu_b30_wait_logged=1;
+            }
+            return;
+        }
+        menu_enter_b30_extra=0;
+        long definition=tag_loaded('vehi',"vehicles\\rwarthog\\rwarthog");
+        struct object_iterator iterator;
+        object_iterator_new(&iterator,_object_mask_vehicle,0);
+        struct object_datum *object;
+        menu_b30_vehicle=NONE;
+        while((object=object_iterator_next(&iterator))!=NULL) {
+            if(object->definition_index==definition &&
+               object->object.position.x>-18.f && object->object.position.x<-14.f &&
+               object->object.position.y>41.f && object->object.position.y<44.f) {
+                menu_b30_vehicle=iterator.index;break;
+            }
+        }
+        if(menu_b30_vehicle==NONE) {n3ds_log("MENU KEYS: b30 vehicle absent at spawn");return;}
+        real_point3d entry_point={-16.11f,38.75f,3.54f};
+        object_set_position(unit,&entry_point,NULL,NULL);
+        struct unit_definition *vehicle_definition=unit_definition_get(definition);
+        if(!vehicle_definition) {n3ds_log("MENU KEYS: b30 vehicle definition absent");return;}
+        short gunner=NONE;
+        for(short i=0;i<vehicle_definition->unit.seats.count;++i) {
+            struct unit_seat *seat=TAG_BLOCK_GET_ELEMENT(&vehicle_definition->unit.seats,i,struct unit_seat);
+            if(TEST_FLAG(seat->flags,_unit_seat_gunner_bit)) {gunner=i;break;}
+        }
+        if(gunner==NONE || !unit_enter_seat(unit,menu_b30_vehicle,gunner)) {
+            n3ds_log("MENU KEYS: b30 gunner entry rejected");return;
+        }
+        struct unit_datum *vehicle=unit_try_and_get(menu_b30_vehicle);
+        menu_b30_weapon=NONE;
+        if(vehicle)for(short i=0;i<MAXIMUM_WEAPONS_PER_UNIT;++i)
+            if(vehicle->unit.weapon_object_indices[i]!=NONE) {
+                menu_b30_weapon=vehicle->unit.weapon_object_indices[i];break;
+            }
+        struct weapon_datum *weapon=weapon_try_and_get(menu_b30_weapon);
+        menu_b30_initial_fired=weapon?weapon->weapon.game_time_last_fired:NONE;
+        menu_b30_fire_start=frame+20;
+        char detail[175];
+        snprintf(detail,sizeof(detail),"MENU KEYS: b30 gunner entered vehicle=%08lx seat=%d gun=%08lx initial_fired=%ld",
+            menu_b30_vehicle,gunner,menu_b30_weapon,menu_b30_initial_fired);
+        n3ds_log(detail);
+    }
+    if(menu_b30_fire_start && frame==menu_b30_fire_start+100) {
+        struct weapon_datum *weapon=weapon_try_and_get(menu_b30_weapon);
+        long fired=weapon?weapon->weapon.game_time_last_fired:NONE;
+        char detail[160];
+        snprintf(detail,sizeof(detail),"MENU KEYS: b30 rocket fire gun=%08lx fired=%ld initial=%ld %s",
+            menu_b30_weapon,fired,menu_b30_initial_fired,
+            weapon && fired>menu_b30_initial_fired?"PASS":"FAIL");
+        n3ds_log(detail);
+    }
+}
+static void menu_keys_try_b30_extra(long frame,long unit)
+{
+    if(menu_try_b30_extra && unit!=NONE &&
+       !strcmp(main_get_map_name(),"levels\\b30\\b30")) {
+        if(!player_input_enabled() || cinematic_in_progress())return;
+        long definition=tag_loaded('vehi',"vehicles\\rwarthog\\rwarthog");
+        long parent=unit_get(unit)->object.parent_object_index;
+        if(parent!=NONE) {
+            struct object_datum *parent_object=object_try_and_get(parent);
+            if(!parent_object || parent_object->definition_index!=definition)return;
+            unit_exit_seat_end(unit);
+            n3ds_log("MENU KEYS: b30 exited checkpoint Rocket Warthog before X entry test");
+            if(unit_get(unit)->object.parent_object_index!=NONE)return;
+        }
+        menu_try_b30_extra=0;
+        struct object_iterator iterator;
+        object_iterator_new(&iterator,_object_mask_vehicle,0);
+        struct object_datum *object;
+        menu_b30_natural_vehicle=NONE;
+        while((object=object_iterator_next(&iterator))!=NULL)
+            if(object->definition_index==definition &&
+               object->object.position.x>-18.f && object->object.position.x<-14.f &&
+               object->object.position.y>41.f && object->object.position.y<44.f) {
+                menu_b30_natural_vehicle=iterator.index;break;
+            }
+        if(menu_b30_natural_vehicle==NONE) {
+            n3ds_log("MENU KEYS: b30 natural entry vehicle missing");return;
+        }
+        struct unit_definition *vehicle_definition=unit_definition_get(definition);
+        int found=0;
+        if(vehicle_definition)for(short seat=0;seat<vehicle_definition->unit.seats.count;++seat) {
+            real_point3d entrance,seat_point;
+            if(!unit_get_seat_entrance_point(unit,menu_b30_natural_vehicle,seat,
+                &entrance,&seat_point,NULL))continue;
+            real_point3d points[]={entrance,seat_point};
+            for(unsigned int i=0;i<sizeof(points)/sizeof(points[0]);++i) {
+                struct location location;
+                scenario_location_from_point(&location,&points[i]);
+                if(location.cluster_index==NONE)continue;
+                object_set_position(unit,&points[i],NULL,NULL);
+                short nearby=NONE;
+                short state=unit_find_nearby_seat(unit,menu_b30_natural_vehicle,&nearby);
+                if(state!=_unit_nearby_seat_available)continue;
+                char detail[150];
+                snprintf(detail,sizeof(detail),"MENU KEYS: b30 natural entry marker seat=%d nearby=%d cluster=%d",
+                    seat,nearby,location.cluster_index);
+                n3ds_log(detail);
+                found=1;break;
+            }
+            if(found)break;
+        }
+        static const real_point3d candidates[]={
+            {-16.11f,40.75f,3.54f},{-18.11f,42.75f,3.54f},
+            {-14.11f,42.75f,3.54f},{-16.11f,38.75f,3.54f}
+        };
+        for(unsigned int i=0;!found && i<sizeof(candidates)/sizeof(candidates[0]);++i) {
+            struct location location;
+            scenario_location_from_point(&location,&candidates[i]);
+            if(location.cluster_index==NONE)continue;
+            real_vector3d forward={0.f,1.f,0.f};
+            object_set_position(unit,&candidates[i],&forward,NULL);
+            short nearby=NONE;
+            short state=unit_find_nearby_seat(unit,menu_b30_natural_vehicle,&nearby);
+            if(state!=_unit_nearby_seat_available)continue;
+            char detail[140];
+            snprintf(detail,sizeof(detail),"MENU KEYS: b30 natural entry point=%.2f,%.2f,%.2f cluster=%d",
+                candidates[i].x,candidates[i].y,candidates[i].z,location.cluster_index);
+            n3ds_log(detail);
+            found=1;break;
+        }
+        if(!found) {n3ds_log("MENU KEYS: b30 natural entry point unavailable");return;}
+        menu_b30_action_frame=frame+5;
+    }
+    if(menu_b30_action_frame && frame==menu_b30_action_frame+90) {
+        long parent=unit!=NONE?unit_get(unit)->object.parent_object_index:NONE;
+        char detail[130];
+        snprintf(detail,sizeof(detail),"MENU KEYS: b30 natural X entry parent=%08lx target=%08lx %s",
+            parent,menu_b30_natural_vehicle,
+            parent==menu_b30_natural_vehicle?"PASS":"FAIL");
+        n3ds_log(detail);
+    }
+}
+static void menu_keys_go_to_extra(long unit)
+{
+    if(!menu_go_to_extra || unit==NONE || !global_scenario ||
+       strcmp(main_get_map_name(),"levels\\c20\\c20"))return;
+    menu_go_to_extra=0;
+    static const float offsets[]={-1.5f,-1.f,-0.5f,0.f,0.5f,1.f,1.5f};
+    static const float heights[]={0.15f,0.5f,1.f,1.5f,2.5f};
+    real_point3d origin={24.04f,-37.17f,-4.6f};
+    int found=0;
+    for(short bsp=0;bsp<global_scenario->structure_bsp_references.count;++bsp) {
+        if(bsp!=global_structure_bsp_index && !scenario_switch_structure_bsp(bsp))continue;
+        int count=0;
+        real_point3d first={0};
+        short first_cluster=NONE;
+        for(unsigned int z=0;z<sizeof(heights)/sizeof(heights[0]);++z)
+            for(unsigned int x=0;x<sizeof(offsets)/sizeof(offsets[0]);++x)
+                for(unsigned int y=0;y<sizeof(offsets)/sizeof(offsets[0]);++y) {
+                    real_point3d point={origin.x+offsets[x],origin.y+offsets[y],origin.z+heights[z]};
+                    struct location location;
+                    scenario_location_from_point(&location,&point);
+                    if(location.cluster_index==NONE)continue;
+                    if(!count) {first=point;first_cluster=location.cluster_index;}
+                    ++count;
+                }
+        char message[100];
+        snprintf(message,sizeof(message),"MENU KEYS: c20 nearby BSP=%d valid=%d first=%.2f,%.2f,%.2f cluster=%d",
+            bsp,count,first.x,first.y,first.z,first_cluster);
+        n3ds_log(message);
+        if(count) {
+            object_set_position(unit,&first,NULL,NULL);
+            found=1;
+            break;
+        }
+    }
+    if(!found)n3ds_log("MENU KEYS: c20 extra location missing in all BSPs");
+}
+static void menu_keys_go_to_b30_extra(long unit)
+{
+    if(!menu_go_to_b30_extra || unit==NONE || !global_scenario ||
+       strcmp(main_get_map_name(),"levels\\b30\\b30"))return;
+    menu_go_to_b30_extra=0;
+    static const real_point3d anchors[]={
+        {-21.11f,42.75f,2.54f},{53.35f,63.28f,0.99f}
+    };
+    static const float heights[]={0.15f,0.5f,1.f,2.f};
+    int found=0;
+    for(short bsp=0;bsp<global_scenario->structure_bsp_references.count;++bsp) {
+        if(bsp!=global_structure_bsp_index && !scenario_switch_structure_bsp(bsp))continue;
+        for(unsigned int anchor=0;anchor<sizeof(anchors)/sizeof(anchors[0]);++anchor) {
+            int count=0;
+            float best_score=1000000.f;
+            real_point3d best={0};
+            short best_cluster=NONE;
+            for(int x=-6;x<=6;++x) for(int y=-6;y<=6;++y) {
+                float distance2=(float)(x*x+y*y);
+                if(distance2<16.f || distance2>49.f)continue;
+                for(unsigned int z=0;z<sizeof(heights)/sizeof(heights[0]);++z) {
+                    real_point3d point={anchors[anchor].x+x,anchors[anchor].y+y,
+                        anchors[anchor].z+heights[z]};
+                    struct location location;
+                    scenario_location_from_point(&location,&point);
+                    if(location.cluster_index==NONE)continue;
+                    ++count;
+                    float dx=(float)x-5.f,dy=(float)y;
+                    float score=dx*dx+dy*dy+heights[z]*0.05f;
+                    if(score<best_score) {best_score=score;best=point;best_cluster=location.cluster_index;}
+                }
+            }
+            char message[135];
+            snprintf(message,sizeof(message),
+                "MENU KEYS: b30 nearby BSP=%d anchor=%u valid=%d best=%.2f,%.2f,%.2f cluster=%d",
+                bsp,anchor,count,best.x,best.y,best.z,best_cluster);
+            n3ds_log(message);
+            if(count && !found) {
+                real_point3d player_position={best.x,best.y-4.f,best.z+0.5f};
+                struct location player_location;
+                scenario_location_from_point(&player_location,&player_position);
+                if(player_location.cluster_index==NONE)player_position=best;
+                real_vector3d forward={0.f,1.f,0.f};
+                object_set_position(unit,&player_position,&forward,NULL);
+                found=1;
+            }
+        }
+        if(found)break;
+    }
+    if(!found)n3ds_log("MENU KEYS: b30 Rocket Warthog location missing in all BSPs");
+}
+static void menu_keys_survey_extras(long unit)
+{
+    if(!menu_survey_extras || unit==NONE || !global_scenario)return;
+    menu_survey_extras=0;
+    static const struct {
+        const char *map,*item;
+        real_point3d original,desired;
+    } targets[]={
+        {"c40","fuel rod",{332.99f,-656.33f,80.31f},{333.85f,-656.33f,80.45f}},
+        {"d20","flamethrower",{53.32f,-34.40f,-25.98f},{54.15f,-34.40f,-25.80f}},
+        {"d20","fuel rod",{30.14f,-49.65f,-23.01f},{31.15f,-49.65f,-22.86f}}
+    };
+    static const float offsets[]={-2.f,-1.5f,-1.f,-0.5f,0.f,0.5f,1.f,1.5f,2.f};
+    static const float heights[]={0.15f,0.5f,1.f};
+    const char *full=main_get_map_name();
+    const char *base=full?strrchr(full,'\\'):NULL;
+    base=base?base+1:full;
+    if(!base)return;
+    if(!strcmp(base,"d20") && global_structure_bsp_index!=1 &&
+       !scenario_switch_structure_bsp(1)) {
+        n3ds_log("MENU KEYS: d20 survey could not load BSP 1");
+        return;
+    }
+    for(unsigned int t=0;t<sizeof(targets)/sizeof(targets[0]);++t) {
+        if(strcmp(base,targets[t].map))continue;
+        int count=0;float best_score=1000000.f;
+        real_point3d best={0};short best_bsp=NONE,best_cluster=NONE;
+        /* Inspect the active mission BSP. Switching repeatedly while the
+         * mission runs can churn streamed scenery and stall the fixture. */
+        for(short bsp=global_structure_bsp_index;
+            bsp==global_structure_bsp_index;++bsp) {
+            for(unsigned int x=0;x<sizeof(offsets)/sizeof(offsets[0]);++x)
+                for(unsigned int y=0;y<sizeof(offsets)/sizeof(offsets[0]);++y) {
+                    float gap=offsets[x]*offsets[x]+offsets[y]*offsets[y];
+                    if(gap<0.7f*0.7f || gap>2.5f*2.5f)continue;
+                    for(unsigned int z=0;z<sizeof(heights)/sizeof(heights[0]);++z) {
+                        real_point3d point={targets[t].original.x+offsets[x],
+                            targets[t].original.y+offsets[y],
+                            targets[t].original.z+heights[z]};
+                        struct location location;
+                        scenario_location_from_point(&location,&point);
+                        if(location.cluster_index==NONE)continue;
+                        ++count;
+                        float dx=point.x-targets[t].desired.x;
+                        float dy=point.y-targets[t].desired.y;
+                        float dz=point.z-targets[t].desired.z;
+                        float score=dx*dx+dy*dy+dz*dz*0.1f;
+                        if(score<best_score) {
+                            best_score=score;best=point;
+                            best_bsp=bsp;best_cluster=location.cluster_index;
+                        }
+                    }
+                }
+            if(count)break;
+        }
+        char message[175];
+        snprintf(message,sizeof(message),
+            "MENU KEYS: %s %s valid=%d best=%.2f,%.2f,%.2f BSP=%d cluster=%d",
+            base,targets[t].item,count,best.x,best.y,best.z,best_bsp,best_cluster);
+        n3ds_log(message);
+    }
+    if(!strcmp(base,"d20") && global_structure_bsp_index==1) {
+        real_point3d near_both={54.32f,-34.90f,-25.83f};
+        object_set_position(unit,&near_both,NULL,NULL);
     }
 }
 #endif
@@ -463,6 +798,9 @@ int halo_engine_boot(void)
     n3ds_log("STARTUP: game initialize");
     if(n3ds_frontend_fixture_seed) n3ds_frontend_fixture_seed();
     game_initialize();
+#ifdef HALO_N3DS_UNIFIED_UI
+    {extern void n3ds_campaign_extras_allocate_state(void);n3ds_campaign_extras_allocate_state();}
+#endif
     n3ds_log("FRONTEND: game initialized; loading original main menu");
     n3ds_log("STARTUP: main menu load");
     n3ds_main_frontend_initialize();
@@ -585,6 +923,10 @@ int halo_engine_boot(void)
         n3ds_input_platform_poll(&sample);
 #ifdef HALO_N3DS_EXPERIMENTAL_PC_MENU_KEYS
         menu_keys_sample(frame+1,&sample);
+        if(menu_b30_fire_start && frame+1>=menu_b30_fire_start &&
+           frame+1<menu_b30_fire_start+70)sample.held|=NATIVE_KEY_ZR;
+        if(menu_b30_action_frame && frame+1>=menu_b30_action_frame &&
+           frame+1<menu_b30_action_frame+3)sample.held|=NATIVE_KEY_X;
 #endif
         n3ds_input_gameplay_controls(game_in_progress() && !main_menu_is_active() &&
             !ui_widgets_active() && player_input_enabled() && !cinematic_in_progress());
@@ -635,6 +977,18 @@ int halo_engine_boot(void)
         }
         local=local_player_get_next(NONE);
         if(local!=NONE) {player=local_player_get_player_index(local);if(player!=NONE) unit=player_get(player)->unit_index;}
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_MENU_KEYS
+        menu_keys_go_to_extra(unit);
+        menu_keys_go_to_b30_extra(unit);
+        menu_keys_survey_extras(unit);
+#endif
+#ifdef HALO_N3DS_UNIFIED_UI
+        {extern void n3ds_campaign_extras_update(long);n3ds_campaign_extras_update(unit);}
+#endif
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_MENU_KEYS
+        menu_keys_enter_b30_extra(frame+1,unit);
+        menu_keys_try_b30_extra(frame+1,unit);
+#endif
         if(unit!=NONE && n3ds_main_is_solo_multiplayer()) {
             CHECK(local_player_count()==1);
             #ifdef HALO_N3DS_GRENADE_INVENTORY_TEST

@@ -12,7 +12,8 @@ param(
     [Nullable[int]]$BotCount = $null,
     [string]$SevenZipPath,
     [string]$LauncherPath,
-    [string]$RuntimeManifest
+    [string]$RuntimeManifest,
+    [switch]$UnifiedLauncher
 )
 
 $ErrorActionPreference = 'Stop'
@@ -56,7 +57,8 @@ if (($iso -and $iso.StartsWith($sdPrefix, [StringComparison]::OrdinalIgnoreCase)
 $launcher = (Resolve-Path -LiteralPath $LauncherPath).Path
 $manifestFile = (Resolve-Path -LiteralPath $RuntimeManifest).Path
 $manifest = Get-Content -LiteralPath $manifestFile -Raw | ConvertFrom-Json
-if ($manifest.MapFormat -ne 'HaloCE-PC-retail-v7' -or $manifest.Runtime -ne 'Halo3DS-PC' -or
+$expectedRuntime = if ($UnifiedLauncher) { 'Halo3DS-Unified' } else { 'Halo3DS-PC' }
+if ($manifest.MapFormat -ne 'HaloCE-PC-retail-v7' -or $manifest.Runtime -ne $expectedRuntime -or
     $manifest.LauncherSha256 -notmatch '^[a-fA-F0-9]{64}$') {
     throw 'A PC retail runtime manifest is required. The Xbox build cannot be installed with PC maps.'
 }
@@ -71,8 +73,8 @@ try {
     }
 } finally { $launcherFile.Dispose() }
 
-$relativePaths = @('3ds/Halo3DS-PC/Halo3DS-PC.3dsx')
-$launcherRelative = $relativePaths[0]
+$launcherRelative = if ($UnifiedLauncher) { '3ds/Halo3DS/Halo3DS.3dsx' } else { '3ds/Halo3DS-PC/Halo3DS-PC.3dsx' }
+$relativePaths = @($launcherRelative)
 
 function Test-PcGameMap([string]$path) {
     $stream = [IO.File]::OpenRead($path)
@@ -143,6 +145,9 @@ try {
         if ($map.BaseName -notmatch '^[a-z0-9_-]{1,32}$') { throw "Unsafe PC map filename: $($map.Name)" }
     }
     $names = @($maps | ForEach-Object BaseName)
+    if ($UnifiedLauncher -and 'bloodgulch' -notin $names) {
+        throw 'The unified launcher needs bloodgulch.map for the optional campaign Rocket Warthog.'
+    }
     if ('ui' -notin $names -or 'bitmaps' -notin $names -or 'sounds' -notin $names -or
         @($names | Where-Object { $_ -notin @('ui', 'bitmaps', 'sounds', 'loc') }).Count -eq 0) {
         throw 'The PC source must contain ui, bitmaps, sounds and at least one game map.'
@@ -161,7 +166,7 @@ try {
     foreach ($map in $maps) {
         $entries += [pscustomobject]@{ Source = $map.FullName; Relative = 'halo-source/pc-retail/' + $map.Name }
     }
-    $entries += [pscustomobject]@{ Source = $launcher; Relative = '3ds/Halo3DS-PC/Halo3DS-PC.3dsx' }
+    $entries += [pscustomobject]@{ Source = $launcher; Relative = $launcherRelative }
     $needed = [long]0
     foreach ($entry in $entries) {
         $entry | Add-Member -NotePropertyName Hash -NotePropertyValue (Get-FileHash -LiteralPath $entry.Source -Algorithm SHA256).Hash
@@ -195,7 +200,7 @@ try {
     $drive = [IO.DriveInfo]::new([IO.Path]::GetPathRoot($sd))
     if ($drive.AvailableFreeSpace -lt $needed + 64MB) { throw 'The SD card needs more free space for the selected PC maps.' }
     if ($dryRun) {
-        Write-Output "What if: verified $($maps.Count) PC retail files from the selected source; would install under 3ds/Halo3DS-PC and halo-source/pc-retail on $sd"
+        Write-Output "What if: verified $($maps.Count) PC retail files from the selected source; would install $launcherRelative and halo-source/pc-retail on $sd"
         if (@($entries | Where-Object ReplaceLauncher).Count) { Write-Output 'What if: archive the previous PC launcher and install the verified new 3DSX' }
         if ($null -ne $BotCount) { Write-Output "What if: set solo multiplayer bot count to $BotCount" }
         return
@@ -211,7 +216,8 @@ try {
                 throw "SD card copy failed verification: $($entry.Relative)"
             }
             if ($entry.ReplaceLauncher) {
-                $backup = Test-Within $sd ('halo-source/launcher-backups/pc-' + [guid]::NewGuid().ToString('N') + '/Halo3DS-PC.3dsx')
+                $backupName = if ($UnifiedLauncher) { 'Halo3DS.3dsx' } else { 'Halo3DS-PC.3dsx' }
+                $backup = Test-Within $sd ('halo-source/launcher-backups/pc-' + [guid]::NewGuid().ToString('N') + '/' + $backupName)
                 New-Item -ItemType Directory -Path ([IO.Path]::GetDirectoryName($backup)) -Force | Out-Null
                 [IO.File]::Move($entry.Destination, $backup)
                 try {
@@ -270,7 +276,7 @@ try {
             throw
         } finally { if (Test-Path -LiteralPath $partial) { Remove-Item -LiteralPath $partial } }
     }
-    Write-Output 'PC retail installation complete. Launch 3ds/Halo3DS-PC/Halo3DS-PC.3dsx.'
+    Write-Output "PC retail installation complete. Launch $launcherRelative."
 } finally {
     $tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
     $resolvedStage = [IO.Path]::GetFullPath($stage)

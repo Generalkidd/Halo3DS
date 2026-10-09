@@ -145,7 +145,7 @@ boolean _sound_cache_sound_request(struct sound_permutation *sound, boolean bloc
         unsigned long offset=sound->samples.file_offset;
         long size=sound->samples.size;
         if (!fetch || size<=0 || size>SOUND_BUDGET || offset<2048) return FALSE;
-        if (n3ds_pc_tags_active()) {
+        if (n3ds_pc_tags_active() || (n3ds_pc_tags_loaded() && offset >= 0x40000000UL)) {
             if (offset>=0x40000000UL && offset<0x60000000UL) return FALSE;
             if (!n3ds_pc_cache_range_valid(offset,(unsigned long)size)) return FALSE;
         } else if (offset>(unsigned long)view->header.file_length ||

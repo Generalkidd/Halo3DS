@@ -48,8 +48,10 @@ response files, logs, ELF/map and the build/hash manifest stay in the output
 directory. Retain the matching ELF/map for crash diagnosis.
 
 Incremental builds track source/header content. Choose a new `--output` directory
-for clean verification. Player releases must use the default options, without
-diagnostics, a frame limit or a test heap.
+for clean verification. The Xbox-only release uses default options. The unified
+New 3DS release adds `--experimental-pc-runtime --unified-ui` and emits
+`unified-runtime.json` bound to the built 3DSX hash. Neither release uses
+diagnostic flags, a frame limit or a test heap.
 
 ### Diagnostic builds
 
@@ -66,9 +68,17 @@ test on actual Original 3DS/2DS hardware.
 PC retail v7 support is opt-in with `--experimental-pc-runtime`; the default
 launcher still uses the original Xbox cache path. The opt-in build reads PC
 maps from `halo-source/pc-retail` and falls back to installed Xbox maps. The
-original PC `ui.map` supplies the six expansion map names, descriptions and
-graphics. The map-list adapter exposes an expansion entry only when its UI
-assets and cache are present. The original thirteen Xbox entries stay defined;
+`--unified-ui` flag keeps the original Xbox main menu and campaign while
+exposing PC Local Multiplayer through SELECT. This is the combined launcher
+used by `setup/Unified/`; an isolated emulator replay entered Xbox a10 from
+the original campaign menu and selected PC Beaver Creek from the same 3DSX.
+The build keeps the Xbox UI cache so the PC-only difficulty widget mismatch
+does not affect Campaign. The PC-only launcher remains available for separate
+testing.
+
+For the PC-only UI build, original PC `ui.map` supplies the six expansion map
+names, descriptions and graphics. The map-list adapter exposes an expansion
+entry only when its UI assets and cache are present. The original thirteen Xbox entries stay defined;
 the PC menu's Create Game action still does not launch a local match.
 
 On the PC opt-in build, press **SELECT** while the main menu is open to show
@@ -139,6 +149,39 @@ including the Rocket Warthog, while the original Xbox filter only accepts the
 first three. Xbox caches continue to use the original rule. PC runtime and
 setup packaging remain experimental until broader gameplay, saved-state and
 hardware validation are complete.
+
+### Campaign additions in the unified build
+
+The difficulty page draws a bottom-screen touch switch for optional PC weapons
+and vehicles. `engine_campaign_options.c` starts enabled for testing and stores
+the choice in the title save archive with a version and checksum. The switch
+persists between levels and emulator restarts until the player changes it.
+The Xbox scenario files and original object placements stay intact. At runtime,
+`engine_campaign_extras.c` creates a Flamethrower beside the c20 shotgun, a
+Fuel Rod Gun beside c40 pickups, and both weapons beside d20 pickups. The
+module waits for the player to approach and for the active BSP to contain each
+point. Its placed state is registered with game-state checkpoints; disabling
+the switch removes only an uncollected extra pickup.
+
+Xbox campaign tags already contain those hidden weapon definitions. The
+Rocket Warthog does not occur in any campaign cache. For b30 only,
+`engine_campaign_overlay.c` reads the owner's PC retail Blood Gulch cache,
+imports the 16 missing Rocket Warthog definitions, remaps references to Xbox
+definitions where possible, and uses the PC HUD reticle bitmap because its
+17 sequences include the Rocket Warthog crosshair. The original Xbox b30 cache
+is not written. If PC Blood Gulch or a dependency check fails, b30 continues
+without the extra vehicle. The b30 overlay currently retains a full converted
+PC tag arena and model buffer; profile its memory and load time on hardware
+before broadening this mechanism to other campaign maps.
+
+The isolated Azahar check created all four campaign pickups in valid clusters.
+In b30, the Rocket Warthog appeared beside the original vehicle. After the
+opening transport released the player, the player entered its gunner seat and
+its mounted gun advanced `game_time_last_fired` under the normal input path.
+A separate emulator replay exited a resumed vehicle checkpoint and used the
+normal X-button action to enter its driver seat; the parent vehicle datum
+matched the extra Warthog. Longer mission play, checkpoint restore edge cases,
+and physical New 3DS XL performance are still in the verification queue.
 
 ## Building the setup tools
 
@@ -416,6 +459,11 @@ red and blue, making ordinary Blood Gulch terrain appear blue and its sky pink.
 - Restore material/sampler state and invalidate the submission caches when a
   different path changes their assumptions. Native combiners and lighting can
   avoid passes, but hardware limits still constrain each material.
+- Flag cloth and King hill geometry can open a model scope inside the object
+  renderer's scope. Keep the outer GPU batch active, flush queued scenery
+  before the inner draw, and restore batching afterward. A long Timberland
+  CTF emulator run caught the earlier assertion when a bot carried a flag;
+  the nested-scope path continued past that frame after the fix.
 - Original models have smaller memory and rendering budgets. Use model checks;
   do not lower New-model quality to fix an Original-model allocation failure.
 
