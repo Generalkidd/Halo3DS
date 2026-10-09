@@ -7,6 +7,7 @@ void n3ds_gpu_text_frame_begin(void);
 void n3ds_gpu_text_flush(void);
 int n3ds_gpu_text_begin(float width,float height,unsigned int tint,int point,int wrapped);
 int n3ds_gpu_text_draw(const struct native_text_vertex vertices[4]);
+int n3ds_gpu_text_draw_many(const struct native_text_vertex *vertices,unsigned int quads);
 /* Untilted texture-target coordinates; no HUD layout or stereo duplication. */
 int n3ds_gpu_text_offscreen_begin(float width,float height);
 int n3ds_gpu_text_offscreen_draw(const struct native_text_vertex vertices[4]);

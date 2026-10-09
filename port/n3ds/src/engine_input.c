@@ -11,6 +11,8 @@ static struct native_input_sample last_sample;
 static boolean initialized, active, suppressed;
 static boolean touch_was_down;
 static boolean touch_aiming;
+static boolean touch_scoreboard;
+static unsigned int touch_stub;
 static int original_model,gameplay_controls;
 void n3ds_log(const char *message);
 void n3ds_input_gameplay_controls(int enabled) { gameplay_controls=!!enabled; }
@@ -119,18 +121,26 @@ void n3ds_engine_input_sample(const struct native_input_sample *sample)
     boolean touching=(sample->held&NATIVE_KEY_TOUCH)!=0;
     boolean touch_pressed=touching && !touch_was_down;
     touch_was_down=touching;
-    if (!active) { touch_aiming=FALSE;memset(&gamepad,0,sizeof(gamepad)); return; }
+    if (!active) { touch_aiming=touch_scoreboard=FALSE;touch_stub=0;memset(&gamepad,0,sizeof(gamepad)); return; }
     pressed=button_mask(n3ds_controls_buttons(sample->held,original_model,gameplay_controls),original_model,gameplay_controls);
     /* A press must start on a visible, enabled control. Holding or dragging
      * never repeats a toggle, including while input is deactivated. */
     long touch_dx=0,touch_dy=0;
-    if(!touching || suppressed) touch_aiming=FALSE;
+    if(!touching || suppressed) {touch_aiming=touch_scoreboard=FALSE;touch_stub=0;}
     if(touch_pressed && !suppressed && touch_handler && sample->touch_x<320 && sample->touch_y<240) {
         unsigned int action=touch_handler(sample->touch_x,sample->touch_y);
         if(action&NATIVE_TOUCH_GRENADE) pressed|=1u<<_gamepad_analog_button_black;
         if(action&NATIVE_TOUCH_FLASHLIGHT) pressed|=1u<<_gamepad_analog_button_white;
+        touch_scoreboard=(action&NATIVE_TOUCH_SCOREBOARD)!=0;
+        touch_stub=action&(NATIVE_TOUCH_STUB_1|NATIVE_TOUCH_STUB_2|NATIVE_TOUCH_STUB_3|NATIVE_TOUCH_STUB_4);
         touch_aiming=(action&NATIVE_TOUCH_AIM) && sample->touch_y<NATIVE_TOUCH_AIM_BOTTOM;
         touch_last_x=sample->touch_x;touch_last_y=sample->touch_y;
+    } else if(touch_scoreboard && touching && !suppressed) {
+        if(touch_handler && (touch_handler(sample->touch_x,sample->touch_y)&NATIVE_TOUCH_SCOREBOARD))
+            pressed|=1u<<_gamepad_binary_button_back;
+        else touch_scoreboard=FALSE;
+    } else if(touch_stub && touching && !suppressed) {
+        if(!touch_handler || touch_handler(sample->touch_x,sample->touch_y)!=touch_stub) touch_stub=0;
     } else if(touch_aiming) {
         /* Cancel until release on leaving the aim area or entering a menu.
          * Crossing the button row cannot trigger a button or resume aiming. */
@@ -142,6 +152,7 @@ void n3ds_engine_input_sample(const struct native_input_sample *sample)
             touch_last_x=sample->touch_x;touch_last_y=sample->touch_y;
         }
     }
+    if(touch_scoreboard)pressed|=1u<<_gamepad_binary_button_back;
     for (i=0;i<NUMBER_OF_GAMEPAD_BUTTONS;++i) {
         boolean down=(pressed&(1u<<i))!=0;
         update_ticks(&gamepad.buttons[i],down);
@@ -159,6 +170,15 @@ void n3ds_engine_input_sample(const struct native_input_sample *sample)
     gamepad.sticks[1].x=clamp_stick((long)axis(sample->cstick_x)+touch_dx);
     gamepad.sticks[1].y=clamp_stick((long)axis(sample->cstick_y)+touch_dy);
 }
+int n3ds_input_touch_panel_pressed(void)
+{
+    if(touch_scoreboard)return 4;
+    if(touch_stub==NATIVE_TOUCH_STUB_1)return 1;
+    if(touch_stub==NATIVE_TOUCH_STUB_2)return 2;
+    if(touch_stub==NATIVE_TOUCH_STUB_3)return 3;
+    if(touch_stub==NATIVE_TOUCH_STUB_4)return 4;
+    return 0;
+}
 boolean input_initialize(void)
 {
     assert(!initialized);
@@ -169,7 +189,7 @@ boolean input_initialize(void)
     memset(&gamepad,0,sizeof(gamepad)); memset(&neutral,0,sizeof(neutral));
     memset(&last_sample,0,sizeof(last_sample));
     initialized=active=TRUE; suppressed=FALSE;
-    touch_was_down=touch_aiming=FALSE;touch_handler=NULL;
+    touch_was_down=touch_aiming=touch_scoreboard=FALSE;touch_stub=0;touch_handler=NULL;
     return TRUE;
 }
 void input_dispose(void)
@@ -177,7 +197,7 @@ void input_dispose(void)
     if (initialized) n3ds_input_platform_dispose();
     initialized=active=suppressed=FALSE;
     gameplay_controls=0;
-    touch_was_down=touch_aiming=FALSE;touch_handler=NULL;
+    touch_was_down=touch_aiming=touch_scoreboard=FALSE;touch_stub=0;touch_handler=NULL;
     memset(&gamepad,0,sizeof(gamepad)); memset(&last_sample,0,sizeof(last_sample));
 }
 void input_frame_begin(void)
@@ -194,9 +214,9 @@ void input_frame_end(void) { assert(initialized); }
 /* Original main samples at frame_begin, then update clears per-frame suppression.
  * Polling here too would double the held duration and lose first-press events. */
 void input_update(void) { assert(initialized); suppressed=FALSE; }
-void input_suppress(void) { suppressed=TRUE;touch_aiming=FALSE; }
+void input_suppress(void) { suppressed=TRUE;touch_aiming=touch_scoreboard=FALSE;touch_stub=0; }
 void input_activate(void) { active=TRUE; }
-void input_deactivate(void) { active=FALSE;touch_aiming=FALSE; memset(&gamepad,0,sizeof(gamepad)); }
+void input_deactivate(void) { active=FALSE;touch_aiming=touch_scoreboard=FALSE;touch_stub=0; memset(&gamepad,0,sizeof(gamepad)); }
 boolean input_has_gamepad(short index)
 {
     assert(index>=0 && index<MAXIMUM_GAMEPADS);

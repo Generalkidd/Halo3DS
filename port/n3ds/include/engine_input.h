@@ -25,10 +25,12 @@ void n3ds_input_platform_poll(struct native_input_sample *sample);
 /* Used by the hardware polling path and deterministic input sequence tests. */
 void n3ds_engine_input_sample(const struct native_input_sample *sample);
 enum { NATIVE_TOUCH_GRENADE=1, NATIVE_TOUCH_FLASHLIGHT=2, NATIVE_TOUCH_AIM=4,
+       NATIVE_TOUCH_SCOREBOARD=8,NATIVE_TOUCH_STUB_1=16,NATIVE_TOUCH_STUB_2=32,NATIVE_TOUCH_STUB_3=64,NATIVE_TOUCH_STUB_4=128,
        NATIVE_TOUCH_AIM_BOTTOM=176 };
 /* The handler gates touches against live gameplay. AIM is queried throughout
  * an aim gesture; button actions are queried only on a fresh press. */
 void n3ds_input_touch_handler(unsigned int (*handler)(unsigned int,unsigned int));
+int n3ds_input_touch_panel_pressed(void);
 int halo_engine_input_tests(void);
 int halo_engine_touch_aim_tests(void);
 int halo_engine_model_controls_tests(void);

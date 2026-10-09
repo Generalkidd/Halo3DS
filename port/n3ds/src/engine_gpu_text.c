@@ -130,32 +130,33 @@ int n3ds_gpu_text_begin(float width,float height,unsigned int tint,int point,int
     n3ds_gpu_hud_profile_add(2,n3ds_engine_ticks()-stamp);
     return 1;
 }
-static int text_draw(const struct native_text_vertex vertices[4],int offscreen)
+static int text_draw(const struct native_text_vertex *vertices,unsigned int quads,int offscreen)
 {
     long long stamp=n3ds_engine_ticks();
     static const unsigned int order[6]={0,1,2,0,2,3};
     C3D_Tex *texture=n3ds_gpu_texture_bound(0);
-    if(!texture || !stream || used>TEXT_VERTICES-6) return 0;
+    if(!quads || quads>TEXT_VERTICES/6 || !texture || !stream || used>TEXT_VERTICES-quads*6) return 0;
+    unsigned int count=quads*6;
     u32 saved_sampler=texture->param;
     /* Glyph upload may have replaced the resource after text_begin. */
     C3D_TexSetFilter(texture,point_sampled?GPU_NEAREST:GPU_LINEAR,point_sampled?GPU_NEAREST:GPU_LINEAR);
     C3D_TexSetWrap(texture,wrapped==2?GPU_CLAMP_TO_BORDER:wrapped?GPU_REPEAT:GPU_CLAMP_TO_EDGE,wrapped==2?GPU_CLAMP_TO_BORDER:wrapped?GPU_REPEAT:GPU_CLAMP_TO_EDGE);
     n3ds_gpu_texture_bind(0,texture);
-    for(unsigned int i=0;i<6;++i) {
-        stream[used+i]=vertices[order[i]];
+    for(unsigned int i=0;i<count;++i) {
+        stream[used+i]=vertices[(i/6)*4+order[i%6]];
         float *p=stream[used+i].position;
         if(!offscreen && hud_layout==1) {p[0]=16+p[0]*1.8f;p[1]=16+p[1]*1.8f;}
         else if(!offscreen && hud_layout==2) {p[0]=624+(p[0]-640)*2;p[1]=16+p[1]*2;}
         else if(!offscreen && hud_layout==3) {p[0]=320+(p[0]-sensor_x)*sensor_scale;p[1]=236+(p[1]-sensor_y)*sensor_scale;}
     }
     if(n3ds_gpu_frame_active()) {dirty=1;++deferred;}
-    else {GSPGPU_FlushDataCache(stream+used,6*sizeof(*stream));++immediate;}
+    else {GSPGPU_FlushDataCache(stream+used,count*sizeof(*stream));++immediate;}
     if(!n3ds_gpu_vertex_buffer_bind(stream,sizeof(*stream),3,0x210)) {
         texture->param=saved_sampler; n3ds_gpu_texture_bind(0,texture); return 0;
     }
-    C3D_DrawArrays(GPU_TRIANGLES,used,6);
-    if(!offscreen && n3ds_gpu_overlay_other_begin()) {C3D_DrawArrays(GPU_TRIANGLES,used,6);n3ds_gpu_overlay_other_end();}
-    used+=6;
+    C3D_DrawArrays(GPU_TRIANGLES,used,count);
+    if(!offscreen && n3ds_gpu_overlay_other_begin()) {C3D_DrawArrays(GPU_TRIANGLES,used,count);n3ds_gpu_overlay_other_end();}
+    used+=count;
     /* DrawArrays has emitted the sampler state. Do not change how another
      * material samples this shared texture after the text pass. */
     texture->param=saved_sampler; n3ds_gpu_texture_bind(0,texture);
@@ -163,8 +164,9 @@ static int text_draw(const struct native_text_vertex vertices[4],int offscreen)
     return 1;
 }
 
-int n3ds_gpu_text_draw(const struct native_text_vertex v[4]) {return text_draw(v,0);}
-int n3ds_gpu_text_offscreen_draw(const struct native_text_vertex v[4]) {return text_draw(v,1);}
+int n3ds_gpu_text_draw(const struct native_text_vertex v[4]) {return text_draw(v,1,0);}
+int n3ds_gpu_text_draw_many(const struct native_text_vertex *v,unsigned int quads) {return text_draw(v,quads,0);}
+int n3ds_gpu_text_offscreen_draw(const struct native_text_vertex v[4]) {return text_draw(v,1,1);}
 int n3ds_gpu_text_offscreen_begin(float width,float height)
 {
     if(!n3ds_gpu_text_begin(width,height,0xffffffff,0,2)) return 0;

@@ -5,6 +5,16 @@
 void n3ds_log(const char *message);
 static unsigned int test_touch(unsigned int x,unsigned int y)
 { return y>=176 && y<232 && x>=236 && x<312?2:0; }
+static unsigned int test_score_touch(unsigned int x,unsigned int y)
+{ return x>=240 && x<312 && y>=116 && y<168?NATIVE_TOUCH_SCOREBOARD:0; }
+static unsigned int test_stub_touch(unsigned int x,unsigned int y)
+{
+    if(x>=8 && x<80 && y>=36 && y<94)return NATIVE_TOUCH_STUB_1;
+    if(x>=240 && x<312 && y>=48 && y<100)return NATIVE_TOUCH_STUB_2;
+    if(x>=8 && x<72 && y>=116 && y<168)return NATIVE_TOUCH_STUB_3;
+    if(x>=240 && x<312 && y>=116 && y<168)return NATIVE_TOUCH_STUB_4;
+    return 0;
+}
 
 static int aim_available;
 static unsigned int test_aim_touch(unsigned int x,unsigned int y)
@@ -61,8 +71,29 @@ int halo_engine_touch_aim_tests(void)
     AIM_CHECK(n3ds_input_touch_look_scale(0)==1.f);
     s.held=0;SAMPLE();AIM_CHECK(pad->sticks[1].x==32767);
     s.cstick_x=0;SAMPLE();AIM_CHECK(!pad->sticks[1].x && !pad->sticks[1].y);
+    n3ds_input_touch_handler(test_score_touch);
+    s.held=0;SAMPLE();s.held=NATIVE_KEY_TOUCH;s.touch_x=260;s.touch_y=150;SAMPLE();
+    AIM_CHECK(pad->buttons[_gamepad_binary_button_back]==1);
+    SAMPLE();AIM_CHECK(pad->buttons[_gamepad_binary_button_back]==2);
+    s.touch_x=100;SAMPLE();AIM_CHECK(!pad->buttons[_gamepad_binary_button_back]);
+    s.held=0;SAMPLE();s.held=NATIVE_KEY_TOUCH;s.touch_x=260;SAMPLE();
+    AIM_CHECK(pad->buttons[_gamepad_binary_button_back]==1);
+    AIM_CHECK(n3ds_input_touch_panel_pressed()==4);
+    s.held=0;SAMPLE();AIM_CHECK(!pad->buttons[_gamepad_binary_button_back]);
+    AIM_CHECK(!n3ds_input_touch_panel_pressed());
+    n3ds_input_touch_handler(test_stub_touch);
+    static const unsigned int px[]={40,270,40,270},py[]={65,74,140,140};
+    for(int panel=1;panel<=4;++panel){
+        s.held=0;SAMPLE();s.held=NATIVE_KEY_TOUCH;s.touch_x=px[panel-1];s.touch_y=py[panel-1];SAMPLE();
+        AIM_CHECK(n3ds_input_touch_panel_pressed()==panel);
+        AIM_CHECK(!pad->buttons[_gamepad_binary_button_back] && !pad->buttons[_gamepad_analog_button_a]);
+        SAMPLE();AIM_CHECK(n3ds_input_touch_panel_pressed()==panel);
+        s.touch_x=160;s.touch_y=100;SAMPLE();AIM_CHECK(!n3ds_input_touch_panel_pressed());
+        s.touch_x=px[panel-1];s.touch_y=py[panel-1];SAMPLE();AIM_CHECK(!n3ds_input_touch_panel_pressed());
+    }
+    s.held=0;SAMPLE();AIM_CHECK(!n3ds_input_touch_panel_pressed());
     input_dispose();
-    n3ds_log("PASS: touch drag aiming, direction, stationary/release, clamping, C-stick coexistence, button isolation, region boundaries and gameplay cancellation");
+    n3ds_log("PASS: touch drag aiming, direction, scoreboard and stub feedback hold/release, C-stick coexistence, button isolation and gameplay cancellation");
     n3ds_controls_set(&saved);return 0;
 #undef RELEASE
 #undef SAMPLE

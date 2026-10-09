@@ -1,6 +1,34 @@
 /* Native controller UI uses a tiny shared font and one white texel, keeping
  * text at the LCD's resolution independently of the world rendering scale. */
 static void *controls_white;
+static struct native_text_vertex controls_panel_vertices[4*128];
+static unsigned int controls_panel_quads;
+static void controls_panel_trapezoid(float left_top,float right_top,float top,
+ float left_bottom,float right_bottom,float bottom,unsigned int color)
+{
+ if(controls_panel_quads>=128)return;
+ struct native_text_vertex *v=controls_panel_vertices+4*controls_panel_quads++;
+ static const float pos[4][2]={{0,0},{1,0},{1,1},{0,1}};
+ for(int i=0;i<4;++i){
+  v[i].position[0]=pos[i][1]?(pos[i][0]?right_bottom:left_bottom):(pos[i][0]?right_top:left_top);
+  v[i].position[1]=pos[i][1]?bottom:top;
+  v[i].uv[0]=pos[i][0];v[i].uv[1]=pos[i][1];
+  for(int c=0;c<4;++c)v[i].color[c]=((color>>(8*c))&255)/255.f;
+ }
+}
+static void controls_panel_rect(float x,float y,float w,float h,unsigned int color)
+{controls_panel_trapezoid(x,x+w,y,x,x+w,y+h,color);}
+static void controls_panel_flush(void)
+{
+ if(!controls_panel_quads)return;
+ if(!controls_white){unsigned int pixels[64];for(int i=0;i<64;++i)pixels[i]=~0u;controls_white=n3ds_gpu_texture_create(pixels,8,8);}
+ if(controls_white){
+  n3ds_gpu_texture_bind(0,controls_white);n3ds_gpu_text_begin(320,240,0xffffffff,1,0);
+  C3D_AlphaBlend(GPU_BLEND_ADD,GPU_BLEND_ADD,GPU_ONE,GPU_ZERO,GPU_ZERO,GPU_ONE);
+  n3ds_gpu_text_draw_many(controls_panel_vertices,controls_panel_quads);
+ }
+ controls_panel_quads=0;
+}
 static void controls_quad(float x,float y,float w,float h,unsigned int color,int top)
 {
  if(!controls_white){unsigned int pixels[64];for(int i=0;i<64;++i)pixels[i]=~0u;controls_white=n3ds_gpu_texture_create(pixels,8,8);}
@@ -18,6 +46,77 @@ static void controls_text(float x,float y,const char *text,unsigned int color,in
   struct native_text_vertex q[4]={{{x,y},{1,1,1,1},{u,v}},{{x+8,y},{1,1,1,1},{u+1.f/16,v}},{{x+8,y+8},{1,1,1,1},{u+1.f/16,v+1.f/8}},{{x,y+8},{1,1,1,1},{u,v+1.f/8}}};n3ds_gpu_text_draw(q);
  }
 }
+static float controls_radar_edge(float y)
+{float d=y-116.f;return 160.f-sqrtf(80.f*80.f-d*d);}
+static void controls_halo_touch_panel(int right,int lower,int pressed,int blank)
+{
+ const unsigned int rim=pressed?0xffd7ec7e:0xffffb971;
+ const unsigned int fill=pressed?0xff785038:0xff3e2812;
+ const unsigned int ink=pressed?0xffecffd7:0xffe9cf9a;
+ float top=lower?122.f:64.f,bottom=lower?164.f:114.f;
+ /* Twelve connected trapezoids follow a circle outside the radar rim. The
+  * inset layer leaves one continuous three-pixel border at the corners. */
+ for(int inset=0;inset<=3;inset+=3){
+  float a=top+inset,b=bottom-inset;
+  for(int segment=0;segment<12;++segment){
+   float ya=a+(b-a)*segment/12.f,yb=a+(b-a)*(segment+1)/12.f;
+   float ea=controls_radar_edge(ya),eb=controls_radar_edge(yb);
+   if(right)controls_panel_trapezoid(320.f-ea+inset,312.f-inset,ya,
+       320.f-eb+inset,312.f-inset,yb,inset?fill:rim);
+   else controls_panel_trapezoid(8.f+inset,ea-inset,ya,
+       8.f+inset,eb-inset,yb,inset?fill:rim);
+  }
+ }
+ float cy=(top+bottom)*.5f,edge=controls_radar_edge(cy);
+ float cx=right?(320.f-edge+312.f)*.5f:(8.f+edge)*.5f;
+ controls_panel_rect(right?320.f-controls_radar_edge(top+5)+12.f:20.f,
+     top+5.f,right?312.f-(320.f-controls_radar_edge(top+5)+24.f):controls_radar_edge(top+5)-32.f,
+     2.f,rim);
+ if(blank){
+  controls_panel_rect(cx-12,cy-1,8,2,ink);controls_panel_rect(cx+4,cy-1,8,2,ink);
+  controls_panel_rect(cx-1,cy-11,2,7,ink);controls_panel_rect(cx-1,cy+4,2,7,ink);
+  if(pressed)controls_panel_rect(cx-2,cy-2,4,4,ink);
+ }
+}
+void n3ds_gpu_match_touch_overlay(int fps,int show_fps,int show_score,int pressed,
+ const struct native_touch_meter *meters,int meter_count)
+{
+ void *saved=n3ds_gpu_texture_bound(0);n3ds_gpu_hud_screen(1);n3ds_gpu_hud_layout(0);
+ if(meter_count>0){
+  controls_panel_rect(8,27,104,28,0xff281808);
+  controls_panel_rect(11,29,98,1,0xffe5be63);
+  for(int i=0;i<meter_count && i<3;++i){
+   float y=meter_count==1?39.f:meter_count==2?35.f+10.f*i:33.f+8.f*i;
+   float fill=fmaxf(0.f,fminf(1.f,meters[i].fill));
+   unsigned int color=meters[i].state==2?0xff329bfa:meters[i].state>=4?0xffe47db4:0xfff4da64;
+   controls_panel_rect(12,y,96,5,0xff4d381d);
+   if(fill>0)controls_panel_rect(12,y,96.f*fill,5,color);
+  }
+ }
+ controls_halo_touch_panel(0,0,pressed==1,1);
+ controls_halo_touch_panel(1,0,pressed==2,1);
+ controls_halo_touch_panel(0,1,pressed==3,1);
+ controls_halo_touch_panel(1,1,pressed==4,show_score?0:1);
+ controls_panel_flush();
+ if(show_score){controls_text(253,132,"SCORE",0xfffff5e9,0);controls_text(257,146,"HOLD",0xffe9cf9a,0);}
+ if(show_fps){char label[20];snprintf(label,sizeof(label),"FPS %02d",fps);
+  controls_text(232,47,label,fps>=28?0xff7eecd7:fps>=20?0xffaad6e9:0xff7070ff,0);
+ }
+ n3ds_gpu_hud_screen(0);n3ds_gpu_texture_bind(0,saved);n3ds_gpu_world_state_restore();
+}
+void n3ds_gpu_match_scoreboard(const struct native_score_row *rows,int count)
+{
+ void *saved=n3ds_gpu_texture_bound(0);n3ds_gpu_hud_screen(0);n3ds_gpu_hud_layout(0);
+ controls_quad(24,24,352,192,0xffb97535,1);controls_quad(26,26,348,188,0xff221a12,1);
+ controls_text(40,34,"MULTIPLAYER SCORE",0xfff6dcaa,1);
+ controls_text(40,49,"PLAYER          SCORE   K   D",0xffa8d8ec,1);
+ for(int i=0;i<count && i<16;++i){
+  char line[48];snprintf(line,sizeof(line),"%-12.12s  %5ld  %2d  %2d",
+   rows[i].name,rows[i].score,rows[i].kills,rows[i].deaths);
+  controls_text(40,63+i*9,line,rows[i].local?0xff6de5ff:0xffe8e4d5,1);
+ }
+ n3ds_gpu_hud_screen(0);n3ds_gpu_texture_bind(0,saved);n3ds_gpu_world_state_restore();
+}
 void n3ds_gpu_controls_entry(void)
 {
  void *saved=n3ds_gpu_texture_bound(0);n3ds_gpu_hud_screen(1);n3ds_gpu_hud_layout(0);
@@ -32,23 +131,26 @@ void n3ds_gpu_controls_draw(const struct native_control_settings *s,int selected
  controls_text(128,70,"CONTROLLER SETTINGS",0xffffffff,1);
  controls_text(64,104,"Use the touch screen or D-pad.",0xffe9d6aa,1);
  controls_text(96,128,"Press START to save and return.",0xffe9d6aa,1);
- controls_text(48,168,s->xbox_buttons?"Xbox: B = jump, Y = reload / interact":"Nintendo: A = jump, X = reload / interact",0xffffffff,1);
+ controls_text(48,168,s->xbox_buttons?"Xbox layout selected":"Nintendo layout selected",0xffffffff,1);
  controls_text(64,188,original?"L: fire  R: grenade  Up: zoom":s->swap_shoulders?"R: fire  L: grenade  ZR: zoom":"ZR: fire  ZL: grenade  R: zoom",0xffe9d6aa,1);
  if(!original)controls_text(64,208,"PC high textures apply next map load.",0xffe9d6aa,1);
  n3ds_gpu_hud_screen(1);controls_quad(0,0,320,240,0xff24150c,0);
  controls_text(84,16,"CONTROLLER SETTINGS",0xffffffff,0);
- const char *labels[]={"C-stick aim","Touch aim","ABXY layout","Swap L/ZL + R/ZR","PC high textures"};
- for(int row=0;row<(original?3:5);++row){unsigned int color=0xffffffff;
-  float y=34+row*30;controls_quad(12,y,296,28,selected==row?0xff674826:0xff35251a,0);
-  controls_text(20,y+4,labels[row],color,0);char value[40];
-  if(row<2)snprintf(value,sizeof(value),"%u%%",row?s->touch:s->cstick);
-  else snprintf(value,sizeof(value),"%s",row==2?(s->xbox_buttons?"Xbox positions":"Nintendo letters"):
-      row==3?(s->swap_shoulders?"On":"Off"):(s->high_textures?"128 + mip (exp)":"64 standard"));
-  controls_text(20,y+16,value,color,0);
-  controls_quad(218,y+2,38,24,0xff735333,0);controls_quad(264,y+2,38,24,0xff735333,0);
-  controls_text(233,y+10,"-",color,0);controls_text(279,y+10,"+",color,0);
+ const char *labels[]={"C-stick aim","Touch aim","ABXY layout","Swap shoulders","PC textures","Swap X/Y","Show FPS"};
+ for(int row=0;row<(original?5:7);++row){int field=original && row>=3?row+2:row;
+  unsigned int color=0xffffffff;float y=24+row*23;
+  controls_quad(12,y,296,21,selected==row?0xff674826:0xff35251a,0);
+  controls_text(20,y+7,labels[field],color,0);char value[32];
+  if(field<2)snprintf(value,sizeof(value),"%u%%",field?s->touch:s->cstick);
+  else snprintf(value,sizeof(value),"%s",field==2?(s->xbox_buttons?"Xbox":"Nintendo"):
+      field==3?(s->swap_shoulders?"On":"Off"):
+      field==4?(s->high_textures?"128+mip":"64"):
+      field==5?(s->swap_xy?"On":"Off"):(s->show_fps?"On":"Off"));
+  controls_text(164,y+7,value,color,0);
+  controls_quad(242,y+1,28,19,0xff735333,0);controls_quad(274,y+1,28,19,0xff735333,0);
+  controls_text(252,y+7,"-",color,0);controls_text(284,y+7,"+",color,0);
  }
- controls_text(16,184,save_error?"Save failed. START retry / B cancel":"Up/down: select  Left/right: change",save_error?0xff70a0ff:0xffe9d6aa,0);
+ controls_text(16,188,save_error?"Save failed. START retry / B cancel":"Up/down: select  Left/right: change",save_error?0xff70a0ff:0xffe9d6aa,0);
  controls_quad(16,202,134,30,0xff53391a,0);controls_quad(170,202,134,30,0xff674826,0);
  controls_text(35,214,"Reset defaults",0xffffffff,0);controls_text(190,214,"Save + back",0xffffffff,0);
  n3ds_gpu_hud_screen(0);n3ds_gpu_texture_bind(0,saved);n3ds_gpu_world_state_restore();
