@@ -263,6 +263,17 @@ static short portal_hull_from_points(
 	real_point3d const *vertices,
 	short winding,
 	struct portal_hull *result);
+#ifdef HALO_N3DS
+static struct native_portal_cache_entry {
+    unsigned int generation;
+    unsigned int key;
+    short result;
+    short vertex_count;
+    real_point2d vertices[24];
+} native_portal_cache[128];
+static unsigned int native_portal_generation=1;
+static boolean native_portal_cache_enabled=TRUE;
+#endif
 static short portal_hull_from_portal(
 	short portal_index,
 	boolean direction,
@@ -938,13 +949,24 @@ static short portal_hull_from_portal(
 	boolean direction,
 	struct portal_hull *result)
 {
+#ifdef HALO_N3DS
+    unsigned int key=((unsigned int)(unsigned short)portal_index<<1)|(direction?1u:0u);
+    struct native_portal_cache_entry *entry=&native_portal_cache[key&127u];
+    if(native_portal_cache_enabled && entry->generation==native_portal_generation && entry->key==key) {
+        if(entry->result==_portal_hull_from_portal_succeeded) {
+            result->vertex_count=entry->vertex_count;
+            csmemcpy(result->vertices,entry->vertices,entry->vertex_count*sizeof(real_point2d));
+        } else result->vertex_count=0;
+        return entry->result;
+    }
+#endif
 	struct structure_bsp *structure = global_structure_bsp_get();
 	struct structure_visibility_portal *portal = TAG_BLOCK_GET_ELEMENT(
 		&structure->cluster_portals,
 		portal_index,
 		struct structure_visibility_portal);
 
-	return portal_hull_from_points(
+	short hull_result=portal_hull_from_points(
 		&render.camera,
 		&render.frustum,
 		TAG_BLOCK_GET_ELEMENT(
@@ -958,6 +980,18 @@ static short portal_hull_from_portal(
 		(real_point3d const *)portal->vertices.address,
 		direction ? -1 : 1,
 		result);
+#ifdef HALO_N3DS
+    if(native_portal_cache_enabled) {
+        entry->generation=(hull_result==_portal_hull_from_portal_succeeded && result->vertex_count>24)?0:native_portal_generation;
+        entry->key=key;
+        entry->result=hull_result;
+        if(hull_result==_portal_hull_from_portal_succeeded && result->vertex_count<=24) {
+            entry->vertex_count=result->vertex_count;
+            csmemcpy(entry->vertices,result->vertices,result->vertex_count*sizeof(real_point2d));
+        }
+    }
+#endif
+	return hull_result;
 }
 
 boolean structure_visibility_find_mirror(
@@ -1682,6 +1716,10 @@ static void structure_visibility_find_clusters(
 static void structure_visibility_compute_internal(
 	boolean build_environment_surfaces)
 {
+#ifdef HALO_N3DS
+    ++native_portal_generation;
+    if(!native_portal_generation) ++native_portal_generation;
+#endif
 	struct structure_bsp *structure = global_structure_bsp_get();
 
 	profile_enter(render_structure_visibility_portal_traversal);
@@ -1802,9 +1840,11 @@ static unsigned int native_cluster_hash(void)
 }
 boolean n3ds_structure_visibility_test(void)
 {
+    native_portal_cache_enabled=FALSE;
     structure_visibility_compute();
     short count=render.rendered_cluster_count,sky=render.visible_sky_index;
     unsigned int hash=native_cluster_hash();
+    native_portal_cache_enabled=TRUE;
     n3ds_structure_visibility_compute();
     return count==render.rendered_cluster_count && sky==render.visible_sky_index && hash==native_cluster_hash() && !render.environment_surface_count;
 }

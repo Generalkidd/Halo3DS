@@ -591,3 +591,27 @@ without a fatal error, with about 7.7 MiB cached and a steady 18.6 ms render
 interval at game time 900. Initial loading cost increased. New 3DS XL frame
 time and memory headroom need physical measurement before considering a new
 default.
+
+For New-model PC multiplayer maps, the native cache now prepares seven small
+gameplay HUD bitmap groups before the match. Damage arrows and reticle warnings
+remain resident; other HUD images retain normal eviction. This adds about
+340 KiB in the Timberland emulator fixture and removes a first-hit damage
+arrow decode, but did not reduce the overall outdoor hitch count. Texture
+eviction gives recently used actors, weapons, vehicles and effects a small
+priority over scenery without evicting a visible surface to hold an old effect.
+
+The native portal traversal caches a projected portal hull only for the
+current visibility pass. It copies at most 24 used vertices and leaves larger
+portals on the original path. Sampled cluster hashes matched the uncached
+Xbox traversal at several Timberland camera positions. In the seven-bot
+uncaptured Azahar route, outdoor visibility work fell by roughly 2.5–3.5 ms
+per frame, while busy total frame work remained above 33 ms. This is an
+emulator result, not a New 3DS XL frame-rate measurement. Conservative PVS
+and rectangle traversal experiments were rejected: PVS increased object and
+effect work, and the rectangle path omitted clusters found by the original.
+
+A diagnostic single-ground-material 512-pixel test required a downgrade on
+far respawn to avoid cache exhaustion and did not sustain the 30 FPS target.
+The ordinary launcher retains the bounded texture profile. The guarded
+near-world and smooth-promotion build options remain experiments, not a
+replacement for the release texture policy.

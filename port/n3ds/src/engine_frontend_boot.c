@@ -20,6 +20,10 @@ short n3ds_ui_pc_expansion_map_count(void);
 #include "game.h"
 #include "game/game_engine.h"
 #include "players.h"
+#ifdef HALO_N3DS_TEXTURE_CLIP_DEATH
+#include "game/players_runtime.h"
+#include "math/real_math.h"
+#endif
 #include "input/input.h"
 #include "input/input_abstraction.h"
 #include "engine_input.h"
@@ -101,6 +105,7 @@ struct menu_key_event { long frame; unsigned int mask; };
 static struct menu_key_event menu_key_events[64];
 static unsigned int menu_key_event_count;
 static long menu_key_capture_frame;
+static int menu_kill_player;
 static int menu_go_to_extra;
 static int menu_go_to_b30_extra;
 static int menu_survey_extras;
@@ -126,7 +131,8 @@ static int menu_keys_load(void)
         {"SURVEY_EXTRAS",0x02000000u},{"ENTER_B30_EXTRA",0x01000000u},
         {"TRY_B30_EXTRA",0x00800000u},
         {"OPEN_SETTINGS",0x00400000u},{"TAP_HIGH_TEXTURES",0x00200000u},
-        {"TAP_SAVE_SETTINGS",0x00080000u},{"TAP_PC_TEXTURES",0x00040000u}
+        {"TAP_SAVE_SETTINGS",0x00080000u},{"TAP_PC_TEXTURES",0x00040000u},
+        {"KILL_PLAYER",0x00020000u}
     };
     FILE *file=fopen("sdmc:/halo-source/menu-keys.txt","rb");
     char line[64],name[32],extra;
@@ -161,6 +167,7 @@ static void menu_keys_sample(long frame,struct native_input_sample *sample)
             char path[40];snprintf(path,sizeof(path),"levels\\%s\\%s",name,name);
             main_set_map_name(path);
         } else if(mask==0x10000000u) menu_go_to_extra=1;
+        else if(mask==0x00020000u) menu_kill_player=1;
         else if(mask==0x04000000u) menu_go_to_b30_extra=1;
         else if(mask==0x02000000u) menu_survey_extras=1;
         else if(mask==0x01000000u) menu_enter_b30_extra=1;
@@ -600,6 +607,12 @@ static void arsenal_after_render(long frame,long unit)
     if(frame>=ARSENAL_FIRST_FRAME && frame<ARSENAL_VEHICLE_FRAME) {
         unsigned int stage=(unsigned int)(frame-ARSENAL_FIRST_FRAME)/ARSENAL_STAGE_FRAMES;
         unsigned int offset=(unsigned int)(frame-ARSENAL_FIRST_FRAME)%ARSENAL_STAGE_FRAMES;
+        if(stage==6 && offset>=30 && offset<=45) {
+            char label[32];snprintf(label,sizeof(label),"sniper-shot-%02u",offset);
+            int failed=arsenal_copy_front(label);
+            snprintf(message,sizeof(message),"ARSENAL FX CAPTURE: %s %s",label,failed?"FAILED":"saved");n3ds_log(message);
+            if(failed) ++arsenal_failures;
+        }
         if(offset==61) {
             int failed=arsenal_copy_front(arsenal_weapons[stage].label);
             snprintf(message,sizeof(message),"ARSENAL CAPTURE: %s %s",arsenal_weapons[stage].label,failed?"FAILED":"saved");n3ds_log(message);
@@ -839,6 +852,14 @@ int halo_engine_boot(void)
     CHECK(n3ds_hs_stack_tests());
     n3ds_log("STARTUP: PASS script stack alignment, nested frames, floating-point values and re-entry");
     n3ds_log("STARTUP: main menu ready; entering frame loop");
+#if defined(HALO_N3DS_SMOOTH_NEAR_TEXTURE) && !defined(HALO_N3DS_TEXTURE_CLIP_DEATH)
+    long prior_residency_unit=NONE;
+#endif
+#ifdef HALO_N3DS_TEXTURE_CLIP_DEATH
+    real_point3d traversal_death_position={0};
+    long traversal_dead_unit=NONE;
+    int traversal_relocate_pending=0;
+#endif
 #ifdef HALO_N3DS_EXPERIMENTAL_PC_MENU_KEYS
     CHECK(!menu_keys_load());
 #endif
@@ -941,6 +962,25 @@ int halo_engine_boot(void)
         if(menu_b30_action_frame && frame+1>=menu_b30_action_frame &&
            frame+1<menu_b30_action_frame+3)sample.held|=NATIVE_KEY_X;
 #endif
+#ifdef HALO_N3DS_TEXTURE_CLIP_DEATH
+        if(n3ds_main_is_solo_multiplayer() && player_input_enabled()) {
+            long clip_frame=frame+1;
+            if((clip_frame>=450 && clip_frame<900) ||
+               (clip_frame>=1330 && clip_frame<1500)) sample.circle_y=110;
+            if((clip_frame>=660 && clip_frame<663) ||
+               (clip_frame>=795 && clip_frame<798)) sample.held|=NATIVE_KEY_A;
+            if(clip_frame>=920 && clip_frame<950) sample.cstick_x=24;
+        }
+#endif
+#ifdef HALO_N3DS_AUDIO_TRACE
+        if(n3ds_main_is_solo_multiplayer() && player_input_enabled()) {
+            long trace_frame=frame+1;
+            if(trace_frame>=450 && trace_frame<900) sample.circle_y=110;
+            if((trace_frame>=660 && trace_frame<663) ||
+               (trace_frame>=795 && trace_frame<798)) sample.held|=NATIVE_KEY_A;
+            if(trace_frame>=920 && trace_frame<950) sample.cstick_x=24;
+        }
+#endif
         n3ds_input_gameplay_controls(game_in_progress() && !main_menu_is_active() &&
             !ui_widgets_active() && player_input_enabled() && !cinematic_in_progress());
 #ifdef HALO_N3DS_EXPERIMENTAL_PC_FIRE
@@ -990,6 +1030,71 @@ int halo_engine_boot(void)
         }
         local=local_player_get_next(NONE);
         if(local!=NONE) {player=local_player_get_player_index(local);if(player!=NONE) unit=player_get(player)->unit_index;}
+#ifdef HALO_N3DS_TEXTURE_CLIP_DEATH
+        if(unit!=NONE) SET_FLAG(object_get(unit)->object.damage_flags,_object_cannot_take_damage_bit,TRUE);
+        if(unit!=NONE && (frame+1)%60==0) {
+            const struct object_datum *clip_object=object_get(unit);
+            snprintf(message,sizeof(message),"TEXTURE CLIP POSITION: frame=%ld x=%.2f y=%.2f z=%.2f",
+                frame+1,clip_object->object.position.x,clip_object->object.position.y,clip_object->object.position.z);
+            n3ds_log(message);
+        }
+#endif
+#if defined(HALO_N3DS_SMOOTH_NEAR_TEXTURE) && !defined(HALO_N3DS_TEXTURE_CLIP_DEATH)
+        if(unit!=NONE && unit!=prior_residency_unit) {
+            if(prior_residency_unit!=NONE) n3ds_engine_texture_respawn_transition();
+            prior_residency_unit=unit;
+        }
+#endif
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_MENU_KEYS
+        if(menu_kill_player && unit!=NONE && n3ds_main_is_solo_multiplayer()) {
+            snprintf(message,sizeof(message),"MENU KEYS: forced player death frame=%ld unit=%08lx",frame+1,unit);
+            n3ds_log(message);
+#ifdef HALO_N3DS_TEXTURE_CLIP_DEATH
+            traversal_death_position=object_get(unit)->object.position;
+            traversal_dead_unit=unit;
+            traversal_relocate_pending=1;
+#endif
+            SET_FLAG(object_get(unit)->object.damage_flags,_object_cannot_take_damage_bit,FALSE);
+            unit_kill(unit);menu_kill_player=0;
+        }
+#endif
+#ifdef HALO_N3DS_TEXTURE_CLIP_DEATH
+        if(traversal_relocate_pending && unit!=NONE && unit!=traversal_dead_unit) {
+            short best=NONE,count=player_get_starting_location_count();
+            float farthest=-1.f;short eligible=0;int preferred=0;
+            for(short index=0;index<count;++index) {
+                const struct player_starting_location *location=player_get_starting_location(index);
+                if(!location || game_engine_get_starting_location_rating(player,location)<=0.f) continue;
+                ++eligible;
+                float dx=location->position.x-traversal_death_position.x;
+                float dy=location->position.y-traversal_death_position.y;
+                float dz=location->position.z-traversal_death_position.z;
+                float distance2=dx*dx+dy*dy+dz*dz;
+                int outdoor=location->position.x>30.f && location->position.y< -20.f;
+                if((outdoor && !preferred) || (outdoor==preferred && distance2>farthest)) {
+                    preferred=outdoor;farthest=distance2;best=index;
+                }
+            }
+            if(best!=NONE) {
+                const struct player_starting_location *location=player_get_starting_location(best);
+                real_vector3d forward;
+                forward.i=-location->position.x;
+                forward.j=-location->position.y;
+                forward.k=0.f;
+                if(normalize3d(&forward)==0.f) vector3d_from_angle(&forward,location->facing);
+                object_set_position(unit,&location->position,&forward,global_up3d);
+                player_control_set_facing(local,&forward);
+#if defined(HALO_N3DS_NEAR_WORLD_WIDTH) && HALO_N3DS_NEAR_WORLD_WIDTH==512
+                n3ds_engine_texture_respawn_transition();
+#endif
+                snprintf(message,sizeof(message),"TEXTURE CLIP RELOCATION: frame=%ld start=%d eligible=%d distance=%.1f from=%.1f,%.1f,%.1f to=%.1f,%.1f,%.1f",
+                    frame+1,best,eligible,sqrtf(farthest),traversal_death_position.x,traversal_death_position.y,traversal_death_position.z,
+                    location->position.x,location->position.y,location->position.z);
+                n3ds_log(message);
+            } else n3ds_log("TEXTURE CLIP RELOCATION: no eligible distant spawn");
+            traversal_relocate_pending=0;
+        }
+#endif
 #ifdef HALO_N3DS_EXPERIMENTAL_PC_MENU_KEYS
         menu_keys_go_to_extra(unit);
         menu_keys_go_to_b30_extra(unit);
@@ -1138,6 +1243,18 @@ int halo_engine_boot(void)
             CHECK(n3ds_gpu_texture_clip_frame((unsigned int)game_time_get()));
         }
 #endif
+#ifdef HALO_N3DS_TEXTURE_CLIP_DEATH
+        if(n3ds_main_is_solo_multiplayer() && frame+1>=480 && frame+1<=1650 &&
+           (frame+1-480)%15==0) {
+            double work_ms=(n3ds_engine_ticks()-start)*1000.0/n3ds_engine_tick_frequency();
+            double fps=work_ms>33.333?1000.0/work_ms:30.0;
+            snprintf(message,sizeof(message),"TEXTURE CLIP PERF: frame=%ld work_ms=%.3f fps=%.2f textures=%u bytes=%u",
+                frame+1,work_ms,fps,n3ds_engine_texture_count(),n3ds_engine_texture_bytes());
+            n3ds_log(message);
+            extern int n3ds_gpu_texture_clip_frame(unsigned int);
+            CHECK(n3ds_gpu_texture_clip_frame((unsigned int)(frame+1)));
+        }
+#endif
 #ifdef HALO_N3DS_EXPERIMENTAL_PC_MENU_KEYS
         if(frame+1==menu_key_capture_frame) {
             CHECK(!n3ds_gpu_screen_test());
@@ -1147,7 +1264,7 @@ int halo_engine_boot(void)
 #ifdef HALO_N3DS_EXPERIMENTAL_PC_ARSENAL
         if(unit!=NONE) arsenal_after_render(frame+1,unit);
 #endif
-#if defined(HALO_N3DS_PROBE_A10) || (defined(HALO_N3DS_BOT_TEST_COUNT) && !defined(HALO_N3DS_EXPERIMENTAL_PC_UI)) || (defined(HALO_N3DS_EXPERIMENTAL_PC_UI) && !defined(HALO_N3DS_EXPERIMENTAL_PC_ALL_MAPS))
+#if !defined(HALO_N3DS_AUDIO_TRACE) && (defined(HALO_N3DS_PROBE_A10) || (defined(HALO_N3DS_BOT_TEST_COUNT) && !defined(HALO_N3DS_EXPERIMENTAL_PC_UI)) || (defined(HALO_N3DS_EXPERIMENTAL_PC_UI) && !defined(HALO_N3DS_EXPERIMENTAL_PC_ALL_MAPS)))
         if(frame+1==300) {
             int capture_failed=n3ds_gpu_screen_test();
 #ifdef HALO_N3DS_EXPERIMENTAL_PC_UI

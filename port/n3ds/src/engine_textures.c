@@ -18,7 +18,12 @@
 
 enum { NATIVE_GAME_TEXTURE_SLOTS = 256, NATIVE_TEXTURE_SLOTS = 512,
     NATIVE_TEXTURE_BUDGET = 4*1024*1024, NATIVE_MENU_TEXTURE_BUDGET = 8*1024*1024 };
-struct native_texture_entry { struct bitmap_data *bitmap; void *resource; unsigned int bytes,last_used; };
+struct native_texture_entry {
+    struct bitmap_data *bitmap;
+    void *resource;
+    unsigned int bytes,last_used,promotion_frame;
+    unsigned char priority,promotion_levels;
+};
 static struct native_texture_entry entries[NATIVE_TEXTURE_SLOTS];
 static unsigned int texture_count, texture_bytes,texture_frame;
 static unsigned int texture_resolution = 128;
@@ -31,7 +36,13 @@ void n3ds_log(const char *message);
 #include "engine_lightmap_filter_tests.inl"
 static struct bitmap_data *pending[NATIVE_TEXTURE_SLOTS];
 static unsigned int pending_order[NATIVE_TEXTURE_SLOTS],pending_seen[NATIVE_TEXTURE_SLOTS],request_sequence;
+static unsigned char pending_priority[NATIVE_TEXTURE_SLOTS];
+static unsigned int hud_prewarm_tag_generation;
 static void *load_bitmap_now(struct bitmap_data *bitmap, boolean block, boolean load);
+static void texture_evict(unsigned int slot);
+#ifdef HALO_N3DS_NEAR_WORLD_WIDTH
+static unsigned int near_downgrade_until;
+#endif
 long long n3ds_engine_ticks(void);
 long long n3ds_engine_tick_frequency(void);
 static long long idle_ticks[6];
@@ -63,6 +74,34 @@ static void texture_scratch_free(void *pointer,boolean linear)
 
 unsigned int n3ds_engine_texture_count(void) { return texture_count; }
 unsigned int n3ds_engine_texture_bytes(void) { return texture_bytes; }
+void n3ds_engine_texture_respawn_transition(void)
+{
+#if defined(HALO_N3DS_NEAR_WORLD_WIDTH) && HALO_N3DS_NEAR_WORLD_WIDTH==512
+    extern int n3ds_gpu_frame_active(void);
+    assert(!n3ds_gpu_frame_active());
+    assert(n3ds_gpu_texture_barrier());
+    unsigned int removed=0,freed=0;
+    for(unsigned int i=0;i<NATIVE_TEXTURE_SLOTS;++i) if(entries[i].bitmap && entries[i].priority==0) {
+        freed+=entries[i].bytes;texture_evict(i);++removed;
+    }
+    for(unsigned int i=0;i<NATIVE_TEXTURE_SLOTS;++i)
+        if(pending[i] && pending_priority[i]==0) pending[i]=NULL;
+    near_downgrade_until=texture_frame+150;
+    char transition_message[160];
+    snprintf(transition_message,sizeof(transition_message),
+        "TEXTURE SCENE TRANSITION: frame=%u evicted=%u bytes=%u cooldown_until=%u",
+        texture_frame,removed,freed,near_downgrade_until);
+    n3ds_log(transition_message);
+#endif
+#ifdef HALO_N3DS_SMOOTH_NEAR_TEXTURE
+    unsigned int changed=0;
+    for(unsigned int i=0;i<NATIVE_TEXTURE_SLOTS;++i) if(entries[i].bitmap && entries[i].promotion_levels) {
+        entries[i].promotion_frame=texture_frame;
+        ++changed;
+    }
+    if(changed) {char message[100];snprintf(message,sizeof(message),"TEXTURE PROMOTION: respawn reset=%u frame=%u",changed,texture_frame);n3ds_log(message);}
+#endif
+}
 static boolean menu_cache(void)
 {
     const struct n3ds_cache_view *view=n3ds_engine_cache_view(0);
@@ -155,8 +194,50 @@ static void *cached_bitmap_resource(struct bitmap_data *bitmap)
     unsigned int slot=(unsigned int)bitmap->cache_block_index;
     if(slot>=NATIVE_TEXTURE_SLOTS || entries[slot].bitmap!=bitmap ||
        entries[slot].resource!=bitmap->hardware_format) return NULL;
-    entries[slot].last_used=texture_frame;
-    return entries[slot].resource;
+    struct native_texture_entry *entry=entries+slot;
+    entry->last_used=texture_frame;
+#ifdef HALO_N3DS_SMOOTH_NEAR_TEXTURE
+    if(entry->promotion_levels) {
+        unsigned int elapsed=texture_frame-entry->promotion_frame;
+        float bias=elapsed>=24?0.f:(float)entry->promotion_levels*(24.f-(float)elapsed)/24.f;
+        assert(n3ds_gpu_texture_set_lod_bias(entry->resource,bias));
+    }
+#endif
+    return entry->resource;
+}
+static int prewarm_hud_name(const char *name)
+{
+    static const char *const names[] = {
+        "ui\\hud\\bitmaps\\combined\\hud_damage_arrows",
+        "ui\\hud\\bitmaps\\combined\\hud_reticle_warnings",
+        "ui\\hud\\bitmaps\\combined\\hud_waypoints",
+        "ui\\hud\\bitmaps\\combined\\hud_counter_numbers",
+        "ui\\hud\\bitmaps\\hud_sensor_blip",
+        "ui\\hud\\bitmaps\\hud_sensor_blip_custom",
+        "ui\\hud\\bitmaps\\hud_multiplayer"
+    };
+    if(!name) return 0;
+    for(unsigned int i=0;i<sizeof(names)/sizeof(names[0]);++i)
+        if(!strcmp(name,names[i])) return 1;
+    return 0;
+}
+static unsigned int texture_priority_name(const char *name)
+{
+    if(!name) return 0;
+    if(!n3ds_input_platform_original_model() &&
+       (!strcmp(name,"ui\\hud\\bitmaps\\combined\\hud_damage_arrows") ||
+        !strcmp(name,"ui\\hud\\bitmaps\\combined\\hud_reticle_warnings"))) return 3;
+    if(!strncmp(name,"ui\\",3)) return 2;
+    if(!strncmp(name,"weapons\\",8) || !strncmp(name,"vehicles\\",9) ||
+       !strncmp(name,"characters\\",11) || !strncmp(name,"effects\\",8) ||
+       !strncmp(name,"powerups\\",9)) return 1;
+    return 0;
+}
+static unsigned int texture_priority_bitmap(struct bitmap_data *bitmap)
+{
+    const struct n3ds_cache_view *view=n3ds_engine_cache_view(0);
+    struct cache_file_tag_instance *tag=view?n3ds_cache_tag(view,bitmap->tag_index,BITMAP_GROUP_TAG):NULL;
+    return tag?texture_priority_name(tag->name):0;
 }
 static unsigned int texture_oldest_unbound(void)
 {
@@ -166,15 +247,29 @@ static unsigned int texture_oldest_unbound(void)
         struct native_texture_entry *entry=entries+slot;
         /* Protect this and the preceding frame, plus every still-bound sampler.
          * Multi-map materials can retain earlier stages while loading later ones. */
-        if(!entry->bitmap || texture_frame-entry->last_used<=2 ||
+        if(!entry->bitmap || entry->priority==3 || texture_frame-entry->last_used<=2 ||
            entry->resource==bound[0] || entry->resource==bound[1] || entry->resource==bound[2]) continue;
-        if(oldest==NATIVE_TEXTURE_SLOTS || texture_frame-entry->last_used>texture_frame-entries[oldest].last_used) oldest=slot;
+        unsigned int age=texture_frame-entry->last_used;
+        unsigned int score=age>entry->priority*8u?age-entry->priority*8u:0;
+        unsigned int oldest_age=oldest==NATIVE_TEXTURE_SLOTS?0:texture_frame-entries[oldest].last_used;
+        unsigned int oldest_score=oldest==NATIVE_TEXTURE_SLOTS?0:
+            (oldest_age>entries[oldest].priority*8u?oldest_age-entries[oldest].priority*8u:0);
+        /* A visible world surface wins over an unseen old effect. Importance
+         * only shifts the age score by a few frames, avoiding scenery churn. */
+        if(oldest==NATIVE_TEXTURE_SLOTS || score>oldest_score ||
+           (score==oldest_score && age>oldest_age)) oldest=slot;
     }
     return oldest;
 }
 static void texture_evict(unsigned int slot)
 {
     struct native_texture_entry *entry=entries+slot;
+#ifdef HALO_N3DS_SMOOTH_NEAR_TEXTURE
+    if(entry->promotion_levels) {
+        char message[110];snprintf(message,sizeof(message),"TEXTURE PROMOTION: evicted levels=%u age=%u frame=%u",
+            entry->promotion_levels,texture_frame-entry->last_used,texture_frame);n3ds_log(message);
+    }
+#endif
     entry->bitmap->hardware_format=NULL;entry->bitmap->base_address=NULL;entry->bitmap->cache_block_index=NONE;
     n3ds_gpu_texture_destroy(entry->resource);texture_bytes-=entry->bytes;--texture_count;
     memset(entry,0,sizeof(*entry));
@@ -202,6 +297,9 @@ void texture_cache_flush(void)
     unsigned int i;
     texture_archive_close();
     memset(pending, 0, sizeof(pending));
+#ifdef HALO_N3DS_NEAR_WORLD_WIDTH
+    near_downgrade_until=0;
+#endif
     if (!texture_count) return;
     /* Map unload happens between frames, before its bitmap structures are freed. */
     {
@@ -239,6 +337,7 @@ void texture_cache_idle(void)
     unsigned int i;
     assert(initialized);
     ++texture_frame;
+    n3ds_engine_texture_prewarm_hud();
     /* Reclaim old working sets only between frames and after the GPU fence.
      * Never evict a texture referenced by this or the preceding frame. */
     unsigned int budget=texture_budget();
@@ -279,7 +378,10 @@ void texture_cache_idle(void)
         unsigned int oldest=NATIVE_TEXTURE_SLOTS;
         for(i=0;i<NATIVE_TEXTURE_SLOTS;++i) if(pending[i]) {
             if(texture_frame-pending_seen[i]>30) {pending[i]=NULL;continue;}
-            if(oldest==NATIVE_TEXTURE_SLOTS || request_sequence-pending_order[i]>request_sequence-pending_order[oldest]) oldest=i;
+            unsigned int score=(request_sequence-pending_order[i])+pending_priority[i]*4u;
+            unsigned int oldest_score=oldest==NATIVE_TEXTURE_SLOTS?0:
+                (request_sequence-pending_order[oldest])+pending_priority[oldest]*4u;
+            if(oldest==NATIVE_TEXTURE_SLOTS || score>oldest_score) oldest=i;
         }
         if(oldest==NATIVE_TEXTURE_SLOTS) break;
         struct bitmap_data *bitmap=pending[oldest];pending[oldest]=NULL;
@@ -527,6 +629,7 @@ static void *load_cube_now(struct bitmap_data *bitmap)
     unsigned int slot;for(slot=0;slot<NATIVE_TEXTURE_SLOTS && entries[slot].bitmap;++slot) {}
     assert(slot<NATIVE_TEXTURE_SLOTS);
     entries[slot]=(struct native_texture_entry){bitmap,resource,output_bytes,texture_frame};
+    entries[slot].priority=(unsigned char)texture_priority_bitmap(bitmap);
     bitmap->hardware_format=resource;bitmap->cache_block_index=slot;bitmap->base_address=NULL;
     texture_bytes+=output_bytes;++texture_count;
     {char message[192];snprintf(message,sizeof(message),"NATIVE CUBE TEXTURE: tag=%08lx format=%d side=%u mip=%u face_stride=%u native=%u bytes=%u",bitmap->tag_index,bitmap->format,layout.side,layout.level,layout.stride,layout.target,output_bytes);n3ds_log(message);}
@@ -564,7 +667,9 @@ static int texture_pressure_tests(void)
     PRESSURE_CHECK(!texture_make_room(2*image_bytes) && texture_count==63);
     n3ds_gpu_present();active=0;
     entries[7].last_used=90;
-    PRESSURE_CHECK(texture_make_room(2*image_bytes) && texture_count==62 && !entries[7].bitmap);
+    entries[8].last_used=89;entries[8].priority=1;
+    PRESSURE_CHECK(texture_make_room(2*image_bytes) && texture_count==62 &&
+        !entries[7].bitmap && entries[8].bitmap);
     result=0;
 done:
     if(active) n3ds_gpu_present();
@@ -598,7 +703,7 @@ static void *load_bitmap_now(struct bitmap_data *bitmap, boolean block, boolean 
 {
     unsigned int i, width, height, target_width, target_height, level, skip, bytes, block_bytes, x, y, output_bytes, allocated_bytes;
     unsigned int hash = 2166136261U;
-    unsigned int resolution=texture_resolution;
+    unsigned int resolution=texture_resolution,priority=0,promotion_levels=0;
     unsigned int display_resolution=0;
 #ifndef HALO_N3DS_MENU_TEXTURE_BASELINE
     /* UI-map assets have their own 8 MiB cache. Improve their source texels
@@ -635,6 +740,18 @@ static void *load_bitmap_now(struct bitmap_data *bitmap, boolean block, boolean 
         struct cache_file_tag_instance *tag=n3ds_cache_tag(view,bitmap->tag_index,BITMAP_GROUP_TAG);
         const struct bitmap_group *group=n3ds_cache_resolve(view,tag->base_address,sizeof(*group));
         lightmap=group->usage==4 && bitmap->format==6 && bitmap->type==0;
+        priority=texture_priority_name(tag->name);
+#ifdef HALO_N3DS_NEAR_WORLD_WIDTH
+        if(pc_world && !n3ds_input_platform_original_model() &&
+           !strcmp(tag->name,"levels\\test\\timberland\\bitmaps\\timberland_ground"))
+            resolution=texture_frame<near_downgrade_until?128:HALO_N3DS_NEAR_WORLD_WIDTH;
+#ifdef HALO_N3DS_SMOOTH_NEAR_TEXTURE
+        if(pc_world && !n3ds_input_platform_original_model() &&
+           !strcmp(tag->name,"levels\\test\\timberland\\bitmaps\\timberland_ground") &&
+           texture_frame>=near_downgrade_until)
+            promotion_levels=HALO_N3DS_NEAR_WORLD_WIDTH==512?2:1;
+#endif
+#endif
 #ifndef HALO_N3DS_DISPLAY_TEXTURE_BASELINE
         if(bitmap->type==0 && group->type==0 && group->usage!=2 && !lightmap)
             display_resolution=display_texture_resolution(tag->name,n3ds_input_platform_original_model());
@@ -704,6 +821,7 @@ static void *load_bitmap_now(struct bitmap_data *bitmap, boolean block, boolean 
     int two_mips=pc_world && !menu_cache() && !lightmap &&
         texture_resolution>=128 && target_width>=16 && target_height>=16;
     if(two_mips) allocated_bytes+=output_bytes/4;
+    if(promotion_levels==2) allocated_bytes+=output_bytes/16;
     if (!texture_make_room(allocated_bytes)) return NULL;
     bytes = raw ? width*height*pixel_stride : ((width+3)/4)*((height+3)/4)*block_bytes;
     if (skip > (unsigned)bitmap->pixels_size || bytes > (unsigned)bitmap->pixels_size-skip ||
@@ -767,16 +885,22 @@ static void *load_bitmap_now(struct bitmap_data *bitmap, boolean block, boolean 
      * C3D_TexInit avoids holding both decode scratch and final GPU storage. */
     texture_scratch_free(compressed,compressed_linear);compressed=NULL;compressed_linear=FALSE;
     texture_scratch_free(rgba,rgba_linear);rgba=NULL;rgba_linear=FALSE;
-    resource = two_mips?n3ds_gpu_texture_create_two_mips(tiled,target_width,target_height):
+    resource = promotion_levels==2?n3ds_gpu_texture_create_mips(tiled,target_width,target_height,2):
+        two_mips?n3ds_gpu_texture_create_two_mips(tiled,target_width,target_height):
         n3ds_gpu_texture_create(tiled,target_width,target_height);
     if (!resource) goto done;
+#ifdef HALO_N3DS_SMOOTH_NEAR_TEXTURE
+    if(promotion_levels) assert(n3ds_gpu_texture_set_lod_bias(resource,(float)promotion_levels));
+#endif
     for (i = 0; i < output_bytes; ++i) hash = (hash ^ ((byte *)tiled)[i])*16777619U;
     /* Verify the published PICA allocation contains exactly the converted bytes. */
     if (n3ds_gpu_texture_checksum(resource) != hash) { n3ds_gpu_texture_destroy(resource); resource = NULL; goto done; }
     /* Cached map texels are read-only; mutable font/bitmap owners never publish. */
     n3ds_gpu_texture_publish_immutable(resource);
     for (i = 0; i < NATIVE_TEXTURE_SLOTS && entries[i].bitmap; ++i) {}
-    entries[i].bitmap = bitmap; entries[i].resource = resource;entries[i].last_used=texture_frame; entries[i].bytes = allocated_bytes;
+    entries[i].bitmap = bitmap; entries[i].resource = resource;entries[i].last_used=texture_frame;
+    entries[i].bytes = allocated_bytes;entries[i].priority=priority;
+    entries[i].promotion_levels=promotion_levels;entries[i].promotion_frame=texture_frame;
     bitmap->hardware_format = resource; bitmap->cache_block_index = i;
     /* base_address remains NULL: native tiled RGBA is not Xbox CPU pixel data. */
     bitmap->base_address = NULL;
@@ -786,6 +910,17 @@ static void *load_bitmap_now(struct bitmap_data *bitmap, boolean block, boolean 
         struct cache_file_tag_instance *tag=n3ds_cache_tag(view,bitmap->tag_index,BITMAP_GROUP_TAG);
         char message[200];snprintf(message,sizeof(message),"DISPLAY TEXTURE: %.130s native=%ux%u cache_bytes=%u",tag->name,target_width,target_height,texture_bytes);n3ds_log(message);
     }
+#ifdef HALO_N3DS_NEAR_WORLD_WIDTH
+    if(pc_world && bitmap->type==0) {
+        const struct n3ds_cache_view *view=n3ds_engine_cache_view(0);
+        struct cache_file_tag_instance *tag=n3ds_cache_tag(view,bitmap->tag_index,BITMAP_GROUP_TAG);
+        if(tag && !strcmp(tag->name,"levels\\test\\timberland\\bitmaps\\timberland_ground")) {
+            char message[190];snprintf(message,sizeof(message),"NEAR WORLD TEXTURE: %.110s native=%ux%u cache=%u cooldown=%d",
+                tag->name,target_width,target_height,texture_bytes,texture_frame<near_downgrade_until);
+            n3ds_log(message);
+        }
+    }
+#endif
     idle_ticks[5]+=n3ds_engine_ticks()-stamp;
     if(raw) {
         char message[192];snprintf(message,sizeof(message),"NATIVE RAW TEXTURE: tag=%08lx format=%d level=%u source=%ux%u native=%ux%u bytes=%u hash=%08x",bitmap->tag_index,bitmap->format,level,width,height,target_width,target_height,output_bytes,hash);n3ds_log(message);
@@ -793,6 +928,35 @@ static void *load_bitmap_now(struct bitmap_data *bitmap, boolean block, boolean 
 done:
     texture_scratch_free(tiled,tiled_linear);texture_scratch_free(rgba,rgba_linear);texture_scratch_free(compressed,compressed_linear);
     return resource;
+}
+
+void n3ds_engine_texture_prewarm_hud(void)
+{
+    const struct n3ds_cache_view *view=n3ds_engine_cache_view(0);
+    unsigned int generation=n3ds_engine_tag_generation();
+    extern int n3ds_gpu_frame_active(void);
+    if(!initialized || !opened || n3ds_input_platform_original_model() ||
+       !view || !view->tags || !view->tag_header || !view->instances ||
+       !strcmp(view->header.name,"ui") || n3ds_gpu_frame_active() ||
+       hud_prewarm_tag_generation==generation) return;
+    hud_prewarm_tag_generation=generation;
+    unsigned int loaded=0,failed=0,before=texture_bytes;
+    for(long i=0;i<view->tag_header->tag_count;++i) {
+        struct cache_file_tag_instance *tag=view->instances+i;
+        if((unsigned long)tag->group_tag!=BITMAP_GROUP_TAG ||
+           !prewarm_hud_name(tag->name)) continue;
+        struct bitmap_group *group=n3ds_cache_resolve(view,tag->base_address,sizeof(*group));
+        if(!group || group->bitmaps.count<=0 || group->bitmaps.count>16) {++failed;continue;}
+        struct bitmap_data *bitmaps=n3ds_cache_resolve(view,group->bitmaps.address,
+            group->bitmaps.count*sizeof(*bitmaps));
+        if(!bitmaps) {++failed;continue;}
+        for(long image=0;image<group->bitmaps.count;++image)
+            if(load_bitmap_now(bitmaps+image,TRUE,TRUE)) ++loaded;else ++failed;
+    }
+    char message[128];snprintf(message,sizeof(message),
+        "HUD PREWARM: images=%u failed=%u added_kib=%u cache_kib=%u",
+        loaded,failed,(texture_bytes>before?texture_bytes-before:0)/1024,texture_bytes/1024);
+    n3ds_log(message);
 }
 
 void *_texture_cache_bitmap_get_hardware_format(struct bitmap_data *bitmap, boolean block, boolean load)
@@ -819,6 +983,7 @@ void *_texture_cache_bitmap_get_hardware_format(struct bitmap_data *bitmap, bool
     if (block) return load_bitmap_now(bitmap, TRUE, TRUE);
     for (i = 0; i < NATIVE_TEXTURE_SLOTS; ++i) if (!pending[i]) {
         pending[i] = bitmap;pending_seen[i]=texture_frame;pending_order[i]=++request_sequence;
+        pending_priority[i]=(unsigned char)texture_priority_bitmap(bitmap);
         break;
     }
     return NULL;

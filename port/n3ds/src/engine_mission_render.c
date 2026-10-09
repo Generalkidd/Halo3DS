@@ -219,6 +219,9 @@ int n3ds_engine_mission_render(long unit_index,long time)
         n3ds_log("NATIVE LIVE PACING: original30Hz loop cap; GPU queue wait retained, extra VBlank wait disabled");
     }
     long long stamp[7];static long long profile[6],service_profile[9],wait_profile;static unsigned int profile_frames;
+#ifdef HALO_N3DS_AUDIO_TRACE
+    static long long prep_detail[3];
+#endif
     stamp[0]=n3ds_engine_ticks();
     struct rasterizer_frame_begin_parameters frame={0};
     struct rasterizer_window_begin_parameters window={0};
@@ -289,6 +292,9 @@ int n3ds_engine_mission_render(long unit_index,long time)
     n3ds_gpu_flashlight_set(unit && !cinematic_in_progress()?unit->unit.integrated_light_power:0,
         center_render.position.n,center_render.forward.n);
     render.local_player_index=0; render.window_index=0;
+#ifdef HALO_N3DS_AUDIO_TRACE
+    long long prep_gpu_start=n3ds_engine_ticks();
+#endif
     n3ds_gpu_frame_sync(0);
     FRONTEND_STAGE("frame-begin");
     n3ds_gpu_world_budget(!main_menu_is_active());
@@ -299,6 +305,9 @@ int n3ds_engine_mission_render(long unit_index,long time)
     rasterizer_frame_begin(&frame);
     n3ds_gpu_frame_sync(1);
     rasterizer_windows_begin();
+#ifdef HALO_N3DS_AUDIO_TRACE
+    prep_detail[0]+=n3ds_engine_ticks()-prep_gpu_start;
+#endif
     long long services[9];n3ds_engine_frame_service_ticks(services);n3ds_engine_texture_idle_ticks(services+3);
     for(int i=0;i<9;++i) service_profile[i]+=services[i];
     wait_profile+=n3ds_gpu_frame_wait_ticks();
@@ -323,7 +332,18 @@ int n3ds_engine_mission_render(long unit_index,long time)
         shift=-offset/(1.5f*tanf(window.camera.vertical_field_of_view*.5f)*(400.f/240.f));
         bounds.x0=-1+shift;bounds.x1=1+shift;
         render_camera_build_frustum(&window.camera,stereo?&bounds:NULL,&window.frustum,TRUE);
-        structure_visibility_find_camera(&render.camera);n3ds_structure_visibility_compute();
+#ifdef HALO_N3DS_AUDIO_TRACE
+        long long prep_visibility_start=n3ds_engine_ticks();
+#endif
+        structure_visibility_find_camera(&render.camera);
+#ifdef HALO_N3DS_AUDIO_TRACE
+        prep_detail[1]+=n3ds_engine_ticks()-prep_visibility_start;
+        prep_visibility_start=n3ds_engine_ticks();
+#endif
+        n3ds_structure_visibility_compute();
+#ifdef HALO_N3DS_AUDIO_TRACE
+        prep_detail[2]+=n3ds_engine_ticks()-prep_visibility_start;
+#endif
 #ifdef HALO_N3DS_ARCHIVE_VERIFY
         if(render.frame_index%30==0) CHECK(batch_visibility_test());
 #endif
@@ -425,7 +445,14 @@ int n3ds_engine_mission_render(long unit_index,long time)
         snprintf(message,sizeof(message),"TEXTURE PIPELINE PROFILE: time=%ld read_ms=%.3f decode_ms=%.3f tile_ms=%.3f upload_ms=%.3f",time,service_profile[5]*scale,service_profile[6]*scale,service_profile[7]*scale,service_profile[8]*scale);
         n3ds_log(message);memset(service_profile,0,sizeof(service_profile));
         snprintf(message,sizeof(message),"FRAME BEGIN PROFILE: time=%ld wait_ms=%.3f other_prepare_ms=%.3f",time,wait_profile*scale,(profile[0]-wait_profile)*scale);
-        n3ds_log(message);memset(profile,0,sizeof(profile));profile_frames=0;wait_profile=0;
+        n3ds_log(message);
+#ifdef HALO_N3DS_AUDIO_TRACE
+        snprintf(message,sizeof(message),"FRAME PREP DETAIL: time=%ld gpu_begin_ms=%.3f find_camera_ms=%.3f visibility_ms=%.3f remainder_ms=%.3f",
+            time,prep_detail[0]*scale,prep_detail[1]*scale,prep_detail[2]*scale,
+            (profile[0]-prep_detail[0]-prep_detail[1]-prep_detail[2])*scale);
+        n3ds_log(message);memset(prep_detail,0,sizeof(prep_detail));
+#endif
+        memset(profile,0,sizeof(profile));profile_frames=0;wait_profile=0;
     }
     if(time==1 || time%30==0) {
         char message[256];

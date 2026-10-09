@@ -398,6 +398,7 @@ long n3ds_engine_tags_load(const char *name)
     assert(!native_read_stream);
     native_stream_opens=native_stream_reads=native_stream_bytes=0;
     cache_files_bind_native(&native_tags.header, native_tags.tag_header);
+    if(strcmp(native_name,"ui")) n3ds_engine_texture_prewarm_hud();
     return native_tags.tag_header->scenario_tag_index;
 }
 

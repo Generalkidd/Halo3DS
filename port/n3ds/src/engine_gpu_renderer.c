@@ -2701,7 +2701,7 @@ int n3ds_gpu_readback(unsigned int *pixels,unsigned int count)
     return 1;
 }
 
-#ifdef HALO_N3DS_TEXTURE_CLIP
+#if defined(HALO_N3DS_TEXTURE_CLIP) || defined(HALO_N3DS_TEXTURE_CLIP_DEATH)
 int n3ds_gpu_texture_clip_frame(unsigned int game_tick)
 {
     if(n3ds_gpu_screen_test())return 0;

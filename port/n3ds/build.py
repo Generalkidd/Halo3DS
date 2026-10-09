@@ -51,6 +51,9 @@ def main():
     parser.add_argument('--diagnostic-audio-trace', action='store_true', help='Trace bounded DSP queue and playback state; use with --test-frames or --diagnostic-pc-play')
     parser.add_argument('--diagnostic-high-textures', action='store_true', help='PC map comparison: New-model 128-pixel world textures with an 8 MiB cache; requires --diagnostic-pc-play')
     parser.add_argument('--diagnostic-texture-clip', action='store_true', help='Capture a repeatable Timberland walk as raw top-screen frames; requires --diagnostic-pc-play timberland')
+    parser.add_argument('--diagnostic-respawn-texture-clip', action='store_true', help='Capture PC menu death/respawn fixture frames and frame work timing')
+    parser.add_argument('--diagnostic-near-world', type=int, choices=[256, 512], help='With the respawn clip, retain one Timberland ground material at this width')
+    parser.add_argument('--diagnostic-smooth-near', action='store_true', help='Ramp a selected ground material from its low mip after load and respawn')
     parser.add_argument('--original-memory', action='store_true', help='Constrain heap sizes for original-model emulator tests')
     parser.add_argument('--probe-a10', action='store_true', help='Diagnostic only: request the a10 campaign map from the menu')
     parser.add_argument('--probe-solo-bots', type=int, default=0, help='Diagnostic only: request Blood Gulch solo multiplayer with 1-15 bots')
@@ -101,6 +104,12 @@ def main():
         parser.error('--diagnostic-high-textures requires --diagnostic-pc-play')
     if args.diagnostic_texture_clip and args.diagnostic_pc_play != 'timberland':
         parser.error('--diagnostic-texture-clip requires --diagnostic-pc-play timberland')
+    if args.diagnostic_respawn_texture_clip and not args.diagnostic_pc_menu_keys:
+        parser.error('--diagnostic-respawn-texture-clip requires --diagnostic-pc-menu-keys')
+    if args.diagnostic_near_world and not args.diagnostic_respawn_texture_clip:
+        parser.error('--diagnostic-near-world requires --diagnostic-respawn-texture-clip')
+    if args.diagnostic_smooth_near and not args.diagnostic_near_world:
+        parser.error('--diagnostic-smooth-near requires --diagnostic-near-world')
     if args.experimental_pc_runtime and (args.probe_pc_map or args.probe_a10 or args.probe_solo_bots or args.test_frames or args.diagnostic_pc_ui or args.diagnostic_pc_play or args.diagnostic_pc_campaign):
         parser.error('--experimental-pc-runtime cannot be combined with diagnostics or probes')
     out = args.output.resolve(); out.mkdir(parents=True, exist_ok=True)
@@ -133,6 +142,9 @@ def main():
     if args.diagnostic_audio_trace: defines.append('-DHALO_N3DS_AUDIO_TRACE=1')
     if args.diagnostic_high_textures: defines.append('-DHALO_N3DS_HIGH_TEXTURE_TEST=1')
     if args.diagnostic_texture_clip: defines.append('-DHALO_N3DS_TEXTURE_CLIP=1')
+    if args.diagnostic_respawn_texture_clip: defines.append('-DHALO_N3DS_TEXTURE_CLIP_DEATH=1')
+    if args.diagnostic_near_world: defines.append(f'-DHALO_N3DS_NEAR_WORLD_WIDTH={args.diagnostic_near_world}')
+    if args.diagnostic_smooth_near: defines.append('-DHALO_N3DS_SMOOTH_NEAR_TEXTURE=1')
     if args.original_memory: defines.append('-DHALO_N3DS_LOW_MEMORY_TEST=1')
     if args.probe_a10: defines.append('-DHALO_N3DS_PROBE_A10=1')
     if args.probe_solo_bots:

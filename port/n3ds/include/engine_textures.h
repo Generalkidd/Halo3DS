@@ -25,6 +25,8 @@ int n3ds_engine_bitmap_bind_sampler(unsigned int stage,const struct bitmap_data 
 int n3ds_gpu_texture_sampling_test(unsigned int stage, const unsigned int expected_corners[4]);
 void *n3ds_gpu_texture_create(const unsigned int *pixels, unsigned int width, unsigned int height);
 void *n3ds_gpu_texture_create_two_mips(const unsigned int *pixels, unsigned int width, unsigned int height);
+void *n3ds_gpu_texture_create_mips(const unsigned int *pixels, unsigned int width, unsigned int height,unsigned int levels);
+int n3ds_gpu_texture_set_lod_bias(void *resource,float bias);
 void *n3ds_gpu_texture_create_rgba4(const void *pixels, unsigned int width, unsigned int height);
 /* Six row-major RGBA byte faces in Xbox +X,-X,+Y,-Y,+Z,-Z order. */
 void *n3ds_gpu_texture_create_cube(const unsigned char *rgba,unsigned int side);
@@ -44,6 +46,8 @@ void texture_cache_open(void);
 void texture_cache_close(void);
 unsigned int n3ds_engine_texture_count(void);
 unsigned int n3ds_engine_texture_bytes(void);
+void n3ds_engine_texture_prewarm_hud(void);
+void n3ds_engine_texture_respawn_transition(void);
 /* Change quality only with an empty cache; dimensions stay power-of-two. */
 int n3ds_engine_texture_resolution(unsigned int limit);
 int n3ds_engine_texture_apply_saved_profile(void);
