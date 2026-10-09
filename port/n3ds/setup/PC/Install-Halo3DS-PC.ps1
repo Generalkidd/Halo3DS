@@ -72,6 +72,7 @@ try {
 } finally { $launcherFile.Dispose() }
 
 $relativePaths = @('3ds/Halo3DS-PC/Halo3DS-PC.3dsx')
+$launcherRelative = $relativePaths[0]
 
 function Test-PcGameMap([string]$path) {
     $stream = [IO.File]::OpenRead($path)
@@ -165,9 +166,29 @@ try {
     foreach ($entry in $entries) {
         $entry | Add-Member -NotePropertyName Hash -NotePropertyValue (Get-FileHash -LiteralPath $entry.Source -Algorithm SHA256).Hash
         $entry | Add-Member -NotePropertyName Destination -NotePropertyValue (Test-Within $sd $entry.Relative)
+        $entry | Add-Member -NotePropertyName ReplaceLauncher -NotePropertyValue $false
+        $entry | Add-Member -NotePropertyName ExistingHash -NotePropertyValue $null
+        if ((Test-Path -LiteralPath $entry.Destination) -and !(Test-Path -LiteralPath $entry.Destination -PathType Leaf)) {
+            throw "Destination is not a file: $($entry.Destination)"
+        }
         if (Test-Path -LiteralPath $entry.Destination -PathType Leaf) {
-            if ((Get-FileHash -LiteralPath $entry.Destination -Algorithm SHA256).Hash -ine $entry.Hash) {
-                throw "Destination differs; no existing file was replaced: $($entry.Destination)"
+            if ((Get-Item -LiteralPath $entry.Destination -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) {
+                throw "Destination file is redirected: $($entry.Destination)"
+            }
+            $entry.ExistingHash = (Get-FileHash -LiteralPath $entry.Destination -Algorithm SHA256).Hash
+            if ($entry.ExistingHash -ine $entry.Hash) {
+                if ($entry.Relative -ne $launcherRelative) {
+                    throw "Destination differs; no existing game file was replaced: $($entry.Destination)"
+                }
+                $oldLauncher = [IO.File]::OpenRead($entry.Destination)
+                try {
+                    $header = New-Object byte[] 4
+                    if ($oldLauncher.Read($header, 0, 4) -ne 4 -or [Text.Encoding]::ASCII.GetString($header) -ne '3DSX') {
+                        throw 'Existing PC launcher is not a 3DSX file; refusing to replace it.'
+                    }
+                } finally { $oldLauncher.Dispose() }
+                $entry.ReplaceLauncher = $true
+                $needed += (Get-Item -LiteralPath $entry.Source).Length
             }
         } else { $needed += (Get-Item -LiteralPath $entry.Source).Length }
     }
@@ -175,12 +196,13 @@ try {
     if ($drive.AvailableFreeSpace -lt $needed + 64MB) { throw 'The SD card needs more free space for the selected PC maps.' }
     if ($dryRun) {
         Write-Output "What if: verified $($maps.Count) PC retail files from the selected source; would install under 3ds/Halo3DS-PC and halo-source/pc-retail on $sd"
+        if (@($entries | Where-Object ReplaceLauncher).Count) { Write-Output 'What if: archive the previous PC launcher and install the verified new 3DSX' }
         if ($null -ne $BotCount) { Write-Output "What if: set solo multiplayer bot count to $BotCount" }
         return
     }
     if (!$PSCmdlet.ShouldProcess($sd, "Install owner-supplied Halo CE PC maps and PC launcher")) { return }
     foreach ($entry in $entries) {
-        if (Test-Path -LiteralPath $entry.Destination -PathType Leaf) { continue }
+        if ((Test-Path -LiteralPath $entry.Destination -PathType Leaf) -and !$entry.ReplaceLauncher) { continue }
         New-Item -ItemType Directory -Path ([IO.Path]::GetDirectoryName($entry.Destination)) -Force | Out-Null
         $partial = $entry.Destination + '.partial-' + [guid]::NewGuid().ToString('N')
         try {
@@ -188,8 +210,32 @@ try {
             if ((Get-FileHash -LiteralPath $partial -Algorithm SHA256).Hash -ine $entry.Hash) {
                 throw "SD card copy failed verification: $($entry.Relative)"
             }
-            [IO.File]::Move($partial, $entry.Destination)
-            Write-Output "Installed and verified: $($entry.Relative)"
+            if ($entry.ReplaceLauncher) {
+                $backup = Test-Within $sd ('halo-source/launcher-backups/pc-' + [guid]::NewGuid().ToString('N') + '/Halo3DS-PC.3dsx')
+                New-Item -ItemType Directory -Path ([IO.Path]::GetDirectoryName($backup)) -Force | Out-Null
+                [IO.File]::Move($entry.Destination, $backup)
+                try {
+                    if ((Get-FileHash -LiteralPath $backup -Algorithm SHA256).Hash -ine $entry.ExistingHash) {
+                        throw 'Previous PC launcher backup failed read-back verification.'
+                    }
+                    [IO.File]::Move($partial, $entry.Destination)
+                    if ((Get-FileHash -LiteralPath $entry.Destination -Algorithm SHA256).Hash -ine $entry.Hash) {
+                        throw 'New PC launcher failed SD read-back verification.'
+                    }
+                } catch {
+                    if (Test-Path -LiteralPath $entry.Destination -PathType Leaf) {
+                        [IO.File]::Move($entry.Destination, $backup + '.failed-' + [guid]::NewGuid().ToString('N'))
+                    }
+                    if (!(Test-Path -LiteralPath $entry.Destination) -and (Test-Path -LiteralPath $backup -PathType Leaf)) {
+                        [IO.File]::Move($backup, $entry.Destination)
+                    }
+                    throw
+                }
+                Write-Output "Updated and verified PC launcher; previous build archived at $backup"
+            } else {
+                [IO.File]::Move($partial, $entry.Destination)
+                Write-Output "Installed and verified: $($entry.Relative)"
+            }
         } finally { if (Test-Path -LiteralPath $partial) { Remove-Item -LiteralPath $partial } }
     }
     if ($null -ne $BotCount) {
