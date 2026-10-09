@@ -610,6 +610,15 @@ emulator result, not a New 3DS XL frame-rate measurement. Conservative PVS
 and rectangle traversal experiments were rejected: PVS increased object and
 effect work, and the rectangle path omitted clusters found by the original.
 
+An uncaptured seven-bot Timberland trace split the remaining simulation work.
+The game update averaged about 15–20 ms in the outdoor route. Object updates
+accounted for roughly 10–13 ms of the game tick, with moving vehicles,
+projectiles and short corpse-physics spikes the largest type costs; 168 static
+scenery objects together took about 0.3 ms in the sampled ticks. Particle
+simulation added roughly 2–4 ms per frame. These are Azahar host timings and
+do not establish physical New 3DS frame rate. The r35 build is staged for a
+New 3DS XL frame-pacing log with the 128-pixel+mip texture profile.
+
 A diagnostic single-ground-material 512-pixel test required a downgrade on
 far respawn to avoid cache exhaustion and did not sustain the 30 FPS target.
 The ordinary launcher retains the bounded texture profile. The guarded

@@ -4337,7 +4337,20 @@ void objects_update(
             native_object_type_counts[1],native_object_type_ticks[1]*scale,
             native_object_type_counts[2],native_object_type_ticks[2]*scale,
             native_object_type_counts[5],native_object_type_ticks[5]*scale);
-        n3ds_log(message);memset(native_object_type_ticks,0,sizeof(native_object_type_ticks));memset(native_object_type_counts,0,sizeof(native_object_type_counts));
+        n3ds_log(message);
+#ifdef HALO_N3DS_AUDIO_TRACE
+        snprintf(message,sizeof(message),"OBJECT OTHER SAMPLE: equipment=%u/%.3f garbage=%u/%.3f scenery=%u/%.3f machine=%u/%.3f control=%u/%.3f light=%u/%.3f placeholder=%u/%.3f sound=%u/%.3f",
+            native_object_type_counts[3],native_object_type_ticks[3]*scale,
+            native_object_type_counts[4],native_object_type_ticks[4]*scale,
+            native_object_type_counts[6],native_object_type_ticks[6]*scale,
+            native_object_type_counts[7],native_object_type_ticks[7]*scale,
+            native_object_type_counts[8],native_object_type_ticks[8]*scale,
+            native_object_type_counts[9],native_object_type_ticks[9]*scale,
+            native_object_type_counts[10],native_object_type_ticks[10]*scale,
+            native_object_type_counts[11],native_object_type_ticks[11]*scale);
+        n3ds_log(message);
+#endif
+        memset(native_object_type_ticks,0,sizeof(native_object_type_ticks));memset(native_object_type_counts,0,sizeof(native_object_type_counts));
     }
 #endif
 	profile_exit(section);

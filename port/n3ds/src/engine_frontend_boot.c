@@ -54,6 +54,7 @@ short n3ds_ui_pc_expansion_map_count(void);
 #include "items/weapons.h"
 #endif
 #ifdef HALO_N3DS_EXPERIMENTAL_PC_ARSENAL
+#include "engine_controls.h"
 #include "units/unit_definitions.h"
 #include "game/game_globals.h"
 #endif
@@ -531,6 +532,14 @@ enum { ARSENAL_FIRST_FRAME=240, ARSENAL_STAGE_FRAMES=105, ARSENAL_COUNT=sizeof(a
 };
 static long arsenal_weapon=NONE,arsenal_vehicle=NONE,arsenal_initial_fire=NONE;
 static unsigned int arsenal_fire_passes,arsenal_failures;
+static unsigned int arsenal_physical_fire_key(int original_model)
+{
+    if(original_model) return NATIVE_KEY_L;
+    struct native_control_settings settings;
+    n3ds_controls_initialize();
+    n3ds_controls_get(&settings);
+    return settings.swap_shoulders?NATIVE_KEY_R:NATIVE_KEY_ZR;
+}
 
 static int arsenal_copy_front(const char *label)
 {
@@ -1000,7 +1009,7 @@ int halo_engine_boot(void)
             unsigned int stage=(unsigned int)(frame+1-ARSENAL_FIRST_FRAME)/ARSENAL_STAGE_FRAMES;
             unsigned int offset=(unsigned int)(frame+1-ARSENAL_FIRST_FRAME)%ARSENAL_STAGE_FRAMES;
             if(offset==0) CHECK(!arsenal_prepare_weapon(stage,unit));
-            if(offset>=30 && offset<69) sample.held|=original_model?NATIVE_KEY_L:NATIVE_KEY_ZR;
+            if(offset>=30 && offset<69) sample.held|=arsenal_physical_fire_key(original_model);
         }
         if(unit!=NONE && frame+1>=ARSENAL_VEHICLE_FRAME && frame+1<ARSENAL_VEHICLE_FRAME+110) {
             unsigned int offset=(unsigned int)(frame+1-ARSENAL_VEHICLE_FRAME);
@@ -1012,7 +1021,7 @@ int halo_engine_boot(void)
                     if(gun) {arsenal_initial_fire=gun->weapon.game_time_last_fired;break;}
                 }
             }
-            if(offset>=30 && offset<69) sample.held|=original_model?NATIVE_KEY_L:NATIVE_KEY_ZR;
+            if(offset>=30 && offset<69) sample.held|=arsenal_physical_fire_key(original_model);
         }
 #endif
         if((sample.held&(NATIVE_KEY_START|NATIVE_KEY_SELECT))==(NATIVE_KEY_START|NATIVE_KEY_SELECT)) break;
@@ -1024,9 +1033,33 @@ int halo_engine_boot(void)
         n3ds_frontend_trace("simulation");
         long long simulation_start=n3ds_engine_ticks();
         if(game_in_progress()) {
-            player_control_update(1.f/30.f);game_time_update(1.f/30.f);
+#ifdef HALO_N3DS_AUDIO_TRACE
+            static long long sim_sections[5];
+            static unsigned int sim_samples;
+            long long sim_stamp=simulation_start,sim_next;
+#endif
+            player_control_update(1.f/30.f);
+#ifdef HALO_N3DS_AUDIO_TRACE
+            sim_next=n3ds_engine_ticks();sim_sections[0]+=sim_next-sim_stamp;sim_stamp=sim_next;
+#endif
+            game_time_update(1.f/30.f);
+#ifdef HALO_N3DS_AUDIO_TRACE
+            sim_next=n3ds_engine_ticks();sim_sections[1]+=sim_next-sim_stamp;sim_stamp=sim_next;
+#endif
             director_update(1.f/30.f);observer_update(1.f/30.f);
+#ifdef HALO_N3DS_AUDIO_TRACE
+            sim_next=n3ds_engine_ticks();sim_sections[2]+=sim_next-sim_stamp;sim_stamp=sim_next;
+#endif
             n3ds_main_mission_save_step(FALSE);
+#ifdef HALO_N3DS_AUDIO_TRACE
+            sim_next=n3ds_engine_ticks();sim_sections[3]+=sim_next-sim_stamp;sim_stamp=sim_next;
+            if(++sim_samples==30) {
+                double factor=1000.0/(n3ds_engine_tick_frequency()*sim_samples);
+                snprintf(message,sizeof(message),"SIM DETAIL: time=%ld controls_ms=%.3f game_ms=%.3f camera_ms=%.3f save_ms=%.3f",
+                    game_time_get(),sim_sections[0]*factor,sim_sections[1]*factor,sim_sections[2]*factor,sim_sections[3]*factor);
+                n3ds_log(message);memset(sim_sections,0,sizeof(sim_sections));sim_samples=0;
+            }
+#endif
         }
         local=local_player_get_next(NONE);
         if(local!=NONE) {player=local_player_get_player_index(local);if(player!=NONE) unit=player_get(player)->unit_index;}
