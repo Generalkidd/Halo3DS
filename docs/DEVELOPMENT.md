@@ -108,8 +108,10 @@ During a solo PC match, hold SELECT or the lower-right SCORE touch panel to
 display the player scoreboard on the top screen. Three other panels surround
 the motion tracker; they show press feedback but have no action yet. The
 Controller Settings screen offers a saved X/Y button swap and an optional
-bottom-screen FPS readout. The readout is off by default. Weapon meters use
-compact bars below the ammo count to remain legible at the 3DS resolution.
+bottom-screen FPS readout. Both start off. The Decals switch starts on and
+controls creation and drawing of surface marks without changing their authored
+lifetimes. Weapon meters use compact bars below the ammo count to remain
+legible at the 3DS resolution.
 
 For bounded local probes, `--diagnostic-pc-play MAP` accepts the nineteen stock
 PC multiplayer maps. `--diagnostic-pc-mode` selects Slayer, CTF, Oddball, King
@@ -585,9 +587,12 @@ textures** switch. It defaults OFF and saves with the other controller
 settings. Turn it ON, save, then reload the PC map to compare 128-pixel
 texture bases, a generated 64-pixel mip level, and an 8 MiB gameplay cache
 against the standard 64-pixel profile. The original 3DS and Xbox maps keep
-their established profile. Existing version-one and version-two controller
-settings load with their prior values preserved; the new X/Y swap and FPS
-readout default OFF and the file upgrades on save. `--diagnostic-high-textures` still
+their established profile. Existing version-one, version-two, and version-three
+controller settings load with their prior values preserved. Fields absent from
+older files take their defaults: X/Y swap and FPS OFF, Decals ON. The file
+upgrades on save.
+
+`--diagnostic-high-textures` still
 forces the experimental profile in a PC match fixture; `--diagnostic-texture-clip`
 captures a repeatable Timberland walk for visual comparison.
 PC lightmap atlases are linear RGB565 data, unlike the swizzled Xbox atlases.

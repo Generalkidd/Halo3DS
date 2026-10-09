@@ -58,6 +58,13 @@ textures. Save the setting, then reload the PC map. It starts OFF; the high
 mode can take longer to load and may affect frame rate. Xbox maps and original
 3DS use their standard texture profile.
 
+During a solo PC match, hold **SELECT** or the lower-right **SCORE** touch
+panel around the motion tracker to show the scoreboard on the top screen.
+The three other touch panels give press feedback but have no assigned action.
+Controller Settings also offers **Swap X/Y**, **Show FPS** on the bottom screen,
+and **Decals**. X/Y swap and FPS start OFF; Decals starts ON and can be changed
+before a match. Surface marks follow the lifetimes supplied by the game maps.
+
 One launcher replaces the normal Xbox setup launcher only after both sources
 pass preflight. The previous 3DSX is archived under
 `halo-source/launcher-backups/`. Saves and unrelated Homebrew Launcher folders
