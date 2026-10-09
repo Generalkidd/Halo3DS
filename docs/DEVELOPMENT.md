@@ -82,8 +82,10 @@ entry only when its UI assets and cache are present. The original thirteen Xbox 
 the PC menu's Create Game action still does not launch a local match.
 
 On the PC opt-in build, press **SELECT** while the main menu is open to show
-the native Local Multiplayer selector. Up/down chooses Map, Mode or Bots;
-left/right changes the value; A starts and B returns. It lists all nineteen
+the native Local Multiplayer selector. Up/down chooses Map, Mode, Bots or,
+on New 3DS, PC textures. Left/right changes the selected value; A starts and
+B returns. Touching the PC textures row changes and saves it before launch.
+The choice applies on the next map load. It lists all nineteen
 stock PC multiplayer maps, the five original modes and zero to fifteen bots.
 It uses the original local game queue and map loader. The selector supplies
 the bot count for that match; `bots.txt` remains the fallback for other launch
@@ -572,6 +574,9 @@ their established profile. Existing version-one controller settings load with
 the switch OFF and are upgraded on save. `--diagnostic-high-textures` still
 forces the experimental profile in a PC match fixture; `--diagnostic-texture-clip`
 captures a repeatable Timberland walk for visual comparison.
+PC lightmap atlases are linear RGB565 data, unlike the swizzled Xbox atlases.
+The upload filter reads each layout correctly and removes red/yellow checker
+padding each time a lightmap is loaded, including after texture cache eviction.
 
 In the earlier opt-in six-bot Timberland experiment, Azahar reached 900 frames
 without a fatal error, with about 7.7 MiB cached and a steady 18.6 ms render

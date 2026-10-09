@@ -126,7 +126,7 @@ static int menu_keys_load(void)
         {"SURVEY_EXTRAS",0x02000000u},{"ENTER_B30_EXTRA",0x01000000u},
         {"TRY_B30_EXTRA",0x00800000u},
         {"OPEN_SETTINGS",0x00400000u},{"TAP_HIGH_TEXTURES",0x00200000u},
-        {"TAP_SAVE_SETTINGS",0x00080000u}
+        {"TAP_SAVE_SETTINGS",0x00080000u},{"TAP_PC_TEXTURES",0x00040000u}
     };
     FILE *file=fopen("sdmc:/halo-source/menu-keys.txt","rb");
     char line[64],name[32],extra;
@@ -168,10 +168,10 @@ static void menu_keys_sample(long frame,struct native_input_sample *sample)
         else if(mask==0x00400000u) {
             extern void n3ds_controls_open(int);
             n3ds_controls_open(0);
-        } else if(mask==0x00200000u || mask==0x00080000u) {
+        } else if(mask==0x00200000u || mask==0x00080000u || mask==0x00040000u) {
             sample->held|=NATIVE_KEY_TOUCH;
-            sample->touch_x=280;
-            sample->touch_y=mask==0x00200000u?166:214;
+            sample->touch_x=mask==0x00040000u?150:280;
+            sample->touch_y=mask==0x00200000u?166:mask==0x00040000u?157:214;
         }
         else sample->held|=mask;
         if(menu_key_events[i].mask==NATIVE_KEY_TOUCH) {sample->touch_x=160;sample->touch_y=120;}
@@ -748,6 +748,10 @@ int halo_engine_boot(void)
         CHECK(!n3ds_gpu_texture_plasma_tests());
         n3ds_log("STARTUP: sampled texture checks");
         CHECK(!n3ds_engine_sampled_texture_tests());
+#ifdef HALO_N3DS_RENDERER_TESTS
+        extern int n3ds_lightmap_filter_tests(void);
+        CHECK(n3ds_lightmap_filter_tests());
+#endif
         n3ds_log("STARTUP: GPU menu overlay checks");
         CHECK(!n3ds_gpu_menu_plasma_tests());
         n3ds_log("STARTUP: GPU model transform checks");

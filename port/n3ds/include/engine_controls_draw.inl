@@ -54,7 +54,7 @@ void n3ds_gpu_controls_draw(const struct native_control_settings *s,int selected
  n3ds_gpu_hud_screen(0);n3ds_gpu_texture_bind(0,saved);n3ds_gpu_world_state_restore();
 }
 #ifdef HALO_N3DS_PC_LOCAL_MENU
-void n3ds_gpu_pc_local_menu(int map,int mode,int bots,int field,int error)
+void n3ds_gpu_pc_local_menu(int map,int mode,int bots,int field,int error,int high_textures,int original)
 {
  static const char *const maps[]={"Beaver Creek","Blood Gulch","Boarding Action","Derelict","Chill Out","Damnation","Danger Canyon","Death Island","Gephyrophobia","Hang 'Em High","Ice Fields","Infinity","Longest","Prisoner","Chiron TL-34","Rat Race","Sidewinder","Timberland","Wizard"};
  static const char *const modes[]={"Slayer","CTF","Oddball","King","Race"};
@@ -67,14 +67,15 @@ void n3ds_gpu_pc_local_menu(int map,int mode,int bots,int field,int error)
  controls_text(96,170,"SELECT: open  B: back",0xffffffff,1);
  n3ds_gpu_hud_screen(0);controls_quad(0,0,320,240,0xff24150c,0);
  controls_text(72,10,"LOCAL MULTIPLAYER",0xffffffff,0);
- for(int row=0;row<3;++row){
-  float y=38+row*44;controls_quad(12,y,296,36,field==row?0xff674826:0xff35251a,0);
+ for(int row=0;row<(original?3:4);++row){
+  float y=32+row*37;controls_quad(12,y,296,34,field==row?0xff674826:0xff35251a,0);
   if(row==0)snprintf(line,sizeof(line),"Map %02d/19: %s",map+1,maps[map]);
   else if(row==1)snprintf(line,sizeof(line),"Mode: %s",modes[mode]);
-  else snprintf(line,sizeof(line),"Bots: %d",bots);
-  controls_text(20,y+13,line,0xffffffff,0);
+  else if(row==2)snprintf(line,sizeof(line),"Bots: %d",bots);
+  else snprintf(line,sizeof(line),"PC textures: %s",high_textures?"128 + mip":"64 standard");
+  controls_text(20,y+12,line,0xffffffff,0);
  }
- controls_text(16,175,error?"Map missing or launch failed":"Up/down: field  Left/right: change",error?0xff70a0ff:0xffe9d6aa,0);
+ controls_text(16,183,error?"Save or launch failed":"Tap textures or use left/right",error?0xff70a0ff:0xffe9d6aa,0);
  controls_quad(16,197,136,32,0xff674826,0);controls_quad(168,197,136,32,0xff53391a,0);
  controls_text(55,209,"A: START",0xffffffff,0);controls_text(206,209,"B: BACK",0xffffffff,0);
  n3ds_gpu_hud_screen(0);n3ds_gpu_texture_bind(0,saved);n3ds_gpu_world_state_restore();

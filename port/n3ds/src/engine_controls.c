@@ -154,6 +154,22 @@ static int pc_menu_available(void)
  return main_menu_is_active() && n3ds_pc_tags_active();
 #endif
 }
+static int pc_menu_field_count(void)
+{return n3ds_input_platform_original_model()?3:4;}
+static void pc_menu_toggle_textures(void)
+{
+ n3ds_controls_initialize();
+ settings.high_textures^=1;
+ if(!save_settings()){
+  settings.high_textures^=1;pc_menu_error=1;
+  n3ds_log("PC LOCAL MENU: could not save texture preference");
+ }else{
+  pc_menu_error=0;
+  n3ds_log(settings.high_textures?
+   "PC LOCAL MENU: high textures saved ON for next map load":
+   "PC LOCAL MENU: high textures saved OFF for next map load");
+ }
+}
 int n3ds_pc_local_menu_active(void){return pc_menu_open;}
 void n3ds_pc_local_menu_filter(struct native_input_sample *sample)
 {
@@ -172,14 +188,24 @@ void n3ds_pc_local_menu_filter(struct native_input_sample *sample)
   pc_menu_open=0;pc_menu_swallow=1;memset(sample,0,sizeof(*sample));return;
  }
  if(fresh&NATIVE_KEY_B){pc_menu_open=0;pc_menu_swallow=1;n3ds_log("PC LOCAL MENU: closed");}
- else if(fresh&NATIVE_KEY_DUP)pc_menu_field=(pc_menu_field+2)%3;
- else if(fresh&NATIVE_KEY_DDOWN)pc_menu_field=(pc_menu_field+1)%3;
+ else if(fresh&NATIVE_KEY_DUP)pc_menu_field=(pc_menu_field+pc_menu_field_count()-1)%pc_menu_field_count();
+ else if(fresh&NATIVE_KEY_DDOWN)pc_menu_field=(pc_menu_field+1)%pc_menu_field_count();
  else if(fresh&(NATIVE_KEY_DLEFT|NATIVE_KEY_DRIGHT)){
   int delta=(fresh&NATIVE_KEY_DRIGHT)?1:-1;
   if(pc_menu_field==0)pc_menu_map=(pc_menu_map+19+delta)%19;
   else if(pc_menu_field==1)pc_menu_mode=(pc_menu_mode+5+delta)%5;
-  else pc_menu_bots=(pc_menu_bots+16+delta)%16;
-  pc_menu_error=0;
+  else if(pc_menu_field==2)pc_menu_bots=(pc_menu_bots+16+delta)%16;
+  else {pc_menu_toggle_textures();delta=0;}
+  if(delta)pc_menu_error=0;
+ }
+ else if((fresh&NATIVE_KEY_TOUCH) && sample->touch_x>=12 && sample->touch_x<308 &&
+         sample->touch_y>=32 && sample->touch_y<180){
+  int row=(sample->touch_y-32)/37;
+  if(row<pc_menu_field_count()){
+   pc_menu_field=row;
+   if(row==3)pc_menu_toggle_textures();
+   else pc_menu_error=0;
+  }
  }
  else if(fresh&NATIVE_KEY_A){
   char map[96],message[192];struct game_variant variant;
@@ -198,7 +224,8 @@ void n3ds_pc_local_menu_filter(struct native_input_sample *sample)
  memset(sample,0,sizeof(*sample));
 }
 void n3ds_pc_local_menu_draw(void)
-{if(pc_menu_open)n3ds_gpu_pc_local_menu(pc_menu_map,pc_menu_mode,pc_menu_bots,pc_menu_field,pc_menu_error);}
+{if(pc_menu_open)n3ds_gpu_pc_local_menu(pc_menu_map,pc_menu_mode,pc_menu_bots,
+ pc_menu_field,pc_menu_error,n3ds_controls_high_textures(),n3ds_input_platform_original_model());}
 #endif
 int n3ds_controls_tests(void)
 {

@@ -32,7 +32,10 @@ your own prior installation. ISO extraction needs 7-Zip; pass `-SevenZipPath`
 if it is not found. The Xbox converter uses .NET Framework 3.5.
 
 The Xbox main menu starts Campaign and Xbox multiplayer. Press **SELECT** for
-PC Local Multiplayer, then choose a PC map, mode, and bot count. `-BotCount`
+PC Local Multiplayer, then choose a PC map, mode, bot count, and on New 3DS,
+tap **PC textures** to switch between standard 64-pixel textures and the
+experimental 128-pixel texture with mip. This choice saves immediately and
+applies when the map loads. `-BotCount`
 sets a default from 0 to 15. On the campaign difficulty screen, the bottom
 touch screen toggles **PC weapons and vehicles in campaign**. It starts ON for
 testing and persists until changed there. The added pickups are beside
@@ -41,7 +44,8 @@ original Warthog in b30. Original map files and placements are not edited.
 The Rocket Warthog needs PC Blood Gulch on the SD card; if those assets are
 unavailable, the Xbox mission still loads without the extra vehicle.
 
-On New 3DS, open Controller Settings and tap **PC high textures** to compare
+On New 3DS, the same choice is available in Controller Settings as **PC high
+textures** to compare
 the experimental 128-pixel textures and 64-pixel mip with standard 64-pixel
 textures. Save the setting, then reload the PC map. It starts OFF; the high
 mode can take longer to load and may affect frame rate. Xbox maps and original

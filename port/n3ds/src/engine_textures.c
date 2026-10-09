@@ -734,7 +734,7 @@ static void *load_bitmap_now(struct bitmap_data *bitmap, boolean block, boolean 
         if(lightmap) {
             boolean distance_linear;unsigned short *distance=texture_scratch(target_width*target_height*sizeof(*distance),&distance_linear);
             if(!distance) goto done;
-            int ok=lightmap_reduce(compressed,bytes,width,height,target_width,target_height,tiled,distance);
+            int ok=lightmap_reduce(compressed,bytes,width,height,target_width,target_height,tiled,distance,pc_bitmap);
             texture_scratch_free(distance,distance_linear);if(!ok) goto done;
         } else {
             int decoded;
