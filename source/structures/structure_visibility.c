@@ -276,6 +276,25 @@ static struct native_portal_cache_entry {
 } native_portal_cache[512];
 static unsigned int native_portal_generation=1;
 static boolean native_portal_cache_enabled=TRUE;
+/* Kevin Boggs: native_visibility_view_cache_entry - New3DS integration. */
+struct native_visibility_view_cache_entry {
+    boolean valid;
+    struct structure_bsp *bsp;
+    long scenario_index,bsp_tag_index,frame_index,cluster_index;
+    boolean use_pvs;
+    struct render_camera camera;
+    struct render_frustum frustum;
+    unsigned long visible_flags[MAXIMUM_CLUSTERS_PER_STRUCTURE/LONG_BITS];
+    struct rendered_cluster rendered_clusters[MAXIMUM_RENDERED_CLUSTERS];
+    short rendered_cluster_indices[MAXIMUM_CLUSTERS_PER_STRUCTURE];
+    short rendered_count;
+};
+static struct native_visibility_view_cache_entry native_visibility_view_cache[2];
+/* Kevin Boggs: n3ds_structure_visibility_cache_reset - New3DS integration. */
+void n3ds_structure_visibility_cache_reset(void)
+{
+    csmemset(native_visibility_view_cache,0,sizeof(native_visibility_view_cache));
+}
 #endif
 static short portal_hull_from_portal(
 	short portal_index,
@@ -1827,9 +1846,60 @@ void structure_visibility_compute(void)
 void n3ds_structure_visibility_compute(void)
 {
     /* The native BSP renderer submits its own material/index batches and has
-     * no readers of the Xbox environment-surface list. Keep portal traversal,
-     * cluster clipping, sky selection and object visibility exactly intact. */
-    structure_visibility_compute_internal(FALSE);
+     * no readers of the Xbox environment-surface list. An exact repeated view
+     * can reuse the original traversal result, including per-cluster frusta. */
+    struct structure_bsp *bsp=global_structure_bsp_get();
+    long bsp_tag=global_structure_bsp_tag_index_get();
+    struct native_visibility_view_cache_entry *entry=NULL;
+    if(!debug_portals && native_portal_cache_enabled) for(int i=0;i<2;++i) {
+        struct native_visibility_view_cache_entry *candidate=&native_visibility_view_cache[i];
+        if(candidate->valid && candidate->bsp==bsp &&
+            candidate->scenario_index==global_scenario_index && candidate->bsp_tag_index==bsp_tag &&
+            candidate->frame_index<=render.frame_index && render.frame_index-candidate->frame_index<=1 &&
+            candidate->cluster_index==render.cluster_index && candidate->use_pvs==structures_use_pvs_for_vs &&
+            !csmemcmp(&candidate->camera,&render.camera,sizeof(render.camera)) &&
+            !csmemcmp(&candidate->frustum,&render.frustum,sizeof(render.frustum))) {
+            entry=candidate;break;
+        }
+    }
+    if(entry) {
+        /* Exact static view: restore only fields the original traversal writes.
+         * Leave unused cluster slots alone, as the original code does. */
+        ++native_portal_generation;
+        if(!native_portal_generation) ++native_portal_generation;
+        csmemcpy(render.visible_cluster_flags,entry->visible_flags,BIT_VECTOR_SIZE_IN_BYTES(bsp->clusters.count));
+        render.rendered_cluster_count=entry->rendered_count;
+        csmemcpy(render.rendered_clusters,entry->rendered_clusters,entry->rendered_count*sizeof(entry->rendered_clusters[0]));
+        for(int i=0;i<entry->rendered_count;++i) {
+            short cluster=entry->rendered_clusters[i].cluster_index;
+            structure_visibility_globals.rendered_cluster_indices[cluster]=entry->rendered_cluster_indices[cluster];
+        }
+        render.environment_surface_count=0;
+        csmemset(render.environment_surface_flags,0,BIT_VECTOR_SIZE_IN_BYTES(bsp->surfaces.count));
+        entry->frame_index=render.frame_index;
+    } else {
+        structure_visibility_compute_internal(FALSE);
+        struct native_visibility_view_cache_entry *save=&native_visibility_view_cache[render.scene_index&1];
+        save->valid=!debug_portals && native_portal_cache_enabled &&
+            render.rendered_cluster_count<=MAXIMUM_RENDERED_CLUSTERS;
+        if(save->valid) {
+            save->bsp=bsp;
+            save->scenario_index=global_scenario_index;
+            save->bsp_tag_index=bsp_tag;
+            save->frame_index=render.frame_index;
+            save->cluster_index=render.cluster_index;
+            save->use_pvs=structures_use_pvs_for_vs;
+            csmemcpy(&save->camera,&render.camera,sizeof(render.camera));
+            csmemcpy(&save->frustum,&render.frustum,sizeof(render.frustum));
+            csmemcpy(save->visible_flags,render.visible_cluster_flags,BIT_VECTOR_SIZE_IN_BYTES(bsp->clusters.count));
+            save->rendered_count=render.rendered_cluster_count;
+            csmemcpy(save->rendered_clusters,render.rendered_clusters,save->rendered_count*sizeof(save->rendered_clusters[0]));
+            for(int i=0;i<save->rendered_count;++i) {
+                short cluster=save->rendered_clusters[i].cluster_index;
+                save->rendered_cluster_indices[cluster]=structure_visibility_globals.rendered_cluster_indices[cluster];
+            }
+        }
+    }
 }
 static unsigned int native_visibility_hash(const void *data,unsigned int bytes,unsigned int hash)
 {

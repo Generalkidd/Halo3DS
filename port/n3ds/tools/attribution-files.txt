@@ -87,3 +87,4 @@ source/render/render_contrails.c
 source/render/render_particles.c
 source/sound/sound_manager.c
 source/structures/structure_visibility.c
+source/structures/structures.c
