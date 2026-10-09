@@ -206,6 +206,7 @@ port/n3ds/tools/survey_pc_overlay.py|inventory
 port/n3ds/tools/survey_pc_overlay.py|main
 port/n3ds/tools/survey_pc_overlay.py|survey
 port/n3ds/tools/survey_pc_overlay.py|u32
+source/effects/particles.c|native_particle_combat_tag
 source/game/game_engine_king.c|game_engine_king_active_hill_center
 source/game/game_engine_race.c|game_engine_race_next_goal
 source/interface/ui_widget.c|n3ds_ui_difficulty_menu_active

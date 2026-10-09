@@ -52,6 +52,7 @@ def main():
     parser.add_argument('--test-frames', type=int, default=0, help='0 produces the playable release; positive values stop after that many frames')
     parser.add_argument('--diagnostics', action='store_true', help='Enable renderer checks and material profile; use with --test-frames or --diagnostic-pc-play')
     parser.add_argument('--diagnostic-audio-trace', action='store_true', help='Trace bounded DSP queue and playback state; use with --test-frames or --diagnostic-pc-play')
+    parser.add_argument('--diagnostic-particle-profile', action='store_true', help='Trace original particle animation and physics time in a diagnostic match')
     parser.add_argument('--diagnostic-high-textures', action='store_true', help='PC map comparison: New-model 128-pixel world textures with an 8 MiB cache; requires --diagnostic-pc-play')
     parser.add_argument('--diagnostic-texture-clip', action='store_true', help='Capture a repeatable Timberland walk as raw top-screen frames; requires --diagnostic-pc-play timberland')
     parser.add_argument('--diagnostic-respawn-texture-clip', action='store_true', help='Capture PC menu death/respawn fixture frames and frame work timing')
@@ -146,6 +147,7 @@ def main():
     defines = [f'-DHALO_N3DS_CHECKPOINT_BUILD=0x{build_id:08x}u','-DHALO_N3DS_CHECKPOINT_FEATURE=1',f'-DHALO_N3DS_MISSION_TICKS={args.test_frames}']
     if args.diagnostics: defines.append('-DHALO_N3DS_RENDERER_TESTS=1')
     if args.diagnostic_audio_trace: defines.append('-DHALO_N3DS_AUDIO_TRACE=1')
+    if args.diagnostic_particle_profile: defines.append('-DHALO_N3DS_PARTICLE_PROFILE=1')
     if args.diagnostic_high_textures: defines.append('-DHALO_N3DS_HIGH_TEXTURE_TEST=1')
     if args.diagnostic_texture_clip: defines.append('-DHALO_N3DS_TEXTURE_CLIP=1')
     if args.diagnostic_respawn_texture_clip: defines.append('-DHALO_N3DS_TEXTURE_CLIP_DEATH=1')

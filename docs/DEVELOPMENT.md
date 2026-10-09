@@ -146,6 +146,14 @@ queued weapon and impact audio, and measured about 29 ms render and 9 ms
 simulation at match time 180. Map costs differ; hardware results are still
 required.
 
+The New3DS particle budget now caches each particle definition's combat
+classification for the current map generation. In the same six-bot Timberland
+Azahar fixture, the late 300-frame window measured 33.66 ms before and
+33.13 ms after this change; bot state at match time 1200 matched. The
+`--diagnostic-particle-profile` build option traces animation and physics
+timing without changing the release behavior. These emulator timings do not
+establish 30 FPS on hardware.
+
 `--diagnostic-pc-matrix` builds the runtime matrix fixture. In a private test
 SD, `halo-source/pc-matrix.txt` contains one stock map name and one mode, such
 as `gephyrophobia ctf`. The fixture rejects unknown names and runs with two
