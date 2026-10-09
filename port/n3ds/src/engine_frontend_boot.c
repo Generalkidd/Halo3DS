@@ -394,7 +394,12 @@ int halo_engine_boot(void)
     n3ds_log("STARTUP: sprite allocation checks");
     CHECK(!empty_sprite_tests());
     int original_model=n3ds_input_platform_original_model();
+#ifdef HALO_N3DS_HIGH_TEXTURE_TEST
+    CHECK(n3ds_engine_texture_resolution(original_model?32:128));
+    n3ds_log("DIAGNOSTIC TEXTURES: New-model world base 128, gameplay cache 8 MiB");
+#else
     CHECK(n3ds_engine_texture_resolution(original_model?32:64));
+#endif
     n3ds_log(original_model?
         "PERFORMANCE PROFILE: original; world 320x192 adaptive/RGB565, textures32, LOD gameplay1/cinematic1/weapon2/distant0, foliage1/4-1/6, base-lit materials, particles48/draw64, emitter cap12, sprite layers2, radar16; full-rate controls/HUD":
         "PERFORMANCE PROFILE: New; world textures64, LOD gameplay3/closeup cinematics/distant1-2, cosmetic particles144/draw192, dense emitter cap32, large sprite layers8, radar32; full-rate controls/HUD");

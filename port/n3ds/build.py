@@ -49,6 +49,7 @@ def main():
     parser.add_argument('--test-frames', type=int, default=0, help='0 produces the playable release; positive values stop after that many frames')
     parser.add_argument('--diagnostics', action='store_true', help='Enable renderer checks and material profile; use with --test-frames or --diagnostic-pc-play')
     parser.add_argument('--diagnostic-audio-trace', action='store_true', help='Trace bounded DSP queue and playback state; use with --test-frames or --diagnostic-pc-play')
+    parser.add_argument('--diagnostic-high-textures', action='store_true', help='PC map comparison: New-model 128-pixel world textures with an 8 MiB cache; requires --diagnostic-pc-play')
     parser.add_argument('--original-memory', action='store_true', help='Constrain heap sizes for original-model emulator tests')
     parser.add_argument('--probe-a10', action='store_true', help='Diagnostic only: request the a10 campaign map from the menu')
     parser.add_argument('--probe-solo-bots', type=int, default=0, help='Diagnostic only: request Blood Gulch solo multiplayer with 1-15 bots')
@@ -92,6 +93,8 @@ def main():
         parser.error('PC mode and bot options require --diagnostic-pc-play; bot count must be 1-15')
     if args.diagnostic_pc_fire and not args.diagnostic_pc_play:
         parser.error('--diagnostic-pc-fire requires --diagnostic-pc-play')
+    if args.diagnostic_high_textures and not args.diagnostic_pc_play:
+        parser.error('--diagnostic-high-textures requires --diagnostic-pc-play')
     if args.experimental_pc_runtime and (args.probe_pc_map or args.probe_a10 or args.probe_solo_bots or args.test_frames or args.diagnostic_pc_ui or args.diagnostic_pc_play or args.diagnostic_pc_campaign):
         parser.error('--experimental-pc-runtime cannot be combined with diagnostics or probes')
     out = args.output.resolve(); out.mkdir(parents=True, exist_ok=True)
@@ -122,6 +125,7 @@ def main():
     defines = [f'-DHALO_N3DS_CHECKPOINT_BUILD=0x{build_id:08x}u','-DHALO_N3DS_CHECKPOINT_FEATURE=1',f'-DHALO_N3DS_MISSION_TICKS={args.test_frames}']
     if args.diagnostics: defines.append('-DHALO_N3DS_RENDERER_TESTS=1')
     if args.diagnostic_audio_trace: defines.append('-DHALO_N3DS_AUDIO_TRACE=1')
+    if args.diagnostic_high_textures: defines.append('-DHALO_N3DS_HIGH_TEXTURE_TEST=1')
     if args.original_memory: defines.append('-DHALO_N3DS_LOW_MEMORY_TEST=1')
     if args.probe_a10: defines.append('-DHALO_N3DS_PROBE_A10=1')
     if args.probe_solo_bots:

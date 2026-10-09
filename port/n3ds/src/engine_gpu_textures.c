@@ -270,6 +270,43 @@ static void *texture_create(const void *pixels, unsigned int width, unsigned int
 }
 void *n3ds_gpu_texture_create(const unsigned int *pixels, unsigned int width, unsigned int height)
 { return texture_create(pixels,width,height,GPU_RGBA8); }
+#ifdef HALO_N3DS_HIGH_TEXTURE_TEST
+static unsigned int mip_texel(unsigned int width,unsigned int x,unsigned int y)
+{
+    static const unsigned int spread[8]={0,1,4,5,16,17,20,21};
+    return ((y/8)*(width/8)+x/8)*64+spread[x&7]+2*spread[y&7];
+}
+void *n3ds_gpu_texture_create_two_mips(const unsigned int *pixels,unsigned int width,unsigned int height)
+{
+    if(!initialized || !pixels || width<16 || height<16 || width>512 || height>512 ||
+       (width&(width-1)) || (height&(height-1))) return NULL;
+    C3D_Tex *texture=calloc(1,sizeof(*texture));if(!texture) return NULL;
+    if(!C3D_TexInitWithParams(texture,NULL,(C3D_TexInitParams){width,height,1,GPU_RGBA8,GPU_TEX_2D,false})) {
+        free(texture);return NULL;
+    }
+    memcpy(texture->data,pixels,texture->size);
+    const unsigned int *parent=texture->data;
+    unsigned int *child=C3D_Tex2DGetImagePtr(texture,1,NULL);
+    for(unsigned int y=0;y<height/2;++y) for(unsigned int x=0;x<width/2;++x) {
+        unsigned int a=parent[mip_texel(width,2*x,2*y)];
+        unsigned int b=parent[mip_texel(width,2*x+1,2*y)];
+        unsigned int c=parent[mip_texel(width,2*x,2*y+1)];
+        unsigned int d=parent[mip_texel(width,2*x+1,2*y+1)];
+        unsigned int color=0;
+        for(unsigned int shift=0;shift<32;shift+=8)
+            color|=((((a>>shift)&255)+((b>>shift)&255)+((c>>shift)&255)+((d>>shift)&255)+2)/4)<<shift;
+        child[mip_texel(width/2,x,y)]=color;
+    }
+    C3D_TexSetFilter(texture,GPU_LINEAR,GPU_LINEAR);
+    C3D_TexSetFilterMipmap(texture,GPU_LINEAR);
+    C3D_TexSetWrap(texture,GPU_REPEAT,GPU_REPEAT);
+    unsigned int total=C3D_TexCalcTotalSize(texture->size,texture->maxLevel);
+    if(R_FAILED(GSPGPU_FlushDataCache(texture->data,total))) {
+        C3D_TexDelete(texture);free(texture);return NULL;
+    }
+    return texture;
+}
+#endif
 void *n3ds_gpu_texture_create_rgba4(const void *pixels, unsigned int width, unsigned int height)
 { return texture_create(pixels,width,height,GPU_RGBA4); }
 void *n3ds_gpu_texture_create_cube(const unsigned char *rgba,unsigned int side)

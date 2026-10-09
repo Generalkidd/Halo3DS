@@ -67,12 +67,20 @@ static boolean menu_cache(void)
     const struct n3ds_cache_view *view=n3ds_engine_cache_view(0);
     return view && view->tags && !strcmp(view->header.name,"ui");
 }
+static unsigned int texture_total_budget(void)
+{
+    unsigned int total=menu_cache()?NATIVE_MENU_TEXTURE_BUDGET:NATIVE_TEXTURE_BUDGET;
+#ifdef HALO_N3DS_HIGH_TEXTURE_TEST
+    if(!menu_cache() && !n3ds_input_platform_original_model()) total=8*1024*1024;
+#endif
+    return total;
+}
 static unsigned int texture_budget(void)
 {
     /* The original frontend retains several pages of artwork until ui.map
      * unloads. Give those pages a separate bounded allowance; gameplay keeps
      * its existing texture budget and resolution. No in-flight eviction. */
-    unsigned int total=menu_cache()?NATIVE_MENU_TEXTURE_BUDGET:NATIVE_TEXTURE_BUDGET;
+    unsigned int total=texture_total_budget();
     unsigned int variants=n3ds_gpu_texture_variant_bytes();
     return variants<total?total-variants:0;
 }
@@ -570,7 +578,7 @@ int n3ds_engine_cube_layout_tests(void)
 
 static void *load_bitmap_now(struct bitmap_data *bitmap, boolean block, boolean load)
 {
-    unsigned int i, width, height, target_width, target_height, level, skip, bytes, block_bytes, x, y, output_bytes;
+    unsigned int i, width, height, target_width, target_height, level, skip, bytes, block_bytes, x, y, output_bytes, allocated_bytes;
     unsigned int hash = 2166136261U;
     unsigned int resolution=texture_resolution;
     unsigned int display_resolution=0;
@@ -669,7 +677,12 @@ static void *load_bitmap_now(struct bitmap_data *bitmap, boolean block, boolean 
     target_width = MAX(8,MIN(width,resolution));
     target_height = MAX(8,MIN(height,resolution));
     output_bytes = target_width*target_height*4;
-    if (!texture_make_room(output_bytes)) return NULL;
+    allocated_bytes=output_bytes;
+#ifdef HALO_N3DS_HIGH_TEXTURE_TEST
+    int two_mips=!menu_cache() && !lightmap && target_width>=16 && target_height>=16;
+    if(two_mips) allocated_bytes+=output_bytes/4;
+#endif
+    if (!texture_make_room(allocated_bytes)) return NULL;
     bytes = raw ? width*height*pixel_stride : ((width+3)/4)*((height+3)/4)*block_bytes;
     if (skip > (unsigned)bitmap->pixels_size || bytes > (unsigned)bitmap->pixels_size-skip ||
         bitmap->pixels_offset < 2048 || (unsigned)bitmap->pixels_offset > 0x7fffffffU-skip) return NULL;
@@ -732,7 +745,12 @@ static void *load_bitmap_now(struct bitmap_data *bitmap, boolean block, boolean 
      * C3D_TexInit avoids holding both decode scratch and final GPU storage. */
     texture_scratch_free(compressed,compressed_linear);compressed=NULL;compressed_linear=FALSE;
     texture_scratch_free(rgba,rgba_linear);rgba=NULL;rgba_linear=FALSE;
+#ifdef HALO_N3DS_HIGH_TEXTURE_TEST
+    resource = two_mips?n3ds_gpu_texture_create_two_mips(tiled,target_width,target_height):
+        n3ds_gpu_texture_create(tiled,target_width,target_height);
+#else
     resource = n3ds_gpu_texture_create(tiled, target_width, target_height);
+#endif
     if (!resource) goto done;
     for (i = 0; i < output_bytes; ++i) hash = (hash ^ ((byte *)tiled)[i])*16777619U;
     /* Verify the published PICA allocation contains exactly the converted bytes. */
@@ -740,11 +758,11 @@ static void *load_bitmap_now(struct bitmap_data *bitmap, boolean block, boolean 
     /* Cached map texels are read-only; mutable font/bitmap owners never publish. */
     n3ds_gpu_texture_publish_immutable(resource);
     for (i = 0; i < NATIVE_TEXTURE_SLOTS && entries[i].bitmap; ++i) {}
-    entries[i].bitmap = bitmap; entries[i].resource = resource;entries[i].last_used=texture_frame; entries[i].bytes = output_bytes;
+    entries[i].bitmap = bitmap; entries[i].resource = resource;entries[i].last_used=texture_frame; entries[i].bytes = allocated_bytes;
     bitmap->hardware_format = resource; bitmap->cache_block_index = i;
     /* base_address remains NULL: native tiled RGBA is not Xbox CPU pixel data. */
     bitmap->base_address = NULL;
-    texture_bytes += output_bytes; ++texture_count;
+    texture_bytes += allocated_bytes; ++texture_count;
     if(display_resolution) {
         const struct n3ds_cache_view *view=n3ds_engine_cache_view(0);
         struct cache_file_tag_instance *tag=n3ds_cache_tag(view,bitmap->tag_index,BITMAP_GROUP_TAG);
@@ -810,7 +828,7 @@ int n3ds_engine_bitmap_bind_plasma(unsigned int stage,const struct bitmap_data *
 {
     if(stage!=2 || !bitmap || (flags&~15u)) return 0;
     void *source=texture_cache_bitmap_load((struct bitmap_data *)bitmap);if(!source) return 0;
-    unsigned int total=menu_cache()?NATIVE_MENU_TEXTURE_BUDGET:NATIVE_TEXTURE_BUDGET;
+    unsigned int total=texture_total_budget();
     if(texture_bytes>total) return 0;
     void *variant=n3ds_gpu_texture_plasma(source,total-texture_bytes);
     return variant && n3ds_gpu_texture_bind_sampler(stage,variant,flags);

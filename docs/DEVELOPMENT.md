@@ -507,3 +507,17 @@ then run it again without that flag after staging. `--git`
 selects a Git executable if needed. This checks known exclusions and common
 secret formats in the current tree/index, not all possible secrets or licensing
 requirements. Only the current working tree or index is scanned.
+
+The PC retail `ui.map` references event function indices beyond the original
+Xbox table of 102 entries. `port/n3ds/tools/inspect_pc_ui_exit.py` can inspect
+an owner's read-only PC `ui.map`; its Quit OK widget uniquely uses index 107.
+The 3DS port maps that confirmed PC action to normal application shutdown.
+Other PC-only menu actions need individual mapping and testing before relying
+on them; the SELECT Local Multiplayer menu remains the tested PC match path.
+
+`--diagnostic-high-textures` is an opt-in PC match comparison on New 3DS. It
+uses 128-pixel world texture bases, a generated 64-pixel mip level, and an
+8 MiB gameplay texture cache. A six-bot Timberland Azahar run reached 900
+frames without a fatal error, with about 7.7 MiB cached and a steady 18.6 ms
+render interval at game time 900. Initial loading cost increased, so the
+release launcher keeps the established texture profile until physical testing.
