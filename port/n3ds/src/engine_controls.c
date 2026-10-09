@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 #include "cseries.h"
 #include "engine_controls.h"
 #include "engine_files.h"
@@ -12,8 +13,8 @@ int n3ds_pc_tags_active(void);
 
 void n3ds_log(const char *message);
 void n3ds_ui_controls_back(void);
-static const struct native_control_settings defaults={100,100,0,0,0,0,0};
-static struct native_control_settings settings={100,100,0,0,0,0,0},opened_settings;
+static const struct native_control_settings defaults={100,100,0,0,0,0,0,1};
+static struct native_control_settings settings={100,100,0,0,0,0,0,1},opened_settings;
 static int initialized,modal,main_route,selected,save_error,repeat_ticks,swallow;
 static unsigned int previous_keys;
 static const char path[]="t:\\controller-settings.bin";
@@ -22,10 +23,12 @@ static const char backup[]="t:\\controller-settings.bak";
 struct legacy_control_settings {unsigned int cstick,touch,xbox_buttons,swap_shoulders;};
 struct legacy_settings_file {unsigned int magic,version;struct legacy_control_settings settings;unsigned int checksum;};
 struct settings_file_v2 {unsigned int magic,version;unsigned int cstick,touch,xbox_buttons,swap_shoulders,high_textures;unsigned int checksum;};
+struct settings_file_v3 {unsigned int magic,version;unsigned int cstick,touch,xbox_buttons,swap_shoulders,high_textures,swap_xy,show_fps;unsigned int checksum;};
 struct settings_file {unsigned int magic,version;struct native_control_settings settings;unsigned int checksum;};
 
 static int valid(const struct native_control_settings *s)
-{return s->cstick>=25 && s->cstick<=300 && s->touch>=25 && s->touch<=300 && s->xbox_buttons<=1 && s->swap_shoulders<=1 && s->high_textures<=1 && s->swap_xy<=1 && s->show_fps<=1;}
+{return s->cstick>=25 && s->cstick<=300 && s->touch>=25 && s->touch<=300 && s->xbox_buttons<=1 && s->swap_shoulders<=1 && s->high_textures<=1 && s->swap_xy<=1 && s->show_fps<=1 && s->decals<=1;}
+/* Kevin Boggs: checksum_bytes - New3DS integration. */
 static unsigned int checksum_bytes(const void *data,unsigned int size)
 {
  const unsigned char *p=(const unsigned char *)data;unsigned int h=2166136261u;
@@ -35,10 +38,11 @@ static unsigned int checksum_bytes(const void *data,unsigned int size)
 static unsigned int checksum(const struct settings_file *f){return checksum_bytes(f,sizeof(*f));}
 static int read_settings(const char *name,struct native_control_settings *s)
 {
- struct settings_file f;struct settings_file_v2 prior;struct legacy_settings_file old;
+ struct settings_file f;struct settings_file_v3 prior3;struct settings_file_v2 prior;struct legacy_settings_file old;
  unsigned int h=n3ds_file_open(name,1);if(!h)return 0;
  unsigned int size=n3ds_file_size(h);
  int ok=size==sizeof(f)?n3ds_file_read(h,&f,sizeof(f)):
+     size==sizeof(prior3)?n3ds_file_read(h,&prior3,sizeof(prior3)):
      size==sizeof(prior)?n3ds_file_read(h,&prior,sizeof(prior)):
      size==sizeof(old)?n3ds_file_read(h,&old,sizeof(old)):0;
  ok=n3ds_file_close(h) && ok;
@@ -51,15 +55,20 @@ static int read_settings(const char *name,struct native_control_settings *s)
   if(prior.magic!=0x3343544c || prior.version!=2 || prior.checksum!=checksum_bytes(&prior,sizeof(prior)))return 0;
   *s=defaults;s->cstick=prior.cstick;s->touch=prior.touch;s->xbox_buttons=prior.xbox_buttons;
   s->swap_shoulders=prior.swap_shoulders;s->high_textures=prior.high_textures;
+ }else if(size==sizeof(prior3)){
+  if(prior3.magic!=0x3343544c || prior3.version!=3 || prior3.checksum!=checksum_bytes(&prior3,sizeof(prior3)))return 0;
+  *s=defaults;s->cstick=prior3.cstick;s->touch=prior3.touch;s->xbox_buttons=prior3.xbox_buttons;
+  s->swap_shoulders=prior3.swap_shoulders;s->high_textures=prior3.high_textures;
+  s->swap_xy=prior3.swap_xy;s->show_fps=prior3.show_fps;
  }else{
-  if(f.magic!=0x3343544c || f.version!=3 || f.checksum!=checksum(&f))return 0;
+  if(f.magic!=0x3343544c || f.version!=4 || f.checksum!=checksum(&f))return 0;
   *s=f.settings;
  }
  return valid(s);
 }
 static int save_settings(void)
 {
- struct settings_file f={0x3343544c,3,settings,0};f.checksum=checksum(&f);
+ struct settings_file f={0x3343544c,4,settings,0};f.checksum=checksum(&f);
  struct native_file_info info;
  if(n3ds_file_stat(settings_temporary,&info) && !n3ds_file_delete(settings_temporary,0))return 0;
  if(!n3ds_file_create(settings_temporary,0))return 0;
@@ -82,8 +91,13 @@ void n3ds_controls_initialize(void)
 void n3ds_controls_get(struct native_control_settings *s){*s=settings;}
 void n3ds_controls_set(const struct native_control_settings *s){if(valid(s))settings=*s;}
 float n3ds_controls_sensitivity(int touch){return (touch?settings.touch:settings.cstick)*.01f;}
+/* Kevin Boggs: n3ds_controls_high_textures - New3DS integration. */
 int n3ds_controls_high_textures(void){n3ds_controls_initialize();return settings.high_textures!=0;}
+/* Kevin Boggs: n3ds_controls_show_fps - New3DS integration. */
 int n3ds_controls_show_fps(void){n3ds_controls_initialize();return settings.show_fps!=0;}
+/* Kevin Boggs: expose the persistent pre match decal preference to simulation and rendering. */
+/* Kevin Boggs: n3ds_controls_decals - New3DS integration. */
+int n3ds_controls_decals(void){n3ds_controls_initialize();return settings.decals!=0;}
 static unsigned int exchange(unsigned int held,unsigned int a,unsigned int b)
 {unsigned int result=held&~(a|b);if(held&a)result|=b;if(held&b)result|=a;return result;}
 unsigned int n3ds_controls_buttons(unsigned int held,int original,int gameplay)
@@ -109,15 +123,20 @@ static void close_settings(void)
  modal=0;swallow=1;if(main_route)n3ds_ui_controls_back();
  n3ds_log("CONTROLLER SETTINGS: saved and returned");
 }
+/* Kevin Boggs: keep the reduced original model menu mapped to the same setting fields. */
+/* Kevin Boggs: setting_field - New3DS integration. */
+static int setting_field(int row)
+{return n3ds_input_platform_original_model() && row>=3?row+2:row;}
 static void adjust(int delta)
 {
- int field=selected>=3 && n3ds_input_platform_original_model()?selected+2:selected;
+ int field=setting_field(selected);
  if(field<2){unsigned int *v=field?&settings.touch:&settings.cstick;int value=(int)*v+delta*5;*v=value<25?25:value>300?300:value;}
  else if(field==2)settings.xbox_buttons^=1;
  else if(field==3)settings.swap_shoulders^=1;
  else if(field==4)settings.high_textures^=1;
  else if(field==5)settings.swap_xy^=1;
  else if(field==6)settings.show_fps^=1;
+ else if(field==7)settings.decals^=1;
  save_error=0;
 }
 void n3ds_controls_filter(struct native_input_sample *s)
@@ -133,14 +152,14 @@ void n3ds_controls_filter(struct native_input_sample *s)
  unsigned int nav=held&(NATIVE_KEY_DUP|NATIVE_KEY_DDOWN|NATIVE_KEY_DLEFT|NATIVE_KEY_DRIGHT);
  if(nav && !(fresh&nav)){if(++repeat_ticks>=18 && (repeat_ticks-18)%5==0)fresh|=nav;}
  else repeat_ticks=0;
- int count=n3ds_input_platform_original_model()?5:7;
+ int count=n3ds_input_platform_original_model()?6:8;
  if(fresh&NATIVE_KEY_DUP)selected=(selected+count-1)%count;
  if(fresh&NATIVE_KEY_DDOWN)selected=(selected+1)%count;
  if(fresh&NATIVE_KEY_DLEFT)adjust(-1);
  if(fresh&NATIVE_KEY_DRIGHT)adjust(1);
  if(fresh&NATIVE_KEY_TOUCH){
   unsigned int x=s->touch_x,y=s->touch_y;
-  if(y>=24 && y<185){int row=(y-24)/23;if(row<count){selected=row;if(x>=242)adjust(x<273?-1:1);}}
+  if(y>=24 && y<184){int row=(y-24)/20;if(row<count){selected=row;if(x>=242)adjust(x<273?-1:1);}}
   if(y>=202 && y<234){if(x>=16 && x<150){settings=defaults;save_error=0;}else if(x>=170 && x<304)close_settings();}
  }
  if(fresh&NATIVE_KEY_START)close_settings();
@@ -157,9 +176,11 @@ void n3ds_controls_draw(void)
 static int pc_menu_open,pc_menu_page,pc_menu_field,pc_menu_map,pc_menu_mode,pc_menu_bots,pc_menu_difficulty=1;
 static int pc_menu_weapon_set,pc_menu_vehicle_choice,pc_menu_error,pc_menu_swallow;
 static int pc_match_weapon_override;
+/* Kevin Boggs: n3ds_pc_local_weapon_override - New3DS integration. */
 int n3ds_pc_local_weapon_override(void){return pc_match_weapon_override;}
 static unsigned int pc_menu_previous;
 static const char *const pc_menu_modes[]={"slayer","ctf","oddball","king","race"};
+/* Kevin Boggs: pc_menu_available - New3DS integration. */
 static int pc_menu_available(void)
 {
 #ifdef HALO_N3DS_UNIFIED_UI
@@ -168,8 +189,10 @@ static int pc_menu_available(void)
  return main_menu_is_active() && n3ds_pc_tags_active();
 #endif
 }
+/* Kevin Boggs: pc_menu_field_count - New3DS integration. */
 static int pc_menu_field_count(void)
 {return pc_menu_page?2:n3ds_input_platform_original_model()?4:5;}
+/* Kevin Boggs: pc_menu_toggle_textures - New3DS integration. */
 static void pc_menu_toggle_textures(void)
 {
  n3ds_controls_initialize();
@@ -184,7 +207,9 @@ static void pc_menu_toggle_textures(void)
    "PC LOCAL MENU: high textures saved OFF for next map load");
  }
 }
+/* Kevin Boggs: n3ds_pc_local_menu_active - New3DS integration. */
 int n3ds_pc_local_menu_active(void){return pc_menu_open;}
+/* Kevin Boggs: n3ds_pc_local_menu_filter - New3DS integration. */
 void n3ds_pc_local_menu_filter(struct native_input_sample *sample)
 {
  unsigned int held=sample->held,fresh=held&~pc_menu_previous;
@@ -263,6 +288,7 @@ void n3ds_pc_local_menu_filter(struct native_input_sample *sample)
  }
  memset(sample,0,sizeof(*sample));
 }
+/* Kevin Boggs: n3ds_pc_local_menu_draw - New3DS integration. */
 void n3ds_pc_local_menu_draw(void)
 {if(pc_menu_open)n3ds_gpu_pc_local_menu(pc_menu_map,pc_menu_mode,pc_menu_bots,pc_menu_difficulty,
  pc_menu_weapon_set,pc_menu_vehicle_choice,pc_menu_page,pc_menu_field,pc_menu_error,
@@ -270,6 +296,7 @@ void n3ds_pc_local_menu_draw(void)
 #endif
 int n3ds_controls_tests(void)
 {
+ n3ds_controls_initialize();
  struct native_control_settings saved=settings;int ok=1;
  settings=defaults;settings.xbox_buttons=settings.swap_shoulders=1;
  for(unsigned int key=1;key<=NATIVE_KEY_TOUCH;key<<=1){
@@ -283,11 +310,14 @@ int n3ds_controls_tests(void)
  settings.swap_xy=0;
  settings.touch=125;settings.cstick=75;
  if(fabs(n3ds_controls_sensitivity(1)-1.25f)>.0001f || fabs(n3ds_controls_sensitivity(0)-.75f)>.0001f)ok=0;
- struct settings_file f={0x3343544c,3,settings,0};f.checksum=checksum(&f);f.settings.touch^=1;
+ struct settings_file f={0x3343544c,4,settings,0};f.checksum=checksum(&f);f.settings.touch^=1;
  if(f.checksum==checksum(&f))ok=0;
  settings.touch=0;if(valid(&settings))ok=0;settings.touch=301;if(valid(&settings))ok=0;
+ settings=defaults;if(!settings.decals || !n3ds_controls_decals())ok=0;
+ settings.decals=0;if(n3ds_controls_decals() || !valid(&settings))ok=0;
+ settings.decals=2;if(valid(&settings))ok=0;
  settings=saved;
- if(ok)n3ds_log("PASS: controller settings ranges, checksum, independent sensitivities, reversible Xbox face mapping, and New-only gameplay shoulder swap");
+ if(ok)n3ds_log("PASS: controller settings ranges, checksum, decals default/on/off, independent sensitivities, reversible Xbox face mapping, and New-only gameplay shoulder swap");
  return ok;
 }
 

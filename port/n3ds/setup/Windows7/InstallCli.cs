@@ -1,3 +1,4 @@
+// New3DS integration additions by Kevin Boggs.
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -7,6 +8,7 @@ using HaloSetup;
 
 // Console companion to the Windows 7 setup UI. The dual-ISO script uses this
 // exact shared converter, so Xbox and PC installation can run in one flow.
+// Kevin Boggs: InstallCli integrates owner supplied game data on Windows 7.
 static class InstallCli
 {
     sealed class Progress : IProgress<SetupProgress>

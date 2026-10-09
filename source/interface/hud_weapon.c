@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 #ifdef HALO_N3DS
 #include "engine_hud.h"
 #endif

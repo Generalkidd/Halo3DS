@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 #include <3ds.h>
 #include <citro3d.h>
 #include <stdio.h>

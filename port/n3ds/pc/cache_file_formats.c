@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /*
 CACHE_FILE_FORMATS.C
 
@@ -2304,12 +2305,14 @@ static int crc32_table_initialized = 0;
 
 /* ---------- private code */
 
+/* Kevin Boggs: read_u16 - New3DS integration. */
 static uint16_t read_u16(
 	uint8_t const *bytes)
 {
 	return (uint16_t)(bytes[0] | (bytes[1] << 8));
 }
 
+/* Kevin Boggs: read_u32 - New3DS integration. */
 static uint32_t read_u32(
 	uint8_t const *bytes)
 {
@@ -2319,6 +2322,7 @@ static uint32_t read_u32(
 		((uint32_t)bytes[3] << 24);
 }
 
+/* Kevin Boggs: read_s32 - New3DS integration. */
 static int32_t read_s32(
 	uint8_t const *bytes)
 {
@@ -2328,6 +2332,7 @@ static int32_t read_s32(
 	return value <= INT32_MAX ? (int32_t)value : -(int32_t)(~value) - 1;
 }
 
+/* Kevin Boggs: read_s16 - New3DS integration. */
 static int16_t read_s16(
 	uint8_t const *bytes)
 {
@@ -2336,6 +2341,7 @@ static int16_t read_s16(
 	return value <= INT16_MAX ? (int16_t)value : (int16_t)(-(int32_t)(uint16_t)~value - 1);
 }
 
+/* Kevin Boggs: read_f32 - New3DS integration. */
 static float read_f32(
 	uint8_t const *bytes)
 {
@@ -2347,6 +2353,7 @@ static float read_f32(
 	return value;
 }
 
+/* Kevin Boggs: write_u16 - New3DS integration. */
 static void write_u16(
 	uint8_t *bytes,
 	uint16_t value)
@@ -2357,6 +2364,7 @@ static void write_u16(
 	return;
 }
 
+/* Kevin Boggs: write_u32 - New3DS integration. */
 static void write_u32(
 	uint8_t *bytes,
 	uint32_t value)
@@ -2369,6 +2377,7 @@ static void write_u32(
 	return;
 }
 
+/* Kevin Boggs: write_f32 - New3DS integration. */
 static void write_f32(
 	uint8_t *bytes,
 	float value)
@@ -2381,6 +2390,7 @@ static void write_f32(
 	return;
 }
 
+/* Kevin Boggs: flag_is_set - New3DS integration. */
 static int flag_is_set(
 	uint32_t flags,
 	int bit)
@@ -2389,6 +2399,7 @@ static int flag_is_set(
 }
 
 /* nonzero when [offset, offset + size) lies within [0, limit) */
+/* Kevin Boggs: range_fits - New3DS integration. */
 static int range_fits(
 	uint32_t offset,
 	uint32_t size,
@@ -2399,6 +2410,7 @@ static int range_fits(
 
 /* copies a fixed 32-byte string field, returning nonzero when it holds a
 terminator (a name of at most 31 characters) */
+/* Kevin Boggs: copy_string_field - New3DS integration. */
 static int copy_string_field(
 	char *destination,
 	uint8_t const *source)
@@ -2411,6 +2423,7 @@ static int copy_string_field(
 	return terminated;
 }
 
+/* Kevin Boggs: crc32_table_initialize - New3DS integration. */
 static void crc32_table_initialize(
 	void)
 {
@@ -2432,6 +2445,7 @@ static void crc32_table_initialize(
 	return;
 }
 
+/* Kevin Boggs: crc32_update - New3DS integration. */
 static uint32_t crc32_update(
 	uint32_t crc,
 	uint8_t const *bytes,
@@ -2451,6 +2465,7 @@ static uint32_t crc32_update(
 	return crc;
 }
 
+/* Kevin Boggs: crc32_update_from_file - New3DS integration. */
 static enum cache_file_status crc32_update_from_file(
 	struct cache_file_source *source,
 	uint32_t *crc,
@@ -2487,6 +2502,7 @@ static enum cache_file_status crc32_update_from_file(
 	return status;
 }
 
+/* Kevin Boggs: opensauce_header_read - New3DS integration. */
 static void opensauce_header_read(
 	uint8_t const *bytes,
 	struct opensauce_cache_header *header)
@@ -2522,6 +2538,7 @@ static void opensauce_header_read(
 
 /* the checks OpenSauce's s_cache_header_yelo::IsValid makes, except the
 minimum OpenSauce version, which only concerns OpenSauce itself */
+/* Kevin Boggs: opensauce_header_verify - New3DS integration. */
 static enum cache_file_status opensauce_header_verify(
 	uint8_t const *bytes,
 	struct cache_file_identity *identity)
@@ -2564,6 +2581,7 @@ static enum cache_file_status opensauce_header_verify(
 	return _cache_file_status_ok;
 }
 
+/* Kevin Boggs: custom_edition_header_verify - New3DS integration. */
 static enum cache_file_status custom_edition_header_verify(
 	uint8_t const *bytes,
 	struct cache_file_identity *identity)
@@ -2606,6 +2624,7 @@ static enum cache_file_status custom_edition_header_verify(
 	return _cache_file_status_ok;
 }
 
+/* Kevin Boggs: cache_header_identify - New3DS integration. */
 static enum cache_file_status cache_header_identify(
 	uint8_t const *bytes,
 	uint32_t byte_count,
@@ -2660,6 +2679,7 @@ static enum cache_file_status cache_header_identify(
 	}
 }
 
+/* Kevin Boggs: resource_map_header_identify - New3DS integration. */
 static enum cache_file_status resource_map_header_identify(
 	uint8_t const *bytes,
 	struct cache_file_identity *identity)
@@ -2690,6 +2710,7 @@ static enum cache_file_status resource_map_header_identify(
 	return _cache_file_status_ok;
 }
 
+/* Kevin Boggs: load_fail - New3DS integration. */
 static enum cache_file_status load_fail(
 	struct load_state *state,
 	enum cache_file_status status,
@@ -2704,6 +2725,7 @@ static enum cache_file_status load_fail(
 
 /* the offset in the tag cache of the runtime address `address`, when
 `size` bytes there lie within the bytes in use */
+/* Kevin Boggs: tag_cache_offset - New3DS integration. */
 static int tag_cache_offset(
 	struct load_state const *state,
 	uint32_t address,
@@ -2746,6 +2768,7 @@ static char const *tag_name_get(
 		NULL;
 }
 
+/* Kevin Boggs: bitmap_data_check - New3DS integration. */
 static enum cache_file_status bitmap_data_check(
 	struct load_state *state,
 	uint32_t element_offset)
@@ -2780,6 +2803,7 @@ static enum cache_file_status bitmap_data_check(
 	return _cache_file_status_ok;
 }
 
+/* Kevin Boggs: sound_permutation_check - New3DS integration. */
 static enum cache_file_status sound_permutation_check(
 	struct load_state *state,
 	uint32_t element_offset)
@@ -2821,6 +2845,7 @@ within the index and vertex parts of the model data, aligned for reading as
 16-bit indices and floats, and few enough vertices for 16-bit indices. What
 the strip and the vertices hold is checked when they are converted
 (custom_edition_cache.h). */
+/* Kevin Boggs: gbxmodel_part_check - New3DS integration. */
 static enum cache_file_status gbxmodel_part_check(
 	struct load_state *state,
 	uint32_t element_offset)
@@ -2855,6 +2880,7 @@ blocks hold, requiring every block and every present tag data field to lie
 within the bytes in use. Tag data with a size but no address is data the
 cache build left out (bitmaps' compressed color plates), which the game
 never reads. */
+/* Kevin Boggs: element_verify - New3DS integration. */
 static enum cache_file_status element_verify(
 	struct load_state *state,
 	uint32_t element_offset,
@@ -2921,6 +2947,7 @@ static enum cache_file_status element_verify(
 from `item_base` within the `item_bytes` of the item, into runtime addresses
 of the item placed at `item_address`. The editing kit's definition pointers
 are cleared: they refer to nothing in this process. */
+/* Kevin Boggs: element_relocate - New3DS integration. */
 static enum cache_file_status element_relocate(
 	struct load_state *state,
 	uint8_t *item,
@@ -2992,6 +3019,7 @@ static enum cache_file_status element_relocate(
 }
 
 /* room for `size` more bytes of resource-held tags after what is in use */
+/* Kevin Boggs: tag_cache_allocate - New3DS integration. */
 static enum cache_file_status tag_cache_allocate(
 	struct load_state *state,
 	uint32_t size,
@@ -3032,6 +3060,7 @@ resource map: the tag's address field is the index of its entry, whose name
 is the tag's path (observed for every such tag of the stock maps; Reclaimer
 reads bitmaps the same way). The entry is the whole tag, its addresses
 counting from the start of the entry. */
+/* Kevin Boggs: resource_tag_load - New3DS integration. */
 static enum cache_file_status resource_tag_load(
 	struct load_state *state,
 	uint8_t *instance,
@@ -3108,6 +3137,7 @@ fields the map's copy leaves zero, its sample rate, encoding, compression
 and longest permutation length, which it holds as the Xbox maps of build
 2276 do. Its pointers and tag references belong to the editing kit and to
 the map that sounds.map was built with (port/n3ds/pc/FORMAT-REFERENCE.md). */
+/* Kevin Boggs: resource_sound_load - New3DS integration. */
 static enum cache_file_status resource_sound_load(
 	struct load_state *state,
 	uint8_t *instance,
@@ -3366,6 +3396,7 @@ static struct element_layout const *checked_group_layout(
 of `size` bytes loaded at `address` (a structure BSP, or the tag cache):
 nonzero when they lie within it, aligned for the game to read as
 structures, with `*offset` their offset in it. */
+/* Kevin Boggs: loaded_block_get - New3DS integration. */
 static int loaded_block_get(
 	uint8_t const *block,
 	uint32_t address,
@@ -3389,6 +3420,7 @@ static int loaded_block_get(
 
 /* nonzero when the `vector_count` vectors at `vectors_offset` of each of
 the `vertex_count` vertices of `vertex_bytes` at `vertices` are unit-range */
+/* Kevin Boggs: unit_vectors_valid - New3DS integration. */
 static int unit_vectors_valid(
 	uint8_t const *vertices,
 	int32_t vertex_count,
@@ -3423,6 +3455,7 @@ static int unit_vectors_valid(
 converted for this build when the BSP is loaded (custom_edition_cache.h):
 each material's uncompressed vertices within the BSP, of the size its vertex
 counts give, and lightmap vertices exactly when its lightmap has a bitmap. */
+/* Kevin Boggs: structure_bsp_geometry_verify - New3DS integration. */
 static enum cache_file_status structure_bsp_geometry_verify(
 	struct load_state *state,
 	uint8_t const *bsp,
@@ -3510,6 +3543,7 @@ static enum cache_file_status structure_bsp_geometry_verify(
 	return _cache_file_status_ok;
 }
 
+/* Kevin Boggs: structure_bsps_verify - New3DS integration. */
 static enum cache_file_status structure_bsps_verify(
 	struct load_state *state,
 	uint8_t const *tag_instances,
@@ -3642,6 +3676,7 @@ char const *resource_map_type_describe(
 		"unknown";
 }
 
+/* Kevin Boggs: custom_edition_tag_cache_bytes - New3DS integration. */
 uint32_t custom_edition_tag_cache_bytes(
 	struct cache_file_identity const *identity)
 {
@@ -3651,6 +3686,7 @@ uint32_t custom_edition_tag_cache_bytes(
 		CUSTOM_EDITION_TAG_CACHE_BYTES;
 }
 
+/* Kevin Boggs: cache_file_identify - New3DS integration. */
 enum cache_file_status cache_file_identify(
 	struct cache_file_source *source,
 	struct cache_file_identity *identity)
@@ -3676,6 +3712,7 @@ enum cache_file_status cache_file_identify(
 	return resource_map_header_identify(header, identity);
 }
 
+/* Kevin Boggs: cache_file_header_format - New3DS integration. */
 enum cache_file_format cache_file_header_format(
 	void const *header,
 	int *has_opensauce_header)
@@ -3710,6 +3747,7 @@ enum cache_file_format cache_file_header_format(
 	return format;
 }
 
+/* Kevin Boggs: resource_map_open - New3DS integration. */
 enum cache_file_status resource_map_open(
 	struct cache_file_source *source,
 	enum resource_map_type expected_type,
@@ -3792,6 +3830,7 @@ enum cache_file_status resource_map_open(
 	return _cache_file_status_ok;
 }
 
+/* Kevin Boggs: resource_map_close - New3DS integration. */
 void resource_map_close(
 	struct resource_map *map)
 {
@@ -3804,6 +3843,7 @@ void resource_map_close(
 	return;
 }
 
+/* Kevin Boggs: custom_edition_cache_load - New3DS integration. */
 enum cache_file_status custom_edition_cache_load(
 	struct cache_file_source *map,
 	struct resource_map *const resource_maps[NUMBER_OF_RESOURCE_MAP_TYPES],
@@ -4066,6 +4106,7 @@ enum cache_file_status custom_edition_cache_load(
    file's original virtual addresses. The first walk checks every field; only
    then does the second walk alter the image. No arbitrary 32-bit word scan
    is safe here, because tag payloads also contain numbers in this range. */
+/* Kevin Boggs: rebase_address_offset - New3DS integration. */
 static int rebase_address_offset(
 	uint32_t address,
 	uint32_t size,
@@ -4081,6 +4122,7 @@ static int rebase_address_offset(
 	return 1;
 }
 
+/* Kevin Boggs: rebase_element_known - New3DS integration. */
 static int rebase_element_known(
 	uint8_t *cache,
 	uint32_t used,
@@ -4148,6 +4190,7 @@ static int rebase_element_known(
 
 /* The scenario's checked layout omits this special block: cache_load
    validated its entries and every reserved BSP destination separately. */
+/* Kevin Boggs: rebase_scenario_bsp_references - New3DS integration. */
 static int rebase_scenario_bsp_references(
 	uint8_t *cache,
 	uint32_t used,
@@ -4195,6 +4238,7 @@ static int rebase_scenario_bsp_references(
 	return 1;
 }
 
+/* Kevin Boggs: custom_edition_cache_rebase_known - New3DS integration. */
 enum cache_file_status custom_edition_cache_rebase_known(
 	uint8_t *tag_cache,
 	uint32_t loaded_bytes,
@@ -4265,6 +4309,7 @@ enum cache_file_status custom_edition_cache_rebase_known(
 	return _cache_file_status_ok;
 }
 
+/* Kevin Boggs: bsp_rebase_offset - New3DS integration. */
 static int bsp_rebase_offset(
 	uint32_t address,
 	uint32_t bytes,
@@ -4279,6 +4324,7 @@ static int bsp_rebase_offset(
 }
 
 /* Rebase a checked tag_block that lives within one PC BSP section. */
+/* Kevin Boggs: bsp_rebase_block - New3DS integration. */
 static int bsp_rebase_block(
 	uint8_t *bsp,
 	uint32_t bsp_bytes,
@@ -4314,6 +4360,7 @@ static int bsp_rebase_block(
 	return 1;
 }
 
+/* Kevin Boggs: bsp_rebase_data - New3DS integration. */
 static int bsp_rebase_data(
 	uint8_t *bsp,
 	uint32_t bsp_bytes,
@@ -4342,6 +4389,7 @@ static int bsp_rebase_data(
 /* The cache loader validates the full source BSP before calling this. This
    independent pass repeats every bound it traverses, so a changed or
    untrusted buffer cannot turn a verified file offset into an ARM pointer. */
+/* Kevin Boggs: custom_edition_bsp_rebase_known - New3DS integration. */
 enum cache_file_status custom_edition_bsp_rebase_known(
 	uint8_t *bsp,
 	uint32_t bsp_bytes,
@@ -4685,6 +4733,7 @@ static uint8_t *loaded_tag_instances(
 	return state->tag_cache + instances_offset;
 }
 
+/* Kevin Boggs: loaded_state_initialize - New3DS integration. */
 static void loaded_state_initialize(
 	struct load_state *state,
 	uint8_t *tag_cache,
@@ -4854,6 +4903,7 @@ char const *custom_edition_cache_tag_name(
 	return (char const *)tag_cache + name_offset;
 }
 
+/* Kevin Boggs: custom_edition_cache_tags_regroup - New3DS integration. */
 int32_t custom_edition_cache_tags_regroup(
 	uint8_t *tag_cache,
 	uint32_t loaded_bytes,
@@ -4906,6 +4956,7 @@ static struct shader_group_type const *shader_group_type_get(
 four-stage maps, or its two-stage maps when it has no four-stage ones (this
 build's renderer draws four stages), and its extra flags move to where a
 chicago shader has them. The two-stage maps are left unreferenced. */
+/* Kevin Boggs: transparent_chicago_extended_convert - New3DS integration. */
 static void transparent_chicago_extended_convert(
 	uint8_t *shader)
 {
@@ -4931,6 +4982,7 @@ static void transparent_chicago_extended_convert(
 state the game expects of a bitmap it has not drawn yet: its tag is its own
 (bitmaps.map holds the handles of whatever map it was built with), and it
 has no texture cache block, hardware texture or pixels. */
+/* Kevin Boggs: bitmaps_prepare - New3DS integration. */
 static void bitmaps_prepare(
 	struct load_state const *state,
 	uint32_t group_offset,
@@ -4971,6 +5023,7 @@ the state the game expects of one it has not played: its tag is its own
 cache block or samples. Unsupported compression is made unplayable by
 clearing pitch ranges. The 3DS build has an Ogg Vorbis decoder; other builds
 retain their prior behavior. */
+/* Kevin Boggs: sound_prepare - New3DS integration. */
 static void sound_prepare(
 	struct load_state const *state,
 	uint32_t sound_offset,
@@ -5048,6 +5101,7 @@ animation the graph does not have are made to name none, which the game
 skips (objects.c, object_compute_node_matrices). Maps built with the editing
 kit can have them (beavercreek_halo3.yelo has two); Custom Edition reads
 past the graph's animations there, and this build asserts. */
+/* Kevin Boggs: animation_graph_overlays_repair - New3DS integration. */
 static void animation_graph_overlays_repair(
 	struct load_state const *state,
 	uint32_t graph_offset,
@@ -5088,6 +5142,7 @@ static void animation_graph_overlays_repair(
 are its own number, and otherwise frees them as if they had been allocated:
 an upgraded array whose nodes in use fit in this build's number is made
 that number. */
+/* Kevin Boggs: scenario_script_nodes_convert - New3DS integration. */
 static enum cache_file_status scenario_script_nodes_convert(
 	struct load_state const *state,
 	uint8_t const *instances,
@@ -5147,6 +5202,7 @@ size of the one its Xbox counterpart draws, and every other element one of
 the same size (port/n3ds/pc/FORMAT-REFERENCE.md). This build ignores the flag
 (hud_draw.c draws a bitmap at its size times the placement's scale), so the
 scale takes it in. */
+/* Kevin Boggs: hud_placement_convert - New3DS integration. */
 static void hud_placement_convert(
 	uint8_t *placement,
 	struct custom_edition_conversion_report *report)
@@ -5168,6 +5224,7 @@ static void hud_placement_convert(
 
 /* the placement at `placement_offset` in each element of the block at
 `block`, when the block lies within the tag cache */
+/* Kevin Boggs: hud_placement_block_convert - New3DS integration. */
 static void hud_placement_block_convert(
 	struct load_state const *state,
 	uint8_t const *block,
@@ -5195,6 +5252,7 @@ static void hud_placement_block_convert(
 
 /* the placements of the items of each weapon HUD crosshair or overlay in
 the block at `block` */
+/* Kevin Boggs: weapon_hud_items_convert - New3DS integration. */
 static void weapon_hud_items_convert(
 	struct load_state const *state,
 	uint8_t const *block,
@@ -5228,6 +5286,7 @@ static void weapon_hud_items_convert(
 
 /* the size of a HUD definition whose placements hud_placements_convert
 converts, or 0 for any other group */
+/* Kevin Boggs: hud_definition_bytes - New3DS integration. */
 static uint32_t hud_definition_bytes(
 	uint32_t group_tag)
 {
@@ -5247,6 +5306,7 @@ static uint32_t hud_definition_bytes(
 }
 
 /* every placement of the HUD definition of group `group_tag` at `offset` */
+/* Kevin Boggs: hud_placements_convert - New3DS integration. */
 static void hud_placements_convert(
 	struct load_state const *state,
 	uint32_t group_tag,
@@ -5335,6 +5395,7 @@ static void hud_placements_convert(
 reads for the score takes the place of the placeholder and its quotes: BACK,
 which the native builds read from F1 and the controller's Back button
 (port/linux/src/xinput_sdl.c). */
+/* Kevin Boggs: multiplayer_score_hint_convert - New3DS integration. */
 static void multiplayer_score_hint_convert(
 	struct load_state const *state,
 	uint32_t string_list_offset,
@@ -5391,6 +5452,7 @@ static void multiplayer_score_hint_convert(
 	return;
 }
 
+/* Kevin Boggs: custom_edition_cache_convert - New3DS integration. */
 enum cache_file_status custom_edition_cache_convert(
 	uint8_t *tag_cache,
 	uint32_t loaded_bytes,
@@ -5475,6 +5537,7 @@ enum cache_file_status custom_edition_cache_convert(
 	return scenario_script_nodes_convert(&state, instances, tag_count, report);
 }
 
+/* Kevin Boggs: custom_edition_cache_combine_resource_offsets - New3DS integration. */
 void custom_edition_cache_combine_resource_offsets(
 	uint8_t *tag_cache,
 	uint32_t loaded_bytes,

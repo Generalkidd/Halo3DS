@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /* Engine-owned map bitmaps converted to bounded PICA resources on demand.
  * Supports cached 2D DXT1/3/5 and swizzled color/luminance/alpha images. */
 #include "cseries.h"
@@ -74,6 +75,7 @@ static void texture_scratch_free(void *pointer,boolean linear)
 
 unsigned int n3ds_engine_texture_count(void) { return texture_count; }
 unsigned int n3ds_engine_texture_bytes(void) { return texture_bytes; }
+/* Kevin Boggs: n3ds_engine_texture_respawn_transition - New3DS integration. */
 void n3ds_engine_texture_respawn_transition(void)
 {
 #if defined(HALO_N3DS_NEAR_WORLD_WIDTH) && HALO_N3DS_NEAR_WORLD_WIDTH==512
@@ -107,6 +109,7 @@ static boolean menu_cache(void)
     const struct n3ds_cache_view *view=n3ds_engine_cache_view(0);
     return view && view->tags && !strcmp(view->header.name,"ui");
 }
+/* Kevin Boggs: texture_total_budget - New3DS integration. */
 static unsigned int texture_total_budget(void)
 {
     unsigned int total=menu_cache()?NATIVE_MENU_TEXTURE_BUDGET:NATIVE_TEXTURE_BUDGET;
@@ -136,6 +139,7 @@ int n3ds_engine_texture_resolution(unsigned int limit)
     texture_resolution=limit;
     return 1;
 }
+/* Kevin Boggs: n3ds_engine_texture_apply_saved_profile - New3DS integration. */
 int n3ds_engine_texture_apply_saved_profile(void)
 {
     int high=n3ds_controls_high_textures();
@@ -205,6 +209,7 @@ static void *cached_bitmap_resource(struct bitmap_data *bitmap)
 #endif
     return entry->resource;
 }
+/* Kevin Boggs: prewarm_hud_name - New3DS integration. */
 static int prewarm_hud_name(const char *name)
 {
     static const char *const names[] = {
@@ -221,6 +226,7 @@ static int prewarm_hud_name(const char *name)
         if(!strcmp(name,names[i])) return 1;
     return 0;
 }
+/* Kevin Boggs: texture_priority_name - New3DS integration. */
 static unsigned int texture_priority_name(const char *name)
 {
     if(!name) return 0;
@@ -233,6 +239,7 @@ static unsigned int texture_priority_name(const char *name)
        !strncmp(name,"powerups\\",9)) return 1;
     return 0;
 }
+/* Kevin Boggs: texture_priority_bitmap - New3DS integration. */
 static unsigned int texture_priority_bitmap(struct bitmap_data *bitmap)
 {
     const struct n3ds_cache_view *view=n3ds_engine_cache_view(0);
@@ -429,6 +436,7 @@ static int sampled_raw_texture(const byte *source, unsigned int source_bytes,
 #ifdef HALO_N3DS_EXPERIMENTAL_PC_UI
 /* Halo PC stores raw pixels in row order. Keep the same nearest reduction and
  * PICA tile orientation as the Xbox sampler, but use a linear source index. */
+/* Kevin Boggs: sampled_pc_raw_texture - New3DS integration. */
 static int sampled_pc_raw_texture(const byte *source, unsigned int source_bytes,
     int format, unsigned int width, unsigned int height,
     unsigned int target_width, unsigned int target_height,
@@ -930,6 +938,7 @@ done:
     return resource;
 }
 
+/* Kevin Boggs: n3ds_engine_texture_prewarm_hud - New3DS integration. */
 void n3ds_engine_texture_prewarm_hud(void)
 {
     const struct n3ds_cache_view *view=n3ds_engine_cache_view(0);

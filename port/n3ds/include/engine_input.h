@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 #ifndef HALO_N3DS_ENGINE_INPUT_H
 #define HALO_N3DS_ENGINE_INPUT_H
 float n3ds_input_touch_look_scale(int component);

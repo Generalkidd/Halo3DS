@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /* Native PICA resource allocation. These handles are C3D_Tex, never D3D objects. */
 #include <3ds.h>
 #include <citro3d.h>
@@ -270,6 +271,7 @@ static void *texture_create(const void *pixels, unsigned int width, unsigned int
 }
 void *n3ds_gpu_texture_create(const unsigned int *pixels, unsigned int width, unsigned int height)
 { return texture_create(pixels,width,height,GPU_RGBA8); }
+/* Kevin Boggs: mip_texel - New3DS integration. */
 static unsigned int mip_texel(unsigned int width,unsigned int x,unsigned int y)
 {
     static const unsigned int spread[8]={0,1,4,5,16,17,20,21};
@@ -312,6 +314,7 @@ void *n3ds_gpu_texture_create_mips(const unsigned int *pixels,unsigned int width
 }
 void *n3ds_gpu_texture_create_two_mips(const unsigned int *pixels,unsigned int width,unsigned int height)
 { return n3ds_gpu_texture_create_mips(pixels,width,height,1); }
+/* Kevin Boggs: n3ds_gpu_texture_set_lod_bias - New3DS integration. */
 int n3ds_gpu_texture_set_lod_bias(void *resource,float bias)
 {
     if(!resource || bias<0.f || bias>2.f) return 0;

@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 #include "engine_checkpoint.h"
 #if defined(HALO_N3DS_EXPERIMENTAL_PC_MAP_ID) || defined(HALO_N3DS_EXPERIMENTAL_PC_MATRIX)
 #include "pc_diagnostic_maps.h"
@@ -20,7 +21,7 @@ short n3ds_ui_pc_expansion_map_count(void);
 #include "game.h"
 #include "game/game_engine.h"
 #include "players.h"
-#ifdef HALO_N3DS_TEXTURE_CLIP_DEATH
+#if defined(HALO_N3DS_TEXTURE_CLIP_DEATH) || defined(HALO_N3DS_SCENIC_TEXTURE)
 #include "game/players_runtime.h"
 #include "math/real_math.h"
 #endif
@@ -57,6 +58,11 @@ short n3ds_ui_pc_expansion_map_count(void);
 #include "engine_controls.h"
 #include "units/unit_definitions.h"
 #include "game/game_globals.h"
+#include "effects/particles.h"
+#include "effects/particle_systems.h"
+#include "effects/contrails.h"
+#include "effects/decals.h"
+extern struct data_array *global_decal_data;
 #endif
 #ifdef HALO_N3DS_EXPERIMENTAL_PC_MENU_KEYS
 #include "units/unit_definitions.h"
@@ -119,6 +125,7 @@ static long menu_b30_fire_start;
 static long menu_b30_vehicle;
 static long menu_b30_weapon;
 static long menu_b30_initial_fired;
+/* Kevin Boggs: menu_keys_load - New3DS integration. */
 static int menu_keys_load(void)
 {
     static const struct { const char *name; unsigned int mask; } names[]={
@@ -137,16 +144,21 @@ static int menu_keys_load(void)
     };
     FILE *file=fopen("sdmc:/halo-source/menu-keys.txt","rb");
     char line[64],name[32],extra;
+#ifdef HALO_N3DS_SCENIC_TEXTURE
+    const long maximum_frame=6000;
+#else
+    const long maximum_frame=2400;
+#endif
     if(!file) return 1;
     while(fgets(line,sizeof(line),file)) {
         long frame;unsigned int mask=0;
         if(!strchr(line,'\n') && !feof(file)) {fclose(file);return 1;}
         if(sscanf(line,"capture %ld %c",&frame,&extra)==1) {
-            if(menu_key_capture_frame || frame<1 || frame>2400) {fclose(file);return 1;}
+            if(menu_key_capture_frame || frame<1 || frame>maximum_frame) {fclose(file);return 1;}
             menu_key_capture_frame=frame;
             continue;
         }
-        if(sscanf(line,"%ld %31s %c",&frame,name,&extra)!=2 || frame<1 || frame>2400 ||
+        if(sscanf(line,"%ld %31s %c",&frame,name,&extra)!=2 || frame<1 || frame>maximum_frame ||
            menu_key_event_count>=sizeof(menu_key_events)/sizeof(menu_key_events[0])) {fclose(file);return 1;}
         for(unsigned int i=0;i<sizeof(names)/sizeof(names[0]);++i)
             if(!strcmp(name,names[i].name)) {mask=names[i].mask;break;}
@@ -157,6 +169,7 @@ static int menu_keys_load(void)
     fclose(file);
     return failed;
 }
+/* Kevin Boggs: menu_keys_sample - New3DS integration. */
 static void menu_keys_sample(long frame,struct native_input_sample *sample)
 {
     for(unsigned int i=0;i<menu_key_event_count;++i) if(menu_key_events[i].frame==frame) {
@@ -187,6 +200,7 @@ static void menu_keys_sample(long frame,struct native_input_sample *sample)
         n3ds_log(message);
     }
 }
+/* Kevin Boggs: menu_keys_enter_b30_extra - New3DS integration. */
 static void menu_keys_enter_b30_extra(long frame,long unit)
 {
     if(menu_enter_b30_extra && unit!=NONE &&
@@ -248,6 +262,7 @@ static void menu_keys_enter_b30_extra(long frame,long unit)
         n3ds_log(detail);
     }
 }
+/* Kevin Boggs: menu_keys_try_b30_extra - New3DS integration. */
 static void menu_keys_try_b30_extra(long frame,long unit)
 {
     if(menu_try_b30_extra && unit!=NONE &&
@@ -330,6 +345,7 @@ static void menu_keys_try_b30_extra(long frame,long unit)
         n3ds_log(detail);
     }
 }
+/* Kevin Boggs: menu_keys_go_to_extra - New3DS integration. */
 static void menu_keys_go_to_extra(long unit)
 {
     if(!menu_go_to_extra || unit==NONE || !global_scenario ||
@@ -366,6 +382,7 @@ static void menu_keys_go_to_extra(long unit)
     }
     if(!found)n3ds_log("MENU KEYS: c20 extra location missing in all BSPs");
 }
+/* Kevin Boggs: menu_keys_go_to_b30_extra - New3DS integration. */
 static void menu_keys_go_to_b30_extra(long unit)
 {
     if(!menu_go_to_b30_extra || unit==NONE || !global_scenario ||
@@ -417,6 +434,7 @@ static void menu_keys_go_to_b30_extra(long unit)
     }
     if(!found)n3ds_log("MENU KEYS: b30 Rocket Warthog location missing in all BSPs");
 }
+/* Kevin Boggs: menu_keys_survey_extras - New3DS integration. */
 static void menu_keys_survey_extras(long unit)
 {
     if(!menu_survey_extras || unit==NONE || !global_scenario)return;
@@ -487,6 +505,7 @@ static void menu_keys_survey_extras(long unit)
 #ifdef HALO_N3DS_EXPERIMENTAL_PC_MATRIX
 /* Test-only runtime selection keeps map/mode sweeps on one identical binary.
  * A bounded two-token file lives on the isolated emulator SD, not in Git. */
+/* Kevin Boggs: pc_matrix_choice - New3DS integration. */
 static int pc_matrix_choice(char map[96],const char **mode)
 {
     static const char *const modes[]={"slayer","ctf","oddball","king","race"};
@@ -532,6 +551,7 @@ enum { ARSENAL_FIRST_FRAME=240, ARSENAL_STAGE_FRAMES=105, ARSENAL_COUNT=sizeof(a
 };
 static long arsenal_weapon=NONE,arsenal_vehicle=NONE,arsenal_initial_fire=NONE;
 static unsigned int arsenal_fire_passes,arsenal_failures;
+/* Kevin Boggs: arsenal_physical_fire_key - New3DS integration. */
 static unsigned int arsenal_physical_fire_key(int original_model)
 {
     if(original_model) return NATIVE_KEY_L;
@@ -540,7 +560,16 @@ static unsigned int arsenal_physical_fire_key(int original_model)
     n3ds_controls_get(&settings);
     return settings.swap_shoulders?NATIVE_KEY_R:NATIVE_KEY_ZR;
 }
+/* Kevin Boggs: arsenal_physical_grenade_key - New3DS integration. */
+static unsigned int arsenal_physical_grenade_key(int original_model)
+{
+    if(original_model)return NATIVE_KEY_R;
+    struct native_control_settings settings;
+    n3ds_controls_initialize();n3ds_controls_get(&settings);
+    return settings.swap_shoulders?NATIVE_KEY_L:NATIVE_KEY_ZL;
+}
 
+/* Kevin Boggs: arsenal_copy_front - New3DS integration. */
 static int arsenal_copy_front(const char *label)
 {
     extern FILE *capture_fopen(const char *,const char *) __asm__("fopen");
@@ -555,7 +584,22 @@ static int arsenal_copy_front(const char *label)
     failed|=fclose(source)!=0;failed|=fclose(capture)!=0;
     return failed;
 }
+/* Kevin Boggs: arsenal_copy_bottom - New3DS integration. */
+static int arsenal_copy_bottom(const char *label)
+{
+    extern FILE *capture_fopen(const char *,const char *) __asm__("fopen");
+    char path[96];byte buffer[4096];size_t bytes,total=0;
+    if(snprintf(path,sizeof(path),"sdmc:/halo-arsenal-bottom-%s.rgb",label)<0) return 1;
+    FILE *source=capture_fopen("sdmc:/halo-native-bottom-front.rgb","rb");
+    FILE *capture=capture_fopen(path,"wb");
+    if(!source || !capture){if(source)fclose(source);if(capture)fclose(capture);return 1;}
+    while((bytes=fread(buffer,1,sizeof(buffer),source))>0){if(fwrite(buffer,1,bytes,capture)!=bytes)break;total+=bytes;}
+    int failed=ferror(source) || bytes!=0 || total!=320*240*3;
+    failed|=fclose(source)!=0;failed|=fclose(capture)!=0;
+    return failed;
+}
 
+/* Kevin Boggs: arsenal_prepare_weapon - New3DS integration. */
 static int arsenal_prepare_weapon(unsigned int stage,long unit)
 {
     char message[256];
@@ -574,6 +618,7 @@ static int arsenal_prepare_weapon(unsigned int stage,long unit)
     return 0;
 }
 
+/* Kevin Boggs: arsenal_prepare_vehicle - New3DS integration. */
 static int arsenal_prepare_vehicle(long unit)
 {
     char message[192];
@@ -610,22 +655,145 @@ static int arsenal_prepare_vehicle(long unit)
     return 0;
 }
 
+/* Kevin Boggs: arsenal_after_render - New3DS integration. */
 static void arsenal_after_render(long frame,long unit)
 {
     char message[256];
     if(frame>=ARSENAL_FIRST_FRAME && frame<ARSENAL_VEHICLE_FRAME) {
         unsigned int stage=(unsigned int)(frame-ARSENAL_FIRST_FRAME)/ARSENAL_STAGE_FRAMES;
         unsigned int offset=(unsigned int)(frame-ARSENAL_FIRST_FRAME)%ARSENAL_STAGE_FRAMES;
+        if((stage==0 && (offset==30 || offset==38 ||
+                         (offset>=46 && offset<=48) || (offset>=54 && offset<=56) ||
+                         (offset>=64 && offset<=66) ||
+                         (offset>=31 && offset<=39 && (offset&1)))) ||
+           (stage==2 && offset>=31 && offset<=39 && (offset&1))) {
+            char label[40];
+            snprintf(label,sizeof(label),"impact-%s-%02u",stage==0?"ar":"shotgun",offset);
+            int failed=arsenal_copy_front(label);
+            snprintf(message,sizeof(message),"ARSENAL IMPACT CAPTURE: %s %s",label,failed?"FAILED":"saved");n3ds_log(message);
+            if(failed)++arsenal_failures;
+        }
+        if((stage==0 || stage==2) && (offset==35 || offset==45)) {
+            unsigned int count=0,shown=0;
+            for(long p=data_next_index(particle_data,NONE);p!=NONE;p=data_next_index(particle_data,p)) {
+                struct particle_datum *particle=particle_get(p);++count;
+                const char *name=tag_get_name(particle->definition_index);
+                if(name && (strstr(name,"impact") || strstr(name,"spark") || strstr(name,"bullet")) && shown++<16) {
+                    snprintf(message,sizeof(message),"ARSENAL IMPACT PARTICLE: stage=%u offset=%u tag=%s age=%.3f",
+                        stage,offset,name,particle->age);n3ds_log(message);
+                }
+            }
+            snprintf(message,sizeof(message),"ARSENAL IMPACT PARTICLES: stage=%u offset=%u total=%u matched=%u",
+                stage,offset,count,shown);n3ds_log(message);
+        }
+        if((stage==0 || stage==6) && (offset==35 || offset==60)) {
+            unsigned int count=0;
+            for(long c=data_next_index(contrail_data,NONE);c!=NONE;c=data_next_index(contrail_data,c)) {
+                struct contrail_datum *trail=datum_get(contrail_data,c);
+                if(count++>=16)break;
+                snprintf(message,sizeof(message),"ARSENAL TRAIL: stage=%u offset=%u name=%.105s points=%d,%d,%d,%d object=%08lx",
+                    stage,offset,tag_get_name(trail->definition_index),
+                    trail->contrail_point_counts[0],trail->contrail_point_counts[1],
+                    trail->contrail_point_counts[2],trail->contrail_point_counts[3],trail->object_index);
+                n3ds_log(message);
+            }
+            snprintf(message,sizeof(message),"ARSENAL TRAIL TOTAL: stage=%u offset=%u count=%u",stage,offset,count);n3ds_log(message);
+        }
+        if(stage==0 && offset>=30 && offset<=45) {
+            unsigned int trails=0,points=0;
+            for(long c=data_next_index(contrail_data,NONE);c!=NONE;c=data_next_index(contrail_data,c)) {
+                const struct contrail_datum *trail=datum_get(contrail_data,c);
+                if(!strcmp(tag_get_name(trail->definition_index),"weapons\\assault rifle\\bullet")) {
+                    ++trails;points+=trail->contrail_point_counts[0];
+                }
+            }
+            snprintf(message,sizeof(message),"ARSENAL AR TRACER: offset=%u trails=%u points=%u",offset,trails,points);
+            n3ds_log(message);
+        }
+        if(stage==7 && (offset==35 || offset==60)) {
+            unsigned int ordinary=0,systems=0;long types[16];unsigned int amounts[16],used=0;
+            for(long p=data_next_index(particle_data,NONE);p!=NONE;p=data_next_index(particle_data,p)) {
+                struct particle_datum *particle=particle_get(p);++ordinary;
+                unsigned int i=0;while(i<used && types[i]!=particle->definition_index)++i;
+                if(i==used && used<16){types[used]=particle->definition_index;amounts[used++]=0;}
+                if(i<used)++amounts[i];
+            }
+            for(long p=data_next_index(particle_systems,NONE);p!=NONE;p=data_next_index(particle_systems,p)) {
+                struct particle_system_datum *system=particle_system_get(p);++systems;
+                snprintf(message,sizeof(message),"ARSENAL FLAME SYSTEM: tag=%08lx name=%s object=%08lx cluster=%d count=%d,%d,%d,%d",
+                    system->definition_index,tag_get_name(system->definition_index),system->object_index,
+                    system->location.cluster_index,system->types[0].particle_count,
+                    system->types[1].particle_count,system->types[2].particle_count,
+                    system->types[3].particle_count);n3ds_log(message);
+            }
+            struct object_iterator projectiles;
+            object_iterator_new(&projectiles,_object_mask_projectile,0);
+            unsigned int owner_samples=0;
+            while(object_iterator_next(&projectiles)) {
+                struct object_datum *object=object_get(projectiles.index);
+                const struct object_definition *definition=object_definition_get(object->definition_index);
+                snprintf(message,sizeof(message),"ARSENAL FLAME PROJECTILE: object=%08lx tag=%08lx name=%s model=%08lx creation=%08lx attachments=%ld pos=%.2f,%.2f,%.2f vel=%.2f,%.2f,%.2f",
+                    projectiles.index,object->definition_index,tag_get_name(object->definition_index),
+                    definition->object.model.index,definition->object.creation_effect.index,definition->object.attachments.count,
+                    object->object.position.x,object->object.position.y,object->object.position.z,
+                    object->object.translational_velocity.i,object->object.translational_velocity.j,
+                    object->object.translational_velocity.k);n3ds_log(message);
+                if(!strcmp(tag_get_name(object->definition_index),"weapons\\flamethrower\\flame") && owner_samples++<4) {
+                    long parent=object->object.parent_object_index;
+                    const struct object_datum *owner=parent==NONE?NULL:object_try_and_get(parent);
+                    real_vector3d relative;
+                    vector_from_points3d(&render.camera.position,&object->object.position,&relative);
+                    snprintf(message,sizeof(message),"ARSENAL FLAME OWNER: proj=%08lx parent=%08lx parent_parent=%08lx local_unit=%08lx depth=%.2f camera=%.2f,%.2f,%.2f",
+                        projectiles.index,parent,owner?owner->object.parent_object_index:NONE,unit,
+                        dot_product3d(&relative,&render.camera.forward),render.camera.position.x,
+                        render.camera.position.y,render.camera.position.z);
+                    n3ds_log(message);
+                }
+            }
+            snprintf(message,sizeof(message),"ARSENAL FLAME FX: offset=%u particles=%u systems=%u types=%u",offset,ordinary,systems,used);n3ds_log(message);
+            for(unsigned i=0;i<used;++i) {snprintf(message,sizeof(message),"ARSENAL FLAME TYPE: count=%u tag=%08lx name=%s",amounts[i],types[i],tag_get_name(types[i]));n3ds_log(message);}
+            if(offset==35){int failed=arsenal_copy_front("flame-early");
+                snprintf(message,sizeof(message),"ARSENAL CAPTURE: flame-early %s",failed?"FAILED":"saved");n3ds_log(message);
+                if(failed)++arsenal_failures;}
+        }
         if(stage==6 && offset>=30 && offset<=45) {
             char label[32];snprintf(label,sizeof(label),"sniper-shot-%02u",offset);
             int failed=arsenal_copy_front(label);
             snprintf(message,sizeof(message),"ARSENAL FX CAPTURE: %s %s",label,failed?"FAILED":"saved");n3ds_log(message);
             if(failed) ++arsenal_failures;
         }
+        if(stage==2 && offset==20) {
+            int failed=arsenal_copy_front("grenade-char");
+            snprintf(message,sizeof(message),"ARSENAL CAPTURE: grenade-char %s",failed?"FAILED":"saved");n3ds_log(message);
+            if(failed)++arsenal_failures;
+        }
+        if(stage==1 && offset==20) {
+            int failed=arsenal_copy_front("blood-decal-diagnostic");
+            snprintf(message,sizeof(message),"ARSENAL CAPTURE: blood-decal-diagnostic %s",failed?"FAILED":"saved");n3ds_log(message);
+            if(failed)++arsenal_failures;
+        }
+        if(stage==1 && offset==35) {
+            int failed=arsenal_copy_front("grenade-natural");
+            snprintf(message,sizeof(message),"ARSENAL CAPTURE: grenade-natural %s",failed?"FAILED":"saved");n3ds_log(message);
+            if(failed)++arsenal_failures;
+        }
         if(offset==61) {
             int failed=arsenal_copy_front(arsenal_weapons[stage].label);
             snprintf(message,sizeof(message),"ARSENAL CAPTURE: %s %s",arsenal_weapons[stage].label,failed?"FAILED":"saved");n3ds_log(message);
             if(failed) ++arsenal_failures;
+            if(stage==0 && arsenal_copy_bottom("normal"))++arsenal_failures;
+        }
+        if(stage==0 && offset==83) {
+            int failed=arsenal_copy_front("scoreboard");
+            n3ds_log(failed?"ARSENAL CAPTURE: scoreboard FAILED":"ARSENAL CAPTURE: scoreboard saved");
+            if(failed) ++arsenal_failures;
+        }
+        if((stage==0 && offset==94) || (stage==1 && offset==83)) {
+            const char *label=stage==0?"stub-pressed":"score-pressed";
+            int failed=arsenal_copy_front(label);
+            failed|=arsenal_copy_bottom(label);
+            snprintf(message,sizeof(message),"ARSENAL CAPTURE: %s %s",label,failed?"FAILED":"saved");n3ds_log(message);
+            if(failed)++arsenal_failures;
         }
         if(offset==91) {
             struct weapon_datum *weapon=weapon_try_and_get(arsenal_weapon);
@@ -666,6 +834,7 @@ static void arsenal_after_render(long frame,long unit)
 #endif
 #ifdef HALO_N3DS_EXPERIMENTAL_PC_MAP_NAME
 /* Observe the original object placement and game rules without changing them. */
+/* Kevin Boggs: pc_multiplayer_object_trace - New3DS integration. */
 static void pc_multiplayer_object_trace(long frame)
 {
     static const struct { unsigned long mask; const char *label; } groups[] = {
@@ -960,6 +1129,10 @@ int halo_engine_boot(void)
         long long services_end=n3ds_engine_ticks();
         n3ds_frontend_trace("input");
         n3ds_input_platform_poll(&sample);
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_ARSENAL
+        if(frame+1==28) n3ds_controls_open(1);
+        if(frame+1==44) sample.held|=NATIVE_KEY_START;
+#endif
 #ifdef HALO_N3DS_TEXTURE_CLIP
         if(n3ds_main_is_solo_multiplayer() && game_time_get()>=120 && game_time_get()<360 &&
            player_input_enabled()) sample.circle_y=95;
@@ -970,6 +1143,12 @@ int halo_engine_boot(void)
            frame+1<menu_b30_fire_start+70)sample.held|=NATIVE_KEY_ZR;
         if(menu_b30_action_frame && frame+1>=menu_b30_action_frame &&
            frame+1<menu_b30_action_frame+3)sample.held|=NATIVE_KEY_X;
+#endif
+#ifdef HALO_N3DS_SCENIC_TEXTURE
+        /* Enter the base doorway once, then leave the camera still while
+         * queued textures and the scene settle for a matched comparison. */
+        if(n3ds_main_is_solo_multiplayer() && player_input_enabled() &&
+           frame+1>=450 && frame+1<675) sample.circle_y=110;
 #endif
 #ifdef HALO_N3DS_TEXTURE_CLIP_DEATH
         if(n3ds_main_is_solo_multiplayer() && player_input_enabled()) {
@@ -1008,8 +1187,89 @@ int halo_engine_boot(void)
         if(unit!=NONE && frame+1>=ARSENAL_FIRST_FRAME && frame+1<ARSENAL_VEHICLE_FRAME) {
             unsigned int stage=(unsigned int)(frame+1-ARSENAL_FIRST_FRAME)/ARSENAL_STAGE_FRAMES;
             unsigned int offset=(unsigned int)(frame+1-ARSENAL_FIRST_FRAME)%ARSENAL_STAGE_FRAMES;
+            static struct native_control_settings decal_test_saved;
+            if(stage==1 && offset==90) {
+                struct native_control_settings changed;
+                n3ds_controls_get(&decal_test_saved);changed=decal_test_saved;changed.decals=0;
+                n3ds_controls_set(&changed);
+                if(n3ds_controls_decals()) {++arsenal_failures;n3ds_log("ARSENAL DECALS OFF: setting failed");}
+                else n3ds_log("ARSENAL DECALS OFF: active");
+            }
+            if(stage==1 && offset==91) {
+                long definition=tag_loaded('deca',"effects\\decals\\bullet holes\\grenade char");
+                if(definition!=NONE && global_decal_data) {
+                    short before=global_decal_data->actual_count;
+                    real_point3d origin=render.camera.position;
+                    real_vector3d velocity=render.camera.forward,right;
+                    cross_product3d(&render.camera.forward,&render.camera.up,&right);
+                    normalize3d(&right);
+                    for(int axis=0;axis<3;++axis) {
+                        origin.n[axis]-=right.n[axis]*.45f;
+                        velocity.n[axis]*=12.f;
+                    }
+                    decal_new(definition,&origin,&velocity,.55f,FALSE,NONE,NULL);
+                    if(global_decal_data->actual_count!=before) {
+                        ++arsenal_failures;n3ds_log("ARSENAL DECALS OFF: creation was not suppressed");
+                    } else n3ds_log("ARSENAL DECALS OFF: creation suppressed");
+                }
+            }
+            if(stage==1 && offset==92) {
+                int failed=arsenal_copy_front("decals-off");
+                if(failed)++arsenal_failures;
+                n3ds_log(failed?"ARSENAL CAPTURE: decals-off FAILED":"ARSENAL CAPTURE: decals-off saved");
+            }
+            if(stage==1 && offset==94) {
+                n3ds_controls_set(&decal_test_saved);
+                if(!n3ds_controls_decals()) {++arsenal_failures;n3ds_log("ARSENAL DECALS ON: setting failed");}
+                else n3ds_log("ARSENAL DECALS ON: active");
+            }
+            if(stage==1 && offset==96) {
+                int failed=arsenal_copy_front("decals-on");
+                if(failed)++arsenal_failures;
+                n3ds_log(failed?"ARSENAL CAPTURE: decals-on FAILED":"ARSENAL CAPTURE: decals-on saved");
+            }
             if(offset==0) CHECK(!arsenal_prepare_weapon(stage,unit));
             if(offset>=30 && offset<69) sample.held|=arsenal_physical_fire_key(original_model);
+            if(stage==0 && offset==70) {
+                short total=unit_add_grenade_type_to_inventory(unit,0,2);
+                snprintf(message,sizeof(message),"ARSENAL GRENADE: granted total=%d",total);n3ds_log(message);
+                long blood=tag_loaded('deca',"effects\\decals\\blood splats\\blood splat");
+                if(blood!=NONE) {
+                    short before=global_decal_data?global_decal_data->actual_count:-1;
+                    real_vector3d velocity=render.camera.forward;
+                    real_vector3d right;
+                    real_point3d origin=render.camera.position;
+                    cross_product3d(&render.camera.forward,&render.camera.up,&right);
+                    normalize3d(&right);
+                    for(int axis=0;axis<3;++axis)origin.n[axis]-=right.n[axis]*.45f;
+                    for(int axis=0;axis<3;++axis)velocity.n[axis]*=12.f;
+                    decal_new(blood,&origin,&velocity,.6f,FALSE,NONE,NULL);
+                    snprintf(message,sizeof(message),"ARSENAL BLOOD DIAGNOSTIC: decals %d->%d origin=%.2f,%.2f,%.2f direction=%.2f,%.2f,%.2f",
+                        before,global_decal_data?global_decal_data->actual_count:-1,
+                        origin.x,origin.y,origin.z,velocity.i,velocity.j,velocity.k);n3ds_log(message);
+                }
+            }
+            if(stage==0 && offset>=72 && offset<75) sample.held|=arsenal_physical_grenade_key(original_model);
+            if(stage==1 && offset==45) {
+                long grenade=tag_loaded('deca',"effects\\decals\\bullet holes\\grenade char");
+                if(grenade!=NONE) {
+                    short before=global_decal_data?global_decal_data->actual_count:-1;
+                    real_vector3d velocity=render.camera.forward;
+                    real_vector3d right;
+                    real_point3d origin=render.camera.position;
+                    cross_product3d(&render.camera.forward,&render.camera.up,&right);
+                    normalize3d(&right);
+                    for(int axis=0;axis<3;++axis)origin.n[axis]-=right.n[axis]*.45f;
+                    for(int axis=0;axis<3;++axis)velocity.n[axis]*=12.f;
+                    decal_new(grenade,&origin,&velocity,.55f,FALSE,NONE,NULL);
+                    snprintf(message,sizeof(message),"ARSENAL GRENADE DIAGNOSTIC: decals %d->%d origin=%.2f,%.2f,%.2f direction=%.2f,%.2f,%.2f",
+                        before,global_decal_data?global_decal_data->actual_count:-1,
+                        origin.x,origin.y,origin.z,velocity.i,velocity.j,velocity.k);n3ds_log(message);
+                }
+            }
+            if(stage==0 && offset>=75 && offset<86) sample.held|=NATIVE_KEY_SELECT;
+            if(stage==0 && offset>=87 && offset<99){sample.held|=NATIVE_KEY_TOUCH;sample.touch_x=40;sample.touch_y=65;}
+            if(stage==1 && offset>=75 && offset<86){sample.held|=NATIVE_KEY_TOUCH;sample.touch_x=270;sample.touch_y=140;}
         }
         if(unit!=NONE && frame+1>=ARSENAL_VEHICLE_FRAME && frame+1<ARSENAL_VEHICLE_FRAME+110) {
             unsigned int offset=(unsigned int)(frame+1-ARSENAL_VEHICLE_FRAME);
@@ -1061,8 +1321,38 @@ int halo_engine_boot(void)
             }
 #endif
         }
+#ifdef HALO_N3DS_AUDIO_TRACE
+        if(frame+1==1200 && n3ds_main_is_solo_multiplayer()) {
+            struct data_iterator players;
+            int participants=0,kills=0,deaths=0;
+            data_iterator_new(&players,player_data);
+            const struct player_datum *entry;
+            while((entry=data_iterator_next(&players))!=NULL) {
+                ++participants;deaths+=entry->statistics.deaths;
+                for(unsigned int category=0;category<4;++category) kills+=entry->statistics.kills[category];
+            }
+            snprintf(message,sizeof(message),"BOT MATCH SCORE: players=%d kills=%d deaths=%d",participants,kills,deaths);
+            n3ds_log(message);
+        }
+#endif
         local=local_player_get_next(NONE);
         if(local!=NONE) {player=local_player_get_player_index(local);if(player!=NONE) unit=player_get(player)->unit_index;}
+#ifdef HALO_N3DS_SCENIC_TEXTURE
+        if(frame+1==5410 && unit!=NONE) {
+            real_point3d other_base={17.20f,-54.24f,-13.35f};
+            real_vector3d toward_outside={0.f,1.f,0.f};
+            object_set_position(unit,&other_base,&toward_outside,global_up3d);
+            player_control_set_facing(local,&toward_outside);
+            n3ds_log("SCENIC: moved local player to the opposite Timberland base exit");
+        }
+        if(frame+1==6010 && unit!=NONE) {
+            real_point3d first_base={-15.76f,54.22f,-13.35f};
+            real_vector3d toward_outside={0.f,-1.f,0.f};
+            object_set_position(unit,&first_base,&toward_outside,global_up3d);
+            player_control_set_facing(local,&toward_outside);
+            n3ds_log("SCENIC: returned to the first Timberland base exit");
+        }
+#endif
 #ifdef HALO_N3DS_TEXTURE_CLIP_DEATH
         if(unit!=NONE) SET_FLAG(object_get(unit)->object.damage_flags,_object_cannot_take_damage_bit,TRUE);
         if(unit!=NONE && (frame+1)%60==0) {
@@ -1269,6 +1559,28 @@ int halo_engine_boot(void)
         }
         #endif
         CHECK(!n3ds_engine_mission_render(unit,game_time_get()));
+#ifdef HALO_N3DS_SCENIC_TEXTURE
+        if(frame+1==5400 && unit!=NONE) {
+            const struct object_datum *scenic=object_get(unit);
+            snprintf(message,sizeof(message),"SCENIC FIRST: frame=%ld pos=%.2f,%.2f,%.2f",
+                frame+1,scenic->object.position.x,scenic->object.position.y,scenic->object.position.z);
+            n3ds_log(message);
+            CHECK(!n3ds_gpu_loading_capture(1));
+            n3ds_log("SCENIC FIRST: frame captured after three minutes without bots");
+        }
+        if(frame+1==6000 && unit!=NONE) {
+            const struct object_datum *scenic=object_get(unit);
+            snprintf(message,sizeof(message),"SCENIC SECOND: frame=%ld pos=%.2f,%.2f,%.2f",
+                frame+1,scenic->object.position.x,scenic->object.position.y,scenic->object.position.z);
+            n3ds_log(message);
+        }
+        if((frame+1==6300 || frame+1==6600) && unit!=NONE) {
+            unsigned int stage=frame+1==6300?2:3;
+            CHECK(!n3ds_gpu_loading_capture(stage));
+            snprintf(message,sizeof(message),"SCENIC FIRST ALTERNATE: frame=%ld captured",frame+1);
+            n3ds_log(message);
+        }
+#endif
 #ifdef HALO_N3DS_TEXTURE_CLIP
         if(n3ds_main_is_solo_multiplayer() && game_time_get()>=120 && game_time_get()<360 &&
            (game_time_get()-120)%4==0) {
@@ -1295,6 +1607,13 @@ int halo_engine_boot(void)
         }
 #endif
 #ifdef HALO_N3DS_EXPERIMENTAL_PC_ARSENAL
+        if(frame+1==40) {
+            snprintf(message,sizeof(message),"ARSENAL SETTINGS: active=%d widgets=%d menu=%d",
+                n3ds_controls_active(),ui_widgets_active(),main_menu_is_active());n3ds_log(message);
+            int failed=arsenal_copy_front("settings") | arsenal_copy_bottom("settings");
+            if(failed)++arsenal_failures;
+            n3ds_log(failed?"ARSENAL CAPTURE: settings FAILED":"ARSENAL CAPTURE: settings saved");
+        }
         if(unit!=NONE) arsenal_after_render(frame+1,unit);
 #endif
 #if !defined(HALO_N3DS_AUDIO_TRACE) && (defined(HALO_N3DS_PROBE_A10) || (defined(HALO_N3DS_BOT_TEST_COUNT) && !defined(HALO_N3DS_EXPERIMENTAL_PC_UI)) || (defined(HALO_N3DS_EXPERIMENTAL_PC_UI) && !defined(HALO_N3DS_EXPERIMENTAL_PC_ALL_MAPS)))

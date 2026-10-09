@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /* Built-in 3DS-family controller, exposed through Halo's original gamepad ABI.
  * There are no detachable controllers, Xbox memory units, keyboard, mouse, or
  * rumble motors. No Xbox service shims or input worker thread are necessary. */
@@ -170,6 +171,7 @@ void n3ds_engine_input_sample(const struct native_input_sample *sample)
     gamepad.sticks[1].x=clamp_stick((long)axis(sample->cstick_x)+touch_dx);
     gamepad.sticks[1].y=clamp_stick((long)axis(sample->cstick_y)+touch_dy);
 }
+/* Kevin Boggs: n3ds_input_touch_panel_pressed - New3DS integration. */
 int n3ds_input_touch_panel_pressed(void)
 {
     if(touch_scoreboard)return 4;

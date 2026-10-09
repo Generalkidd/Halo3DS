@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 #include <3ds.h>
 #include <citro3d.h>
 #include <string.h>
@@ -165,6 +166,7 @@ static int text_draw(const struct native_text_vertex *vertices,unsigned int quad
 }
 
 int n3ds_gpu_text_draw(const struct native_text_vertex v[4]) {return text_draw(v,1,0);}
+/* Kevin Boggs: n3ds_gpu_text_draw_many - New3DS integration. */
 int n3ds_gpu_text_draw_many(const struct native_text_vertex *v,unsigned int quads) {return text_draw(v,quads,0);}
 int n3ds_gpu_text_offscreen_draw(const struct native_text_vertex v[4]) {return text_draw(v,1,1);}
 int n3ds_gpu_text_offscreen_begin(float width,float height)

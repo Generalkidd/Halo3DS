@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /*
 MARKETING_AND_STRATEGIC_BUSINESS_DEVELOPMENT.C
 */

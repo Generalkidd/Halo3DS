@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /*
 PARTICLES.C
 
@@ -94,6 +95,10 @@ symbols in this file:
 #include "scenario/scenario.h"
 #include "sound/game_sound.h"
 #include "sound/sound_definitions.h"
+#ifdef HALO_N3DS
+#include "engine_combat_fx.h"
+#include "tag_files/tag_groups.h"
+#endif
 
 /* ---------- constants */
 
@@ -1048,7 +1053,8 @@ void particles_update(
 		struct particle_definition *definition = particle_definition_get(particle->definition_index);
 		boolean was_new = (particle->age == 0.0f);
 #ifdef HALO_N3DS
-  if(native_particle_cosmetic(particle,definition) && ++cosmetic_count>cosmetic_cap) {
+  if(native_particle_cosmetic(particle,definition) && ++cosmetic_count>cosmetic_cap &&
+     !n3ds_combat_fx_name(tag_get_name(particle->definition_index))) {
    datum_delete(particle_data,particle_index);++native_removed;continue;
   }
 #endif

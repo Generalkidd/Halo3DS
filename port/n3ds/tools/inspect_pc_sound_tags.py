@@ -1,3 +1,4 @@
+# New3DS integration additions by Kevin Boggs.
 """Inspect owner-supplied PC cache sound references without modifying the map."""
 import argparse
 import struct
@@ -6,6 +7,7 @@ from pathlib import Path
 BASE = 0x40440000
 
 
+# Kevin Boggs: inspect - New3DS integration.
 def inspect(path: Path, query: str):
     data = path.read_bytes()
     u32 = lambda at: struct.unpack_from("<I", data, at)[0]
@@ -16,6 +18,7 @@ def inspect(path: Path, query: str):
     count = u32(start + 12)
     instances = start + u32(start) - BASE
 
+    # Kevin Boggs: ptr - New3DS integration.
     def ptr(address, length):
         offset = start + address - BASE
         if address < BASE or offset < start or offset + length > end:

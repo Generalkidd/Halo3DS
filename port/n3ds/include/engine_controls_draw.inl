@@ -1,8 +1,10 @@
+/* New3DS integration additions by Kevin Boggs. */
 /* Native controller UI uses a tiny shared font and one white texel, keeping
  * text at the LCD's resolution independently of the world rendering scale. */
 static void *controls_white;
 static struct native_text_vertex controls_panel_vertices[4*128];
 static unsigned int controls_panel_quads;
+/* Kevin Boggs: controls_panel_trapezoid - New3DS integration. */
 static void controls_panel_trapezoid(float left_top,float right_top,float top,
  float left_bottom,float right_bottom,float bottom,unsigned int color)
 {
@@ -16,8 +18,10 @@ static void controls_panel_trapezoid(float left_top,float right_top,float top,
   for(int c=0;c<4;++c)v[i].color[c]=((color>>(8*c))&255)/255.f;
  }
 }
+/* Kevin Boggs: controls_panel_rect - New3DS integration. */
 static void controls_panel_rect(float x,float y,float w,float h,unsigned int color)
 {controls_panel_trapezoid(x,x+w,y,x,x+w,y+h,color);}
+/* Kevin Boggs: controls_panel_flush - New3DS integration. */
 static void controls_panel_flush(void)
 {
  if(!controls_panel_quads)return;
@@ -46,8 +50,10 @@ static void controls_text(float x,float y,const char *text,unsigned int color,in
   struct native_text_vertex q[4]={{{x,y},{1,1,1,1},{u,v}},{{x+8,y},{1,1,1,1},{u+1.f/16,v}},{{x+8,y+8},{1,1,1,1},{u+1.f/16,v+1.f/8}},{{x,y+8},{1,1,1,1},{u,v+1.f/8}}};n3ds_gpu_text_draw(q);
  }
 }
+/* Kevin Boggs: controls_radar_edge - New3DS integration. */
 static float controls_radar_edge(float y)
 {float d=y-116.f;return 160.f-sqrtf(80.f*80.f-d*d);}
+/* Kevin Boggs: controls_halo_touch_panel - New3DS integration. */
 static void controls_halo_touch_panel(int right,int lower,int pressed,int blank)
 {
  const unsigned int rim=pressed?0xffd7ec7e:0xffffb971;
@@ -78,6 +84,7 @@ static void controls_halo_touch_panel(int right,int lower,int pressed,int blank)
   if(pressed)controls_panel_rect(cx-2,cy-2,4,4,ink);
  }
 }
+/* Kevin Boggs: n3ds_gpu_match_touch_overlay - New3DS integration. */
 void n3ds_gpu_match_touch_overlay(int fps,int show_fps,int show_score,int pressed,
  const struct native_touch_meter *meters,int meter_count)
 {
@@ -104,6 +111,7 @@ void n3ds_gpu_match_touch_overlay(int fps,int show_fps,int show_score,int presse
  }
  n3ds_gpu_hud_screen(0);n3ds_gpu_texture_bind(0,saved);n3ds_gpu_world_state_restore();
 }
+/* Kevin Boggs: n3ds_gpu_match_scoreboard - New3DS integration. */
 void n3ds_gpu_match_scoreboard(const struct native_score_row *rows,int count)
 {
  void *saved=n3ds_gpu_texture_bound(0);n3ds_gpu_hud_screen(0);n3ds_gpu_hud_layout(0);
@@ -121,34 +129,39 @@ void n3ds_gpu_controls_entry(void)
 {
  void *saved=n3ds_gpu_texture_bound(0);n3ds_gpu_hud_screen(1);n3ds_gpu_hud_layout(0);
  controls_quad(24,202,272,30,0xff53391a,0);
- controls_text(32,214,"SELECT: Controller settings",0xffffffff,0);
+ controls_text(32,214,"SELECT: Game settings",0xffffffff,0);
  n3ds_gpu_hud_screen(0);n3ds_gpu_texture_bind(0,saved);n3ds_gpu_world_state_restore();
 }
 void n3ds_gpu_controls_draw(const struct native_control_settings *s,int selected,int original,int save_error)
 {
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_ARSENAL
+ static unsigned int settings_draw_trace;
+ if(settings_draw_trace++<3) n3ds_log("ARSENAL SETTINGS: draw called");
+#endif
  void *saved=n3ds_gpu_texture_bound(0);n3ds_gpu_hud_layout(0);n3ds_gpu_hud_screen(0);
  controls_quad(0,0,400,240,0xff24150c,1);
- controls_text(128,70,"CONTROLLER SETTINGS",0xffffffff,1);
+ controls_text(128,70,"GAME SETTINGS",0xffffffff,1);
  controls_text(64,104,"Use the touch screen or D-pad.",0xffe9d6aa,1);
  controls_text(96,128,"Press START to save and return.",0xffe9d6aa,1);
  controls_text(48,168,s->xbox_buttons?"Xbox layout selected":"Nintendo layout selected",0xffffffff,1);
  controls_text(64,188,original?"L: fire  R: grenade  Up: zoom":s->swap_shoulders?"R: fire  L: grenade  ZR: zoom":"ZR: fire  ZL: grenade  R: zoom",0xffe9d6aa,1);
  if(!original)controls_text(64,208,"PC high textures apply next map load.",0xffe9d6aa,1);
  n3ds_gpu_hud_screen(1);controls_quad(0,0,320,240,0xff24150c,0);
- controls_text(84,16,"CONTROLLER SETTINGS",0xffffffff,0);
- const char *labels[]={"C-stick aim","Touch aim","ABXY layout","Swap shoulders","PC textures","Swap X/Y","Show FPS"};
- for(int row=0;row<(original?5:7);++row){int field=original && row>=3?row+2:row;
-  unsigned int color=0xffffffff;float y=24+row*23;
-  controls_quad(12,y,296,21,selected==row?0xff674826:0xff35251a,0);
-  controls_text(20,y+7,labels[field],color,0);char value[32];
+ controls_text(108,16,"GAME SETTINGS",0xffffffff,0);
+ const char *labels[]={"C-stick aim","Touch aim","ABXY layout","Swap shoulders","PC textures","Swap X/Y","Show FPS","Decals"};
+ for(int row=0;row<(original?6:8);++row){int field=original && row>=3?row+2:row;
+  unsigned int color=0xffffffff;float y=24+row*20;
+  controls_quad(12,y,296,19,selected==row?0xff674826:0xff35251a,0);
+  controls_text(20,y+6,labels[field],color,0);char value[32];
   if(field<2)snprintf(value,sizeof(value),"%u%%",field?s->touch:s->cstick);
   else snprintf(value,sizeof(value),"%s",field==2?(s->xbox_buttons?"Xbox":"Nintendo"):
       field==3?(s->swap_shoulders?"On":"Off"):
       field==4?(s->high_textures?"128+mip":"64"):
-      field==5?(s->swap_xy?"On":"Off"):(s->show_fps?"On":"Off"));
-  controls_text(164,y+7,value,color,0);
-  controls_quad(242,y+1,28,19,0xff735333,0);controls_quad(274,y+1,28,19,0xff735333,0);
-  controls_text(252,y+7,"-",color,0);controls_text(284,y+7,"+",color,0);
+      field==5?(s->swap_xy?"On":"Off"):
+      field==6?(s->show_fps?"On":"Off"):(s->decals?"On":"Off"));
+  controls_text(164,y+6,value,color,0);
+  controls_quad(242,y+1,28,17,0xff735333,0);controls_quad(274,y+1,28,17,0xff735333,0);
+  controls_text(252,y+6,"-",color,0);controls_text(284,y+6,"+",color,0);
  }
  controls_text(16,188,save_error?"Save failed. START retry / B cancel":"Up/down: select  Left/right: change",save_error?0xff70a0ff:0xffe9d6aa,0);
  controls_quad(16,202,134,30,0xff53391a,0);controls_quad(170,202,134,30,0xff674826,0);
@@ -156,6 +169,7 @@ void n3ds_gpu_controls_draw(const struct native_control_settings *s,int selected
  n3ds_gpu_hud_screen(0);n3ds_gpu_texture_bind(0,saved);n3ds_gpu_world_state_restore();
 }
 #ifdef HALO_N3DS_PC_LOCAL_MENU
+/* Kevin Boggs: n3ds_gpu_pc_local_menu - New3DS integration. */
 void n3ds_gpu_pc_local_menu(int map,int mode,int bots,int difficulty,int weapon_set,int vehicle_choice,int page,int field,int error,int high_textures,int original)
 {
  static const char *const maps[]={"Beaver Creek","Blood Gulch","Boarding Action","Derelict","Chill Out","Damnation","Danger Canyon","Death Island","Gephyrophobia","Hang 'Em High","Ice Fields","Infinity","Longest","Prisoner","Chiron TL-34","Rat Race","Sidewinder","Timberland","Wizard"};

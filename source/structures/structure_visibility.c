@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /*
 STRUCTURE_VISIBILITY.C
 

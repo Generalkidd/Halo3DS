@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /* Native 2D Chicago material path: up to four maps (four-map materials use a bounded UV bake), original UV animation,
  * current/next/multiply/double-multiply/add combiners and framebuffer blending.
  * Additive angular fade uses the original camera-forward/posed-normal term. */
@@ -132,6 +133,7 @@ void n3ds_generic_model_draw(const struct shader *,short,const struct rasterizer
 /* Chicago type 1 uses a reflection cube in map 0. Evaluate its authored
  * combiner at posed vertices until the native path has 3D cube coordinates.
  * This keeps every map, animation and transparent blend in the PC diagnostic. */
+/* Kevin Boggs: chicago_cube_model_draw - New3DS integration. */
 static int chicago_cube_model_draw(const struct chicago_shader *material,short permutation,
     const struct rasterizer_model_begin_parameters *parameters,const void *data,
     unsigned int count,short type,const unsigned short *indices,unsigned int index_count)

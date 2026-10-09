@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /* 24 DSP voices, four bounded PCM buffers each. Pure decoding can run on a
  * second core. Voice ownership and all DSP submissions remain on the game
  * thread, joined before any source sample may be unpinned or map unloaded. */
@@ -23,6 +24,7 @@ static int exit_registered;
 void n3ds_log(const char *);
 #ifdef HALO_N3DS_AUDIO_TRACE
 static unsigned int audio_trace_lines;
+/* Kevin Boggs: audio_trace - New3DS integration. */
 static void audio_trace(const char *event,int channel,unsigned int detail,float a,float b)
 {
     if(audio_trace_lines++>=100) return;

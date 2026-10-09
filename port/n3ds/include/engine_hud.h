@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 #ifndef N3DS_ENGINE_HUD_H
 #define N3DS_ENGINE_HUD_H
 #include "engine_text.h"

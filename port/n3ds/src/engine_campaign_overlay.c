@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 #include "engine_campaign_overlay.h"
 #include "cseries/cseries.h"
 #include "cache_reader.h"
@@ -39,12 +40,14 @@ static struct n3ds_cache_view pc_view;
 static struct cache_file_tag_instance *extended;
 static int active;
 
+/* Kevin Boggs: same_tag - New3DS integration. */
 static int same_tag(const struct cache_file_tag_instance *tag,
     long group, const char *name)
 {
     return tag->group_tag==group && tag->name && !_stricmp(tag->name,name);
 }
 
+/* Kevin Boggs: find_tag - New3DS integration. */
 static int find_tag(const struct n3ds_cache_view *view,long group,const char *name)
 {
     for(long i=0;i<view->tag_header->tag_count;++i)
@@ -52,6 +55,7 @@ static int find_tag(const struct n3ds_cache_view *view,long group,const char *na
     return -1;
 }
 
+/* Kevin Boggs: pc_pointer - New3DS integration. */
 static int pc_pointer(const void *pointer,unsigned long bytes)
 {
     uintptr_t address=(uintptr_t)pointer,base=(uintptr_t)pc_view.tags;
@@ -59,6 +63,7 @@ static int pc_pointer(const void *pointer,unsigned long bytes)
         bytes<=pc_view.tag_bytes-(address-base);
 }
 
+/* Kevin Boggs: mapped_datum - New3DS integration. */
 static uint32_t mapped_datum(const struct n3ds_cache_view *xbox,
     const unsigned short *pc_indices,uint32_t word)
 {
@@ -173,9 +178,12 @@ int n3ds_campaign_overlay_active(void) {return active;}
 
 #else
 
+/* Kevin Boggs: n3ds_campaign_overlay_open - New3DS integration. */
 int n3ds_campaign_overlay_open(struct n3ds_cache_view *xbox,const char *map_name)
 {(void)xbox;(void)map_name;return 0;}
+/* Kevin Boggs: n3ds_campaign_overlay_close - New3DS integration. */
 void n3ds_campaign_overlay_close(void) {}
+/* Kevin Boggs: n3ds_campaign_overlay_active - New3DS integration. */
 int n3ds_campaign_overlay_active(void) {return 0;}
 
 #endif

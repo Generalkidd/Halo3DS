@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /* PC gbxmodel parts to the original model layout, with buffers resident in
  * the bounded tag arena. Only used by the opt-in PC runtime diagnostic. */
 #include "cseries.h"
@@ -74,6 +75,7 @@ _Static_assert(sizeof(struct model_vertex_uncompressed) == 0x44, "model vertex l
 
 struct totals {uint32_t models, parts, vertices, indices;};
 
+/* Kevin Boggs: finite_vector - New3DS integration. */
 static int finite_vector(const real_vector3d *v)
 {
     return isfinite(v->i) && isfinite(v->j) && isfinite(v->k) &&
@@ -81,6 +83,7 @@ static int finite_vector(const real_vector3d *v)
         fabsf(v->k) <= 1.005f;
 }
 
+/* Kevin Boggs: walk - New3DS integration. */
 static int walk(uint8_t *tags, uint32_t used, uint32_t limit,
     const struct custom_edition_load_report *report, const uint8_t *model_data,
     uint8_t *geometry_storage, uint32_t *cursor, struct totals *totals, int mutate)
@@ -210,6 +213,7 @@ static int walk(uint8_t *tags, uint32_t used, uint32_t limit,
     return 1;
 }
 
+/* Kevin Boggs: n3ds_pc_models_convert - New3DS integration. */
 int n3ds_pc_models_convert(uint8_t *tags, uint32_t used, uint32_t capacity,
     const struct custom_edition_load_report *report,
     const struct cache_file_source *map, void **geometry_owner,

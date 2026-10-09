@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /*
 UI_WIDGET.C
 
@@ -2847,6 +2848,7 @@ int n3ds_ui_pause_menu_active(void)
         !strcmp(name,"ui\\shell\\solo_game\\pause_game\\pause_game_split_screen") ||
         !strcmp(name,"ui\\shell\\multiplayer_game\\pause_game\\1p_pause_game"));
 }
+/* Kevin Boggs: n3ds_ui_difficulty_menu_active - New3DS integration. */
 int n3ds_ui_difficulty_menu_active(void)
 {
     struct widget_instance *root=widget_globals.active_widgets[0];

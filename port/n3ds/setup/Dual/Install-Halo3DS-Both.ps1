@@ -1,3 +1,4 @@
+# New3DS integration additions by Kevin Boggs.
 <# Install the owner's Xbox and PC retail data to separate Halo3DS launchers. #>
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(

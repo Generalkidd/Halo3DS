@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 #ifndef HALO_N3DS_ENGINE_TEXT_H
 #define HALO_N3DS_ENGINE_TEXT_H
 struct native_text_vertex { float position[2],color[4],uv[2]; };

@@ -1,3 +1,4 @@
+# New3DS integration additions by Kevin Boggs.
 """Audit a PC tag's dependency closure against an expanded Xbox campaign map.
 
 This is a read-only planning aid. A matching name does not prove that two tag
@@ -13,10 +14,12 @@ import struct
 from pathlib import Path
 
 
+# Kevin Boggs: u32 - New3DS integration.
 def u32(data: mmap.mmap, offset: int) -> int:
     return struct.unpack_from("<I", data, offset)[0]
 
 
+# Kevin Boggs: inventory - New3DS integration.
 def inventory(data: mmap.mmap, version: int, base: int) -> tuple[int, int, list[dict]]:
     if len(data) < 2048 or data[:4] != b"daeh" or data[2044:2048] != b"toof":
         raise ValueError("Not a complete Halo cache")
@@ -52,6 +55,7 @@ def inventory(data: mmap.mmap, version: int, base: int) -> tuple[int, int, list[
     return offset, size, result
 
 
+# Kevin Boggs: closure - New3DS integration.
 def closure(data: mmap.mmap, arena_offset: int, arena_size: int,
             tags: list[dict], root: int) -> tuple[set[int], dict[int, set[int]], dict[int, int]]:
     by_datum = {tag["datum"]: tag["index"] for tag in tags}
@@ -76,6 +80,7 @@ def closure(data: mmap.mmap, arena_offset: int, arena_size: int,
     return found, references, ends
 
 
+# Kevin Boggs: survey - New3DS integration.
 def survey(pc_path: Path, xbox_path: Path, group_name: str, tag_name: str) -> dict:
     with pc_path.open("rb") as pc_file, xbox_path.open("rb") as xbox_file, \
             mmap.mmap(pc_file.fileno(), 0, access=mmap.ACCESS_READ) as pc, \
@@ -122,6 +127,7 @@ def survey(pc_path: Path, xbox_path: Path, group_name: str, tag_name: str) -> di
         }
 
 
+# Kevin Boggs: main - New3DS integration.
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("pc_map", type=Path)

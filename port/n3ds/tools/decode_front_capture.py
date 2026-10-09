@@ -1,3 +1,4 @@
+# New3DS integration additions by Kevin Boggs.
 """Turn a raw 3DS front-buffer capture into a correctly oriented PNG.
 
 The historical .rgb filename describes three bytes per pixel, but libctru's
@@ -10,6 +11,7 @@ from pathlib import Path
 from PIL import Image
 
 
+# Kevin Boggs: main - New3DS integration.
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("capture", type=Path)

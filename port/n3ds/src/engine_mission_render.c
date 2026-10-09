@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /* Original director/observer camera through the established opaque BSP backend.
  * Original object/weapon submission is connected; HUD and full shading remain. */
 #include "cseries.h"
@@ -12,6 +13,7 @@
 #include "engine_cache.h"
 #include "cache_reader.h"
 #include "engine_renderer.h"
+#include "engine_widgets.h"
 #include "engine_models.h"
 #include "engine_hud.h"
 #include "engine_transparent.h"
@@ -24,6 +26,12 @@
 #include "interface/first_person_weapons.h"
 #include "interface/ui_widget.h"
 #include "cache/texture_cache.h"
+#include "cache_file_format.h"
+#include "effects/particles.h"
+#include "objects/objects.h"
+#include "game/players.h"
+#include "game/game.h"
+#include "items/weapons.h"
 void set_window_camera_values(struct render_window *window,const struct observer_result *observer);
 void n3ds_log(const char *message);
 void texture_cache_flush(void);
@@ -33,6 +41,8 @@ void build_sprite_prepare_for_window(void);
 void render_particles(void);
 void particle_systems_render(void);
 void render_contrails_normal(void);
+void n3ds_decals_draw_visible(void);
+boolean rasterizer_set_texture_direct(short stage,long group_index,short bitmap_index);
 void n3ds_hud_draw_screen(void);
 void n3ds_menu_draw_screen(void);
 void n3ds_cinematic_draw_screen(void);
@@ -58,6 +68,148 @@ struct mission_batch {
     unsigned long clusters[MAXIMUM_CLUSTERS_PER_STRUCTURE/32];int clusters_valid;
 };
 static unsigned int batch_visible,batch_culled;
+/* PC flamethrower projectiles have neither model nor attachment. Its authored
+ * jet effect only flashes at the muzzle, leaving the simulated stream invisible.
+ * Place that same map's flash sprite along the live projectile path. No extra
+ * simulation objects or bitmap allocations are created. */
+static struct native_widget_vertex flame_vertices[64*6];
+static unsigned int flame_tag_generation;
+static long flame_bitmap=NONE;
+/* Kevin Boggs: resolve the owner's map bitmap after each tag generation change. */
+/* Kevin Boggs: flame_stream_lookup - New3DS integration. */
+static void flame_stream_lookup(void)
+{
+    unsigned int generation=n3ds_engine_tag_generation();
+    if(flame_tag_generation==generation) return;
+    flame_tag_generation=generation;flame_bitmap=NONE;
+    const struct n3ds_cache_view *view=n3ds_engine_cache_view(0);
+    if(!view || !view->tag_header || !view->instances) return;
+    for(long i=0;i<view->tag_header->tag_count;++i) {
+        const struct cache_file_tag_instance *tag=view->instances+i;
+        if(tag->group_tag!=PARTICLE_TAG || !tag->name ||
+           strcmp(tag->name,"weapons\\flamethrower\\effects\\flash h flame")) continue;
+        const struct particle_definition *particle=particle_definition_get(tag->tag_index);
+        if(particle) flame_bitmap=particle->bitmap.index;
+        break;
+    }
+}
+/* Kevin Boggs: display the original simulated flamethrower projectiles as a visible jet. */
+/* Kevin Boggs: flame_stream_draw - New3DS integration. */
+static void flame_stream_draw(void)
+{
+    flame_stream_lookup();
+    if(flame_bitmap==NONE) return;
+    real_vector3d right;
+    cross_product3d(&render.camera.forward,&render.camera.up,&right);
+    if(normalize3d(&right)<=0) return;
+    struct object_iterator iterator;
+    object_iterator_new(&iterator,_object_mask_projectile,0);
+    unsigned int used=0;
+    unsigned int flame_count=0;
+    float local_depth=0.f;
+    int local_near=0,local_firing=0;
+    long player=local_player_get_player_index(0);
+    long local_unit=player==NONE?NONE:player_get(player)->unit_index;
+    const struct unit_datum *unit=local_unit==NONE?NULL:unit_try_and_get(local_unit);
+    if(unit && unit->unit.current_weapon_index>=0 &&
+       unit->unit.current_weapon_index<MAXIMUM_WEAPONS_PER_UNIT) {
+        long weapon_index=unit->unit.weapon_object_indices[unit->unit.current_weapon_index];
+        const struct weapon_datum *weapon=weapon_index==NONE?NULL:weapon_try_and_get(weapon_index);
+        const char *weapon_name=weapon?tag_get_name(weapon->definition_index):NULL;
+        local_firing=weapon_name && !strcmp(weapon_name,"weapons\\flamethrower\\flamethrower") &&
+            game_time_get()-weapon->weapon.game_time_last_fired<=2;
+    }
+    static const unsigned char order[6]={0,1,2,0,2,3};
+    while(object_iterator_next(&iterator)) {
+        const struct object_datum *projectile=object_get(iterator.index);
+        const char *name=tag_get_name(projectile->definition_index);
+        if(!name || strcmp(name,"weapons\\flamethrower\\flame")) continue;
+        ++flame_count;
+        if(local_firing) {
+            real_vector3d relative;
+            vector_from_points3d(&render.camera.position,&projectile->object.position,&relative);
+            float depth=dot_product3d(&relative,&render.camera.forward);
+            float lateral_squared=dot_product3d(&relative,&relative)-depth*depth;
+            if(depth>0.f && depth<6.f && lateral_squared<.81f) {
+                if(depth>local_depth) local_depth=depth;
+                if(depth<1.3f) local_near=1;
+            }
+        }
+        /* The original projectile lives for only a few frames. Velocity is
+         * distance per simulation tick; short samples behind it make its
+         * travel readable at 240p. */
+        for(unsigned int segment=0;segment<2;++segment) {
+            real_point3d center=projectile->object.position;
+            for(int axis=0;axis<3;++axis)
+                center.n[axis]-=projectile->object.translational_velocity.n[axis]*(.55f*segment);
+            real_vector3d from_camera;
+            vector_from_points3d(&render.camera.position,&center,&from_camera);
+            if(dot_product3d(&from_camera,&from_camera)<.64f) continue;
+            const float radius=.11f;
+            for(unsigned int corner=0;corner<6;++corner) {
+                struct native_widget_vertex *v=flame_vertices+used+corner;
+                int index=order[corner];
+                float x=(index==0 || index==3)?-radius:radius;
+                float y=(index<2)?-radius:radius;
+                for(int axis=0;axis<3;++axis)
+                    v->position[axis]=center.n[axis]+right.n[axis]*x+render.camera.up.n[axis]*y;
+                v->color[0]=1.f;v->color[1]=.5f;v->color[2]=.1f;
+                v->color[3]=.11f-.03f*segment;
+                v->uv[0]=(index==0 || index==3)?0.f:1.f;
+                v->uv[1]=(index<2)?1.f:0.f;
+            }
+            used+=6;
+            if(used==NUMBEROF(flame_vertices)) {
+                if(rasterizer_set_texture_direct(0,flame_bitmap,0))
+                    n3ds_gpu_effect_draw(flame_vertices,used,NATIVE_BLEND_ADD,0,6,0);
+                used=0;
+            }
+        }
+    }
+    if(used && rasterizer_set_texture_direct(0,flame_bitmap,0))
+        n3ds_gpu_effect_draw(flame_vertices,used,NATIVE_BLEND_ADD,0,6,0);
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_ARSENAL
+    if(flame_count && render.frame_index%15==0) {
+        char message[128];
+        snprintf(message,sizeof(message),"FLAME RAY: projectiles=%u local_fire=%d near=%d depth=%.2f time=%ld",
+            flame_count,local_firing,local_near,local_depth,game_time_get());
+        n3ds_log(message);
+    }
+#endif
+    /* Fill the gap from the local muzzle to its simulated projectile front.
+     * These quads are visual only and vanish as soon as the original stream
+     * stops. Other players' projectiles never originate at our camera. */
+    if(local_near && local_depth>1.3f) {
+        if(local_depth>4.5f)local_depth=4.5f;
+        unsigned int count=0;
+        for(float depth=1.05f;depth<local_depth && count+6<=NUMBEROF(flame_vertices);depth+=.22f) {
+            float fraction=depth/local_depth;
+            float radius=.13f+.08f*fraction;
+            float horizontal=.48f*(1.f-fraction);
+            float vertical=-.30f*(1.f-fraction);
+            float jitter=((count/6)%3==0?.05f:(count/6)%3==1?-.04f:.015f)*fraction;
+            real_point3d center=render.camera.position;
+            for(int axis=0;axis<3;++axis)
+                center.n[axis]+=render.camera.forward.n[axis]*depth+
+                    right.n[axis]*(horizontal+jitter)+render.camera.up.n[axis]*vertical;
+            for(unsigned int corner=0;corner<6;++corner) {
+                struct native_widget_vertex *v=flame_vertices+count+corner;
+                int index=order[corner];
+                float x=(index==0 || index==3)?-radius:radius;
+                float y=(index<2)?-radius:radius;
+                for(int axis=0;axis<3;++axis)
+                    v->position[axis]=center.n[axis]+right.n[axis]*x+render.camera.up.n[axis]*y;
+                v->color[0]=1.f;v->color[1]=.42f;v->color[2]=.055f;
+                v->color[3]=.36f-.10f*fraction;
+                v->uv[0]=(index==0 || index==3)?0.f:1.f;
+                v->uv[1]=(index<2)?1.f:0.f;
+            }
+            count+=6;
+        }
+        if(count && rasterizer_set_texture_direct(0,flame_bitmap,0))
+            n3ds_gpu_effect_draw(flame_vertices,count,NATIVE_BLEND_ADD,0,6,0);
+    }
+}
 /* A box is outside only when its nearest point is beyond one side plane.
  * The per-eye rasterizer frustum already includes the stereo projection shift.
  * Large boxes spanning the frustum are retained; no centroid-only rejection. */
@@ -376,10 +528,12 @@ int n3ds_engine_mission_render(long unit_index,long time)
     n3ds_render_objects_with_environment(draw_mission_environment,&window);
     stamp[3]=n3ds_engine_ticks();stamp[2]=stamp[3]-mission_environment_ticks;
     long long effect_stamp=stamp[3],effect_next;
+    n3ds_decals_draw_visible();
     render_particles();
     effect_next=n3ds_engine_ticks();effect_profile[0]+=effect_next-effect_stamp;effect_stamp=effect_next;
     particle_systems_render();
     effect_next=n3ds_engine_ticks();effect_profile[1]+=effect_next-effect_stamp;effect_stamp=effect_next;
+    flame_stream_draw();
     render_contrails_normal();
     effect_next=n3ds_engine_ticks();effect_profile[2]+=effect_next-effect_stamp;effect_stamp=effect_next;
     n3ds_transparent_draw_queued();

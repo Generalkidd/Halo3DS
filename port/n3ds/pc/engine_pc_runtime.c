@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /* Diagnostic PC v7 tag handoff for discovering the remaining runtime ABI
  * differences. This unit is inert in ordinary launcher builds. */
 #include "cseries.h"
@@ -41,6 +42,7 @@ static struct {
 } pc;
 static int pc_overlay_mode;
 
+/* Kevin Boggs: read_at - New3DS integration. */
 static int read_at(void *context, uint32_t offset, uint32_t size, void *buffer)
 {
     FILE *stream = context;
@@ -49,6 +51,7 @@ static int read_at(void *context, uint32_t offset, uint32_t size, void *buffer)
         fread(buffer, 1, size, stream) == size;
 }
 
+/* Kevin Boggs: open_file - New3DS integration. */
 static int open_file(struct pc_file *file, const char *path)
 {
     long size;
@@ -65,12 +68,14 @@ static int open_file(struct pc_file *file, const char *path)
     return 1;
 }
 
+/* Kevin Boggs: close_file - New3DS integration. */
 static void close_file(struct pc_file *file)
 {
     if (file->stream) fclose(file->stream);
     memset(file, 0, sizeof(*file));
 }
 
+/* Kevin Boggs: valid_name - New3DS integration. */
 static int valid_name(const char *name)
 {
     if (!name || !*name || strlen(name) > 31) return 0;
@@ -295,19 +300,29 @@ int n3ds_pc_bsp_load(struct n3ds_cache_view *view,
 #else
 /* Keep the source in the normal manifest while making every symbol inert in
  * regular builds. Linker garbage collection omits the diagnostic unit. */
+/* Kevin Boggs: n3ds_pc_map_available - New3DS integration. */
 int n3ds_pc_map_available(const char *name) { (void)name; return 0; }
+/* Kevin Boggs: n3ds_pc_tags_open - New3DS integration. */
 int n3ds_pc_tags_open(const char *name, struct n3ds_cache_view *view)
 { (void)name; (void)view; return 1; }
+/* Kevin Boggs: n3ds_pc_tags_close - New3DS integration. */
 void n3ds_pc_tags_close(void) {}
+/* Kevin Boggs: n3ds_pc_tags_active - New3DS integration. */
 int n3ds_pc_tags_active(void) { return 0; }
+/* Kevin Boggs: n3ds_pc_tags_loaded - New3DS integration. */
 int n3ds_pc_tags_loaded(void) { return 0; }
+/* Kevin Boggs: n3ds_pc_tags_use_overlay - New3DS integration. */
 void n3ds_pc_tags_use_overlay(void) {}
+/* Kevin Boggs: n3ds_pc_overlay_contains - New3DS integration. */
 int n3ds_pc_overlay_contains(const void *address, unsigned long bytes)
 { (void)address; (void)bytes; return 0; }
+/* Kevin Boggs: n3ds_pc_cache_read - New3DS integration. */
 int n3ds_pc_cache_read(unsigned long offset, unsigned long bytes, void *destination)
 { (void)offset; (void)bytes; (void)destination; return 0; }
+/* Kevin Boggs: n3ds_pc_cache_range_valid - New3DS integration. */
 int n3ds_pc_cache_range_valid(unsigned long offset, unsigned long bytes)
 { (void)offset; (void)bytes; return 0; }
+/* Kevin Boggs: n3ds_pc_bsp_load - New3DS integration. */
 int n3ds_pc_bsp_load(struct n3ds_cache_view *view,
     const struct scenario_structure_bsp_reference *reference)
 { (void)view; (void)reference; return 1; }

@@ -1,3 +1,4 @@
+# New3DS integration additions by Kevin Boggs.
 <#
 Extract owner-supplied Halo CE PC retail maps from ISO9660/Joliet, including
 FilesCab cabinets. No disc is mounted, no setup executable is run, and archive
@@ -28,6 +29,7 @@ if (!(Test-Path -LiteralPath $sevenZip -PathType Leaf)) {
     $sevenZip = $command.Source
 }
 
+# Kevin Boggs: Get-ArchiveMembers - New3DS integration.
 function Get-ArchiveMembers([string]$archive) {
     $lines = @(& $sevenZip l -slt $archive 2>$null)
     if ($LASTEXITCODE -ne 0) { throw "Could not read disc archive: $archive" }
@@ -42,6 +44,7 @@ function Get-ArchiveMembers([string]$archive) {
     return $members
 }
 
+# Kevin Boggs: Copy-ArchiveMember - New3DS integration.
 function Copy-ArchiveMember([string]$archive, [string]$member, [string]$destination) {
     if ($member -notmatch '^[a-zA-Z0-9 _./\\;+-]+$' -or
         @($member -split '[/\\]' | Where-Object { $_ -eq '..' }).Count) {

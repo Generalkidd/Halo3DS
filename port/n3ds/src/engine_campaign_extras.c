@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 #include "engine_campaign_options.h"
 #include "cseries/cseries.h"
 #include "main/main.h"
@@ -34,17 +35,20 @@ static const struct campaign_weapon_spawn rocket_warthog_spawn={
 struct campaign_extras_state {unsigned int placed_mask;};
 static struct campaign_extras_state *state;
 
+/* Kevin Boggs: n3ds_campaign_extras_allocate_state - New3DS integration. */
 void n3ds_campaign_extras_allocate_state(void)
 {
     state=game_state_malloc("campaign extras",NULL,sizeof(*state));
     state->placed_mask=0;
 }
 
+/* Kevin Boggs: n3ds_campaign_extras_for_new_map - New3DS integration. */
 void n3ds_campaign_extras_for_new_map(void)
 {
     if(state)state->placed_mask=0;
 }
 
+/* Kevin Boggs: object_at_spawn - New3DS integration. */
 static long object_at_spawn(long definition,unsigned long type_mask,
     const struct campaign_weapon_spawn *spawn)
 {
@@ -60,6 +64,7 @@ static long object_at_spawn(long definition,unsigned long type_mask,
     return NONE;
 }
 
+/* Kevin Boggs: n3ds_campaign_extras_update - New3DS integration. */
 void n3ds_campaign_extras_update(long player_unit)
 {
     const char *full=main_get_map_name();

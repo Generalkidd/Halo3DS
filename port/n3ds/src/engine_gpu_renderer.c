@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 #include <3ds.h>
 #include <citro3d.h>
 #include <string.h>
@@ -2702,6 +2703,7 @@ int n3ds_gpu_readback(unsigned int *pixels,unsigned int count)
 }
 
 #if defined(HALO_N3DS_TEXTURE_CLIP) || defined(HALO_N3DS_TEXTURE_CLIP_DEATH)
+/* Kevin Boggs: n3ds_gpu_texture_clip_frame - New3DS integration. */
 int n3ds_gpu_texture_clip_frame(unsigned int game_tick)
 {
     if(n3ds_gpu_screen_test())return 0;

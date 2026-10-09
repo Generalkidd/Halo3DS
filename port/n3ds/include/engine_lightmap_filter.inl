@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /* Lightmap atlases contain red/yellow checkerboard in unused space. Never
  * average those sentinel texels into surface lighting when reducing an atlas.
  * Filter at upload time only, with unchanged GPU dimensions and draw passes. */

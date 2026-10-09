@@ -1,3 +1,4 @@
+# New3DS integration additions by Kevin Boggs.
 param(
     [Parameter(Mandatory=$true)][string]$GameBuild,
     [Parameter(Mandatory=$true)][string]$Output,

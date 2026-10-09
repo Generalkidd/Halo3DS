@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /*
 UI_WIDGET_EVENT_HANDLER_FUNCTIONS.C
 
@@ -953,6 +954,7 @@ static char *native_pc_expansion_maps[6]={
     "levels\\test\\timberland\\timberland",
     "levels\\test\\gephyrophobia\\gephyrophobia"
 };
+/* Kevin Boggs: native_pc_expansion_ui_assets_ready - New3DS integration. */
 static boolean native_pc_expansion_ui_assets_ready(void)
 {
     if(!n3ds_pc_tags_active()) return FALSE;
@@ -967,6 +969,7 @@ static boolean native_pc_expansion_ui_assets_ready(void)
         description_list && description_list->strings.count>=19 &&
         graphic_group && graphic_group->bitmaps.count>=19;
 }
+/* Kevin Boggs: n3ds_ui_pc_expansion_map_count - New3DS integration. */
 short n3ds_ui_pc_expansion_map_count(void)
 {
     short count=0;

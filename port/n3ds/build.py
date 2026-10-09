@@ -1,3 +1,4 @@
+# New3DS integration additions by Kevin Boggs.
 """Build the playable Halo3DS frontend from source. Python 3.10+.
 
 Run --help for dependency paths and diagnostic options. No previous objects,
@@ -11,6 +12,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 from tools.compat import prepare
 from tools.shaders import generate, verify_linked
 
@@ -36,6 +38,7 @@ def run(command, out, label):
 
 
 def main():
+    subprocess.run([sys.executable, str(PORT/'tools/check_attribution.py')], cwd=ROOT, check=True)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, default=ROOT/'build/n3ds')
     defaults = {'devkitarm': 'C:/devkitPro/devkitARM', 'libctru': ROOT.parent/'libctru/libctru',
@@ -52,6 +55,7 @@ def main():
     parser.add_argument('--diagnostic-high-textures', action='store_true', help='PC map comparison: New-model 128-pixel world textures with an 8 MiB cache; requires --diagnostic-pc-play')
     parser.add_argument('--diagnostic-texture-clip', action='store_true', help='Capture a repeatable Timberland walk as raw top-screen frames; requires --diagnostic-pc-play timberland')
     parser.add_argument('--diagnostic-respawn-texture-clip', action='store_true', help='Capture PC menu death/respawn fixture frames and frame work timing')
+    parser.add_argument('--diagnostic-scenic-texture', action='store_true', help='Hold a bot-free Timberland base view for a settled texture comparison')
     parser.add_argument('--diagnostic-near-world', type=int, choices=[256, 512], help='With the respawn clip, retain one Timberland ground material at this width')
     parser.add_argument('--diagnostic-smooth-near', action='store_true', help='Ramp a selected ground material from its low mip after load and respawn')
     parser.add_argument('--original-memory', action='store_true', help='Constrain heap sizes for original-model emulator tests')
@@ -106,8 +110,10 @@ def main():
         parser.error('--diagnostic-texture-clip requires --diagnostic-pc-play timberland')
     if args.diagnostic_respawn_texture_clip and not args.diagnostic_pc_menu_keys:
         parser.error('--diagnostic-respawn-texture-clip requires --diagnostic-pc-menu-keys')
-    if args.diagnostic_near_world and not args.diagnostic_respawn_texture_clip:
-        parser.error('--diagnostic-near-world requires --diagnostic-respawn-texture-clip')
+    if args.diagnostic_scenic_texture and (not args.diagnostic_pc_menu_keys or args.diagnostic_respawn_texture_clip):
+        parser.error('--diagnostic-scenic-texture requires --diagnostic-pc-menu-keys without the respawn clip')
+    if args.diagnostic_near_world and not (args.diagnostic_respawn_texture_clip or args.diagnostic_scenic_texture):
+        parser.error('--diagnostic-near-world requires a texture clip or scenic fixture')
     if args.diagnostic_smooth_near and not args.diagnostic_near_world:
         parser.error('--diagnostic-smooth-near requires --diagnostic-near-world')
     if args.experimental_pc_runtime and (args.probe_pc_map or args.probe_a10 or args.probe_solo_bots or args.test_frames or args.diagnostic_pc_ui or args.diagnostic_pc_play or args.diagnostic_pc_campaign):
@@ -143,6 +149,7 @@ def main():
     if args.diagnostic_high_textures: defines.append('-DHALO_N3DS_HIGH_TEXTURE_TEST=1')
     if args.diagnostic_texture_clip: defines.append('-DHALO_N3DS_TEXTURE_CLIP=1')
     if args.diagnostic_respawn_texture_clip: defines.append('-DHALO_N3DS_TEXTURE_CLIP_DEATH=1')
+    if args.diagnostic_scenic_texture: defines.append('-DHALO_N3DS_SCENIC_TEXTURE=1')
     if args.diagnostic_near_world: defines.append(f'-DHALO_N3DS_NEAR_WORLD_WIDTH={args.diagnostic_near_world}')
     if args.diagnostic_smooth_near: defines.append('-DHALO_N3DS_SMOOTH_NEAR_TEXTURE=1')
     if args.original_memory: defines.append('-DHALO_N3DS_LOW_MEMORY_TEST=1')

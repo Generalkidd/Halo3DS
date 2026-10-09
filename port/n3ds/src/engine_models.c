@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 #include "engine_parallel.h"
 /* Original model packets -> bounded native vertex/index streams. Opaque base
  * materials only; effect, decal, local-node and viewspace paths remain explicit

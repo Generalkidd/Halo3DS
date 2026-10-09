@@ -1,3 +1,4 @@
+# New3DS integration additions by Kevin Boggs.
 <# Install owner-supplied Xbox and PC retail data with one unified launcher. #>
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(

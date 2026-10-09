@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /*
 RENDER_CONTRAILS.C
 
@@ -37,6 +38,9 @@ symbols in this file:
 #include "rasterizer/rasterizer.h"
 #include "render.h"
 #include "tag_files/tag_files.h"
+#ifdef HALO_N3DS
+#include <string.h>
+#endif
 
 /* ---------- constants */
 
@@ -131,6 +135,11 @@ void render_contrail(
 	short vertex_count;
 	long triangle_buffer_index;
 	long vertex_buffer_index;
+#ifdef HALO_N3DS
+	/* Kevin Boggs: keep a narrow PC rifle trace legible on the 3DS LCD. */
+	boolean rifle_tracer = strcmp(tag_get_name(contrail->definition_index),
+		"weapons\\assault rifle\\bullet") == 0;
+#endif
 
 	bitmap = bitmap_group_get_bitmap_from_sequence(
 		definition->bitmap.index,
@@ -204,6 +213,10 @@ void render_contrail(
 				width = state->width;
 				if (state->scale_flags & (1 << _contrail_state_width_bit))
 					width *= point->density;
+#ifdef HALO_N3DS
+				if (rifle_tracer && width < 0.12f)
+					width = 0.12f;
+#endif
 				half_width = width;
 				color.alpha = (state->color_upper_bound.alpha - state->color_lower_bound.alpha) * color_scale + state->color_lower_bound.alpha;
 				color.red = (state->color_upper_bound.red - state->color_lower_bound.red) * color_scale + state->color_lower_bound.red;
@@ -407,8 +420,15 @@ void render_contrail(
 			}
 			if (!(definition->flags & (1 << _contrail_last_point_unfaded_bit)))
 			{
-				((byte *)&vertices[vertex_count - 1].color)[3] = 0;
-				((byte *)&vertices[vertex_count - 2].color)[3] = 0;
+				/* Kevin Boggs: a two-point rifle trace needs a visible far edge
+				 * after the authored 30 Hz lifetime adjustment. */
+#ifdef HALO_N3DS
+				byte tail_alpha = rifle_tracer && vertex_count == 4 ? 96 : 0;
+#else
+				byte tail_alpha = 0;
+#endif
+				((byte *)&vertices[vertex_count - 1].color)[3] = tail_alpha;
+				((byte *)&vertices[vertex_count - 2].color)[3] = tail_alpha;
 			}
 			if (segment_count > 0)
 			{

@@ -1,3 +1,4 @@
+# New3DS integration additions by Kevin Boggs.
 """Read-only inventory of PC retail campaign object placements and tag assets.
 
 The offsets are the retail v7 scenario layout documented in
@@ -16,16 +17,19 @@ BASE = 0x40440000
 CAMPAIGN = ("a10", "a30", "a50", "b30", "b40", "c10", "c20", "c40", "d20", "d40")
 
 
+# Kevin Boggs: u32 - New3DS integration.
 def u32(data, pos):
     return struct.unpack_from("<I", data, pos)[0]
 
 
+# Kevin Boggs: bounded - New3DS integration.
 def bounded(data, start, size, low, high):
     if start < low or size < 0 or start + size > high:
         raise ValueError(f"out-of-range data at {start:#x} size {size:#x}")
     return start
 
 
+# Kevin Boggs: survey - New3DS integration.
 def survey(path):
     with path.open("rb") as stream, mmap.mmap(stream.fileno(), 0, access=mmap.ACCESS_READ) as mapped:
         data = mapped
@@ -68,6 +72,7 @@ def survey(path):
         scnr = base + scenarios[0]["data"] - address_base
         bounded(data, scnr, 0x550, base, end)
 
+        # Kevin Boggs: block - New3DS integration.
         def block(offset, stride):
             n, address = struct.unpack_from("<II", data, scnr + offset)
             if n > 65536:
@@ -76,6 +81,7 @@ def survey(path):
             bounded(data, pos, n * stride, base, end)
             return [pos + i * stride for i in range(n)]
 
+        # Kevin Boggs: object_list - New3DS integration.
         def object_list(placement_offset, stride, palette_offset):
             palette = []
             for pos in block(palette_offset, 0x30):

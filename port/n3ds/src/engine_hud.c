@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /* Original HUD owners; screen postprocessing remains an explicit capability
  * boundary. The game's HUD, inventory and motion tracking stay authoritative. */
 #include "cseries.h"
@@ -40,6 +41,7 @@ static int panel_state=-1;
 static struct native_touch_meter weapon_meters[6];
 static unsigned int weapon_meter_mask;
 static long weapon_meter_tick=NONE;
+/* Kevin Boggs: n3ds_hud_record_weapon_meter - New3DS integration. */
 void n3ds_hud_record_weapon_meter(int state,int value,float multiplier,float bias,int minimum)
 {
     long tick=game_time_get();
@@ -62,6 +64,7 @@ static long touch_unit(void)
     long unit=player_get(player)->unit_index;
     return unit!=NONE && unit==control_unit && !TEST_FLAG(unit_get(unit)->object.damage_flags,_object_dead_bit)?unit:NONE;
 }
+/* Kevin Boggs: halo_touch_zone - New3DS integration. */
 static int halo_touch_zone(unsigned int x,unsigned int y)
 {
     if(x<8 || x>=312 || !((y>=64 && y<114) || (y>=122 && y<164)))return 0;

@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /*
 RASTERIZER_XBOX_DECALS.C
 
@@ -140,6 +141,15 @@ symbols in this file:
 #include "saved games/game_state.h"
 #ifdef HALO_N3DS
 #include "engine_decal_storage.h"
+#include "engine_renderer.h"
+#include "engine_textures.h"
+#include "engine_widgets.h"
+#include "engine_controls.h"
+#include "render/render.h"
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_ARSENAL
+#include <stdio.h>
+void n3ds_log(const char *message);
+#endif
 #endif
 
 /* ---------- constants */
@@ -336,8 +346,158 @@ static boolean local_filthy_decal_fog_hack_enabled = FALSE;
 extern struct rasterizer_decals_debug_options rasterizer_debug_options;
 extern struct rasterizer_decals_window_parameters global_window_parameters;
 extern struct pixel_shader_definition pixel_shader;
+#ifdef HALO_N3DS
+boolean rasterizer_set_texture_direct(short stage, long group_index, short bitmap_index);
+#endif
 
 long last_decal_index_queried_by_lruv_cache = NONE;
+
+#ifdef HALO_N3DS
+/* The original decal builder and LRU cache own geometry and lifetime. The
+ * Xbox draw entry point emits D3D calls, so the native mission renderer uses
+ * this PICA submission over the same visible cluster lists. */
+static struct native_widget_vertex native_decal_batch[384];
+static unsigned int native_decal_batch_count;
+static int native_decal_batch_blend;
+static unsigned int native_decal_batch_geometry;
+static void *native_decal_batch_texture;
+/* Kevin Boggs: submit a shared native batch without dropping authored impact marks. */
+/* Kevin Boggs: native_decal_batch_flush - New3DS integration. */
+static void native_decal_batch_flush(void)
+{
+	if (!native_decal_batch_count) return;
+	n3ds_gpu_texture_bind(0, native_decal_batch_texture);
+	n3ds_gpu_effect_draw(native_decal_batch, native_decal_batch_count,
+		native_decal_batch_blend, 0, 6, native_decal_batch_geometry);
+	native_decal_batch_count = 0;
+}
+/* Kevin Boggs: draw the original game's visible decal lists through the 3DS renderer. */
+/* Kevin Boggs: n3ds_decals_draw_visible - New3DS integration. */
+void n3ds_decals_draw_visible(void)
+{
+	unsigned int drawn = 0;
+	long queued_bitmap_group = NONE;
+	short queued_bitmap = NONE;
+	if (!n3ds_controls_decals() || !global_decal_data || !native_decal_storage.vertices ||
+		!rasterizer_debug_options.draw_environment_decals) return;
+	native_decal_batch_count = 0;
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_ARSENAL
+	unsigned int visible = 0, missing_texture = 0;
+#endif
+	for (short layer = 0; layer < NUMBER_OF_DECAL_LAYERS; ++layer)
+	for (short c = 0; c < render.rendered_cluster_count; ++c)
+	{
+		short cluster = render.rendered_clusters[c].cluster_index;
+		if (cluster < 0) continue;
+		long decal_index = decal_get_first_decal_index(cluster, layer);
+		for (unsigned int visited = 0; decal_index != NONE && visited < MAXIMUM_DECALS_PER_MAP;
+			++visited)
+		{
+			struct decal_datum *decal = DECAL_GET(decal_index);
+			long next = decal->next_decal_index;
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_ARSENAL
+			++visible;
+#endif
+			if (decal->quad_count > 0 && decal->quad_count <= 256 &&
+				decal->definition_index != NONE)
+			{
+				struct decal_definition *definition = decal_definition_get(decal->definition_index);
+				if (definition && native_decal_batch_count &&
+					(definition->shader.map.index != queued_bitmap_group ||
+					 decal->bitmap_index != queued_bitmap)) native_decal_batch_flush();
+				if (definition && definition->shader.map.index != NONE &&
+					((definition->shader.map.index == queued_bitmap_group &&
+						decal->bitmap_index == queued_bitmap) ||
+					 rasterizer_set_texture_direct(0, definition->shader.map.index,
+						decal->bitmap_index)))
+				{
+					unsigned long offset = (unsigned long)lruv_block_get_address(local_vertex_cache, decal_index);
+					unsigned long bytes = (unsigned long)decal->quad_count * 4 * sizeof(struct decal_vertex);
+					if (offset <= N3DS_DECAL_BYTES && bytes <= N3DS_DECAL_BYTES - offset)
+					{
+						const struct decal_vertex *source = (const struct decal_vertex *)(native_decal_storage.vertices + offset);
+						int blend = definition->shader.framebuffer_blend_function;
+						if (blend < 0 || blend >= NATIVE_BLEND_COUNT) blend = NATIVE_BLEND_ALPHA;
+						unsigned int geometry=0;
+						/* The authored dark impact maps encode a neutral background at
+						 * alpha 128. Recover their shape without darkening the whole quad. */
+						if(blend==NATIVE_BLEND_DOUBLE_MULTIPLY &&
+							strstr(tag_get_name(decal->definition_index),"\\bullet holes\\")) {
+							blend=NATIVE_BLEND_ALPHA;geometry=1u<<8;
+						}
+						void *texture = n3ds_gpu_texture_bound(0);
+						queued_bitmap_group=definition->shader.map.index;
+						queued_bitmap=decal->bitmap_index;
+						if (native_decal_batch_count &&
+							(texture != native_decal_batch_texture || blend != native_decal_batch_blend ||
+							 geometry != native_decal_batch_geometry))
+							native_decal_batch_flush();
+						native_decal_batch_texture = texture;
+						native_decal_batch_blend = blend;
+						native_decal_batch_geometry = geometry;
+						float opacity = (float)(((unsigned int)decal->intensity * (decal->color >> 24) + 127) >> 8) / 255.f;
+						if(geometry) opacity*=.55f;
+						float tint[3] = {(float)((decal->color >> 16) & 255) / 255.f,
+							(float)((decal->color >> 8) & 255) / 255.f,
+							(float)(decal->color & 255) / 255.f};
+						if(geometry) tint[0]=tint[1]=tint[2]=0.f;
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_ARSENAL
+						{
+							static unsigned int sample_count[3];
+							const char *decal_name=tag_get_name(decal->definition_index);
+							int category=decal_name && strstr(decal_name,"blood splats")?1:
+								decal_name && strstr(decal_name,"grenade char")?2:
+								decal_name && strstr(decal_name,"bullet holes")?0:-1;
+							if (category>=0 && sample_count[category]<4) {
+								char message[224];
+								snprintf(message,sizeof(message),"NATIVE DECAL SAMPLE: name=%s bitmap=%s sub=%u blend=%d color=%08lx intensity=%u opacity=%.3f quads=%d",
+									decal_name, tag_get_name(definition->shader.map.index),
+									decal->bitmap_index,blend,(unsigned long)decal->color,decal->intensity,opacity,decal->quad_count);
+								n3ds_log(message);++sample_count[category];
+							}
+						}
+#endif
+						static const unsigned char order[6] = {0, 1, 2, 0, 2, 3};
+						for (unsigned int q = 0; q < (unsigned int)decal->quad_count; ++q)
+						{
+							if (native_decal_batch_count + 6 > NUMBEROF(native_decal_batch))
+								native_decal_batch_flush();
+							for (unsigned int k = 0; k < 6; ++k)
+							{
+								const struct decal_vertex *v = source + q * 4 + order[k];
+								struct native_widget_vertex *out = native_decal_batch + native_decal_batch_count + k;
+								for (int axis = 0; axis < 3; ++axis) out->position[axis] = v->position.n[axis];
+								for (int axis = 0; axis < 3; ++axis) out->color[axis] = tint[axis];
+								out->color[3] = opacity;
+								out->uv[0] = (float)(v->texcoord & 0x7fff) / 32768.f;
+								out->uv[1] = (float)((v->texcoord >> 16) & 0x7fff) / 32768.f;
+							}
+							native_decal_batch_count += 6;
+						}
+						++drawn;
+					}
+				}
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_ARSENAL
+				else ++missing_texture;
+#endif
+			}
+			decal_index = next;
+		}
+	}
+	native_decal_batch_flush();
+	if (drawn) n3ds_gpu_world_state_restore();
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_ARSENAL
+	if (render.frame_index % 120 == 0) {
+		char message[144];
+		snprintf(message, sizeof(message),
+			"NATIVE DECALS: live=%d visible=%u drawn=%u texture_wait=%u clusters=%d",
+			global_decal_data->actual_count, visible, drawn, missing_texture,
+			render.rendered_cluster_count);
+		n3ds_log(message);
+	}
+#endif
+}
+#endif
 
 /* ---------- public code */
 

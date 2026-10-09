@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 #ifdef HALO_N3DS_RENDERER_TESTS
 int n3ds_lightmap_filter_tests(void)
 {

@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 #ifndef HALO_N3DS_PC_DIAGNOSTIC_MAPS_H
 #define HALO_N3DS_PC_DIAGNOSTIC_MAPS_H
 

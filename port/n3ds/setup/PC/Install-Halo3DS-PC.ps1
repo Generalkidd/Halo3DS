@@ -1,3 +1,4 @@
+# New3DS integration additions by Kevin Boggs.
 <#
 Install a PC retail build from the owner's Halo CE PC ISO. The package contains
 only this installer, the PC-capable 3DSX, and its build manifest. Game content
@@ -76,6 +77,7 @@ try {
 $launcherRelative = if ($UnifiedLauncher) { '3ds/Halo3DS/Halo3DS.3dsx' } else { '3ds/Halo3DS-PC/Halo3DS-PC.3dsx' }
 $relativePaths = @($launcherRelative)
 
+# Kevin Boggs: Test-PcGameMap - New3DS integration.
 function Test-PcGameMap([string]$path) {
     $stream = [IO.File]::OpenRead($path)
     try {
@@ -94,6 +96,7 @@ function Test-PcGameMap([string]$path) {
     } finally { $stream.Dispose() }
 }
 
+# Kevin Boggs: Test-Resource - New3DS integration.
 function Test-Resource([string]$path, [uint32]$version) {
     $stream = [IO.File]::OpenRead($path)
     try {
@@ -103,6 +106,7 @@ function Test-Resource([string]$path, [uint32]$version) {
     } finally { $stream.Dispose() }
 }
 
+# Kevin Boggs: Test-Within - New3DS integration.
 function Test-Within([string]$root, [string]$path) {
     $absolute = [IO.Path]::GetFullPath((Join-Path $root $path))
     $prefix = [IO.Path]::GetFullPath($root).TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar

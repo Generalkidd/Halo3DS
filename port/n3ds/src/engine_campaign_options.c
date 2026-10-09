@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 #include "engine_campaign_options.h"
 #include "engine_files.h"
 #include <string.h>
@@ -13,6 +14,7 @@ struct campaign_options_file {
     unsigned int magic, version, extras, checksum;
 };
 
+/* Kevin Boggs: checksum - New3DS integration. */
 static unsigned int checksum(const struct campaign_options_file *file)
 {
     const unsigned char *bytes=(const unsigned char *)file;
@@ -21,6 +23,7 @@ static unsigned int checksum(const struct campaign_options_file *file)
     return value;
 }
 
+/* Kevin Boggs: read_options - New3DS integration. */
 static int read_options(const char *name,int *value)
 {
     struct campaign_options_file file;
@@ -33,6 +36,7 @@ static int read_options(const char *name,int *value)
     return 1;
 }
 
+/* Kevin Boggs: initialize - New3DS integration. */
 static void initialize(void)
 {
     if(initialized)return;
@@ -41,6 +45,7 @@ static void initialize(void)
     n3ds_log(enabled?"CAMPAIGN OPTIONS: PC additions on":"CAMPAIGN OPTIONS: PC additions off");
 }
 
+/* Kevin Boggs: save_options - New3DS integration. */
 static int save_options(int value)
 {
     struct campaign_options_file file={0x4e33434fu,1,(unsigned int)value,0};
@@ -62,17 +67,20 @@ static int save_options(int value)
     return 1;
 }
 
+/* Kevin Boggs: n3ds_campaign_extras_enabled - New3DS integration. */
 int n3ds_campaign_extras_enabled(void)
 {
     initialize();
     return enabled;
 }
 
+/* Kevin Boggs: n3ds_campaign_options_save_error - New3DS integration. */
 int n3ds_campaign_options_save_error(void)
 {
     return save_error;
 }
 
+/* Kevin Boggs: n3ds_campaign_options_filter - New3DS integration. */
 void n3ds_campaign_options_filter(struct native_input_sample *sample)
 {
     initialize();

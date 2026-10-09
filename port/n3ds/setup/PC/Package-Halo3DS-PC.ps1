@@ -1,3 +1,4 @@
+# New3DS integration additions by Kevin Boggs.
 <# Package only the verified PC launcher, manifest, and installer sources. #>
 [CmdletBinding()]
 param(

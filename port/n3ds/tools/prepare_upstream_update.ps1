@@ -1,3 +1,4 @@
+# New3DS integration additions by Kevin Boggs.
 <#
 Fetch the original Halo3DS main branch and stage any new upstream commits in
 their own worktree. This never resets, rebases, or changes local-integration.

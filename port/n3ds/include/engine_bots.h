@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 #ifndef HALO_N3DS_ENGINE_BOTS_H
 #define HALO_N3DS_ENGINE_BOTS_H
 #include "cseries/cseries.h"

@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /*
 GAME_ENGINE_KING.C
 
@@ -243,6 +244,7 @@ extern real global_default_animation_values[4];
 
 struct king_globals king_globals = { 0 };
 #ifdef HALO_N3DS
+/* Kevin Boggs: game_engine_king_active_hill_center - New3DS integration. */
 boolean game_engine_king_active_hill_center(real_point3d *position)
 {
 	if (!position || king_globals.hill_point_count <= 0)

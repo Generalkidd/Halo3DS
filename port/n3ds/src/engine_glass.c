@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /* Native constant-tint glass combines tint/reflection with filtered cube
  * sampling on PICA, then preserves diffuse alpha and intermediate saturation.
  * Textured/extended-range tints retain the CPU sampled fallback.

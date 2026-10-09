@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /*
 GAME_ENGINE_RACE.C
 
@@ -276,6 +277,7 @@ void race_engine_dispose(
 }
 
 #ifdef HALO_N3DS
+/* Kevin Boggs: game_engine_race_next_goal - New3DS integration. */
 boolean game_engine_race_next_goal(long player_index, real_point3d const *position,
 	real_point3d *goal)
 {

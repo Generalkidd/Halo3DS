@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 #include "cseries.h"
 #include "cache_reader.h"
 #include "cache_build_compatibility.h"

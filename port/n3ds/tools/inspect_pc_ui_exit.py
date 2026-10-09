@@ -1,3 +1,4 @@
+# New3DS integration additions by Kevin Boggs.
 """Read-only view of PC retail UI widget event handlers used by Quit."""
 import argparse
 import struct
@@ -6,10 +7,12 @@ from pathlib import Path
 BASE = 0x40440000
 
 
+# Kevin Boggs: u32 - New3DS integration.
 def u32(data, offset):
     return struct.unpack_from("<I", data, offset)[0]
 
 
+# Kevin Boggs: main - New3DS integration.
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("ui_map", type=Path)
@@ -28,6 +31,7 @@ def main():
     if not 0 < count <= 65536 or instances < start + 40 or instances + count * 32 > end:
         raise ValueError("Invalid tag instances")
 
+    # Kevin Boggs: address - New3DS integration.
     def address(pointer, length):
         offset = start + pointer - BASE
         if pointer < BASE or offset < start or length < 0 or offset + length > end:

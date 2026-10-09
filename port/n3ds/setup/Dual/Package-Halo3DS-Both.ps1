@@ -1,3 +1,4 @@
+# New3DS integration additions by Kevin Boggs.
 <# Build a fixed-file, game-data-free dual-ISO installer archive. #>
 [CmdletBinding()]
 param(

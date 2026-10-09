@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 #ifndef HALO_N3DS_ENGINE_TEXTURES_H
 #define HALO_N3DS_ENGINE_TEXTURES_H
 int n3ds_gpu_texture_wrap(unsigned int stage,int clamp_u,int clamp_v);

@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 #include "cseries.h"
 #include "cache_reader.h"
 #include "cache_build_compatibility.h"
@@ -264,6 +265,7 @@ const struct n3ds_cache_view *n3ds_engine_cache_view(int bsp)
 }
 
 #if defined(HALO_N3DS_EXPERIMENTAL_PC_ALL_MAPS) || defined(HALO_N3DS_EXPERIMENTAL_PC_MATRIX)
+/* Kevin Boggs: n3ds_is_campaign_map - New3DS integration. */
 static int n3ds_is_campaign_map(const char *base)
 {
     static const char *const names[]={"a10","a30","a50","b30","b40","c10","c20","c40","d20","d40"};

@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /* Local solo-match bots adapted from the Halo CE recomp combat bot logic.
  * A bot is a player in this process, never a network client. */
 #include "cseries/cseries.h"
@@ -33,6 +34,7 @@
 #include <stdlib.h>
 #include <stdarg.h>
 void n3ds_log(char const *message);
+/* Kevin Boggs: platform_log - New3DS integration. */
 static void platform_log(char const *format, ...)
 {
 #ifdef HALO_N3DS_BOT_TEST_COUNT
@@ -59,6 +61,7 @@ static const char *const n3ds_bot_guest_names[]={
 	"Sneak","The Bear","Ghost","Penguin","Howard","Jack","Whisp","Whicker",
 	"Wilshire","Pirate","Walla Walla","Tooth","Goat","Stumpy","Stompy","Winky"
 };
+/* Kevin Boggs: combat_bot_is_star - New3DS integration. */
 static boolean combat_bot_is_star(short queue_index)
 {
 	return n3ds_star_bot_index != NONE &&
@@ -122,6 +125,7 @@ struct combat_bot_state
 
 static struct combat_bot_state combat_bot_states[MAXIMUM_NUMBER_OF_PLAYERS];
 
+/* Kevin Boggs: combat_bot_distance_squared - New3DS integration. */
 static real combat_bot_distance_squared(real_point3d const *a, real_point3d const *b)
 {
 	real dx = b->x - a->x;
@@ -132,6 +136,7 @@ static real combat_bot_distance_squared(real_point3d const *a, real_point3d cons
 
 /* Stable for one 15-tick firing interval, independent of the game's RNG.
  * A missed shot changes the visible aim and cannot receive fallback damage. */
+/* Kevin Boggs: combat_bot_accuracy_roll - New3DS integration. */
 static unsigned long combat_bot_accuracy_roll(short queue_index, long tick,
 	short shot_interval)
 {
@@ -145,6 +150,7 @@ static unsigned long combat_bot_accuracy_roll(short queue_index, long tick,
 	return value;
 }
 
+/* Kevin Boggs: combat_bot_flag_held_by_ally - New3DS integration. */
 static boolean combat_bot_flag_held_by_ally(struct weapon_datum const *weapon,
 	struct player_datum const *bot)
 {
@@ -159,6 +165,7 @@ static boolean combat_bot_flag_held_by_ally(struct weapon_datum const *weapon,
 	return owner && owner->team_index == bot->team_index;
 }
 
+/* Kevin Boggs: combat_bot_world_object_index - New3DS integration. */
 static long combat_bot_world_object_index(long unit_index)
 {
 	struct object_datum *unit = object_try_and_get(unit_index);
@@ -171,6 +178,7 @@ static long combat_bot_world_object_index(long unit_index)
 	return unit_index;
 }
 
+/* Kevin Boggs: combat_bot_vehicle_is_turret - New3DS integration. */
 static boolean combat_bot_vehicle_is_turret(long vehicle_index)
 {
 	struct unit_datum *vehicle = unit_try_and_get(vehicle_index);
@@ -178,6 +186,7 @@ static boolean combat_bot_vehicle_is_turret(long vehicle_index)
 	return name && (strstr(name, "turret") || strstr(name, "shade"));
 }
 
+/* Kevin Boggs: combat_bot_can_see_object - New3DS integration. */
 static boolean combat_bot_can_see_object(long unit_index, real_point3d const *from,
 	long object_index, real_point3d const *to)
 {
@@ -188,6 +197,7 @@ static boolean combat_bot_can_see_object(long unit_index, real_point3d const *fr
 	return aim_assist_clear_line_of_sight(&start, &end, unit_index, object_index);
 }
 
+/* Kevin Boggs: combat_bot_ground_surface - New3DS integration. */
 static long combat_bot_ground_surface(real_point3d const *position, real_point3d *ground)
 {
 	struct collision_result collision;
@@ -203,6 +213,7 @@ static long combat_bot_ground_surface(real_point3d const *position, real_point3d
 	return NONE;
 }
 
+/* Kevin Boggs: combat_bot_local_detour - New3DS integration. */
 static boolean combat_bot_local_detour(struct combat_bot_state *state, short queue_index,
 	long tick, long unit_index, real_point3d const *position,
 	real_point3d const *destination, real_point3d *next_point)
@@ -267,6 +278,7 @@ static boolean combat_bot_local_detour(struct combat_bot_state *state, short que
 
 /* Halo's walkable collision surfaces provide a short route. Refresh in
    batches so a 128-player lobby does not run 127 searches in one tick. */
+/* Kevin Boggs: combat_bot_route_point - New3DS integration. */
 static boolean combat_bot_route_point(struct combat_bot_state *state, short queue_index,
 	long tick, long unit_index, long goal_index, real_point3d const *position,
 	real_point3d const *destination, real_point3d *next_point)
@@ -360,6 +372,7 @@ static boolean combat_bot_route_point(struct combat_bot_state *state, short queu
 	return TRUE;
 }
 
+/* Kevin Boggs: combat_bot_weapon_value - New3DS integration. */
 static real combat_bot_weapon_value(long weapon_index, real enemy_distance2)
 {
 	struct weapon_datum *weapon = weapon_try_and_get(weapon_index);
@@ -382,6 +395,7 @@ static real combat_bot_weapon_value(long weapon_index, real enemy_distance2)
 	return 2.f;
 }
 
+/* Kevin Boggs: combat_bot_fire_range - New3DS integration. */
 static real combat_bot_fire_range(struct unit_datum const *unit)
 {
 	struct weapon_datum *weapon;
@@ -401,6 +415,7 @@ static real combat_bot_fire_range(struct unit_datum const *unit)
 	return 35.f;
 }
 
+/* Kevin Boggs: combat_bot_scan_objects - New3DS integration. */
 static void combat_bot_scan_objects(struct combat_bot_state *state, struct unit_datum *unit,
 	long unit_index, real enemy_distance2, real_point3d const *enemy_position,
 	long enemy_index, boolean race_mode)
@@ -556,6 +571,7 @@ static void combat_bot_scan_objects(struct combat_bot_state *state, struct unit_
 
 /* Multiplayer objectives outrank ordinary loot when there is no immediate
    close fight. Keep the game's own pickup/scoring rules in charge. */
+/* Kevin Boggs: combat_bot_objective - New3DS integration. */
 static short combat_bot_objective(short queue_index, long bot_index,
 	long vehicle_parent, long vehicle_target, struct unit_datum *unit, struct player_datum *bot,
 	real_point3d const *bot_position, real_point3d const *enemy_position,
@@ -679,6 +695,7 @@ static short combat_bot_objective(short queue_index, long bot_index,
 
 /* A small, host-driven opponent for explicitly named test clients.  The
    ordinary network input path is unchanged for human players. */
+/* Kevin Boggs: n3ds_bots_fill_action - New3DS integration. */
 void n3ds_bots_fill_action(short queue_index, short identifier,
 	struct player_action *action)
 {
@@ -1292,6 +1309,7 @@ void n3ds_bots_fill_action(short queue_index, short identifier,
 			best_distance2, action->throttle.i, action->primary_trigger);
 }
 
+/* Kevin Boggs: n3ds_bots_reset - New3DS integration. */
 void n3ds_bots_reset(void)
 {
 	short i;
@@ -1301,6 +1319,7 @@ void n3ds_bots_reset(void)
 	csmemset(combat_bot_states, 0, sizeof(combat_bot_states));
 }
 
+/* Kevin Boggs: n3ds_bots_is_registered - New3DS integration. */
 static boolean n3ds_bots_is_registered(short queue_index, short identifier)
 {
 	long player_index;
@@ -1313,11 +1332,14 @@ static boolean n3ds_bots_is_registered(short queue_index, short identifier)
 
 #ifdef HALO_N3DS_PC_LOCAL_MENU
 static short n3ds_menu_bot_count=-1;
+/* Kevin Boggs: n3ds_bots_set_menu_count - New3DS integration. */
 void n3ds_bots_set_menu_count(short count)
 { n3ds_menu_bot_count=(count>=0 && count<=15)?count:-1; }
+/* Kevin Boggs: n3ds_bots_set_menu_difficulty - New3DS integration. */
 void n3ds_bots_set_menu_difficulty(short difficulty)
 { if(difficulty>=0 && difficulty<=2)n3ds_bot_difficulty=difficulty; }
 #endif
+/* Kevin Boggs: n3ds_bots_requested_count - New3DS integration. */
 short n3ds_bots_requested_count(void)
 {
 #ifdef HALO_N3DS_PC_LOCAL_MENU
@@ -1350,6 +1372,7 @@ short n3ds_bots_requested_count(void)
 #endif
 }
 
+/* Kevin Boggs: n3ds_bots_create - New3DS integration. */
 short n3ds_bots_create(short count)
 {
 	short i, created = 0;

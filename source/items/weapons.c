@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 #define HALO_N3DS_INLINE_DATUM 1
 /*
 WEAPONS.C
@@ -202,6 +203,10 @@ symbols in this file:
 /* ---------- headers */
 
 #include "cseries.h"
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_ARSENAL
+#include <stdio.h>
+#include <string.h>
+#endif
 #include "weapons.h"
 
 #include "equipment.h"
@@ -1934,6 +1939,9 @@ static long weapon_effect_new(
 	real effect_error)
 {
 	long result = NONE;
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_ARSENAL
+	static unsigned int flame_effect_traces;
+#endif
 
 	if (effect_index!=NONE)
 	{
@@ -1955,6 +1963,19 @@ static long weapon_effect_new(
 		{
 			result = effect_new_from_object(effect_index, object_index, effect_object_index, NONE, effect_scale, effect_error, NULL, NULL);
 		}
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_ARSENAL
+		if (flame_effect_traces < 64) {
+			const char *name = tag_get_name(effect_index);
+			if (name && strstr(name, "flamethrower")) {
+				char message[192];
+				extern void n3ds_log(const char *);
+				snprintf(message, sizeof(message), "ARSENAL FLAME EFFECT: weapon=%08lx tag=%08lx name=%.90s result=%08lx",
+					weapon_index, effect_index, name, result);
+				n3ds_log(message);
+				++flame_effect_traces;
+			}
+		}
+#endif
 	}
 
 	return result;

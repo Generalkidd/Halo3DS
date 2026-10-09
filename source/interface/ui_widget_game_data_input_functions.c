@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /*
 UI_WIDGET_GAME_DATA_INPUT_FUNCTIONS.C
 

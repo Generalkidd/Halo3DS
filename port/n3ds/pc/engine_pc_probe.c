@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /* Opt-in diagnostic: exercise the PC retail cache reader on ARM without
  * publishing partially converted tags to the Xbox engine. No game data is
  * linked into the executable. */
@@ -14,6 +15,7 @@ struct pc_probe_file {
     struct cache_file_source source;
 };
 
+/* Kevin Boggs: read_at - New3DS integration. */
 static int read_at(void *context, uint32_t offset, uint32_t size, void *buffer)
 {
     FILE *stream = context;
@@ -22,6 +24,7 @@ static int read_at(void *context, uint32_t offset, uint32_t size, void *buffer)
         fread(buffer, 1, size, stream) == size;
 }
 
+/* Kevin Boggs: open_file - New3DS integration. */
 static int open_file(struct pc_probe_file *file, const char *path)
 {
     long size;
@@ -39,12 +42,14 @@ static int open_file(struct pc_probe_file *file, const char *path)
     return 1;
 }
 
+/* Kevin Boggs: close_file - New3DS integration. */
 static void close_file(struct pc_probe_file *file)
 {
     if (file->stream) fclose(file->stream);
     memset(file, 0, sizeof(*file));
 }
 
+/* Kevin Boggs: status_log - New3DS integration. */
 static void status_log(const char *step, enum cache_file_status status)
 {
     char message[192];
@@ -53,6 +58,7 @@ static void status_log(const char *step, enum cache_file_status status)
     n3ds_log(message);
 }
 
+/* Kevin Boggs: word_at - New3DS integration. */
 static uint32_t word_at(const void *bytes)
 {
     uint32_t value;
@@ -60,6 +66,7 @@ static uint32_t word_at(const void *bytes)
     return value;
 }
 
+/* Kevin Boggs: n3ds_pc_cache_probe - New3DS integration. */
 int n3ds_pc_cache_probe(const char *name)
 {
     static const char *const resources[NUMBER_OF_RESOURCE_MAP_TYPES] = {

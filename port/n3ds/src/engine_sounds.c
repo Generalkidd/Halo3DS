@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /* Native encoded-sample cache, preserving original ready/reference semantics.
  * PC samples may come from sounds.map, while Xbox samples stay in the map. */
 #include "cseries.h"
