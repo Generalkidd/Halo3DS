@@ -105,6 +105,20 @@ static real combat_bot_distance_squared(real_point3d const *a, real_point3d cons
 	return dx * dx + dy * dy + dz * dz;
 }
 
+static boolean combat_bot_flag_held_by_ally(struct weapon_datum const *weapon,
+	struct player_datum const *bot)
+{
+	struct unit_datum *carrier;
+	struct player_datum *owner;
+	if (!game_engine_has_teams() || weapon->object.parent_object_index == NONE)
+		return FALSE;
+	carrier = unit_try_and_get(weapon->object.parent_object_index);
+	if (!carrier || carrier->unit.player_index == NONE)
+		return FALSE;
+	owner = player_try_and_get(carrier->unit.player_index);
+	return owner && owner->team_index == bot->team_index;
+}
+
 static long combat_bot_world_object_index(long unit_index)
 {
 	struct object_datum *unit = object_try_and_get(unit_index);
@@ -490,6 +504,8 @@ static short combat_bot_objective(short queue_index, long bot_index,
 {
 	struct game_variant *variant = game_engine_get_variant();
 	struct object_iterator objects;
+	real closest_flag_distance2 = 1.0e30f;
+	long closest_flag_index = NONE;
 	short slot;
 	*objective_index = NONE;
 	if (!variant)
@@ -578,12 +594,25 @@ static short combat_bot_objective(short queue_index, long bot_index,
 	while (object_iterator_next(&objects))
 	{
 		struct weapon_datum *weapon = weapon_try_and_get(objects.index);
+		real_point3d flag_position;
+		real distance2;
 		if (!weapon || !weapon_is_flag(objects.index) ||
 			(variant->game_engine_index == game_engine_ctf &&
-			 weapon->object.owner_team_index == bot->team_index))
+			 weapon->object.owner_team_index == bot->team_index) ||
+			combat_bot_flag_held_by_ally(weapon, bot))
 			continue;
-		item_get_position_even_if_in_inventory(objects.index, objective);
-		*objective_index = objects.index;
+		item_get_position_even_if_in_inventory(objects.index, &flag_position);
+		distance2 = combat_bot_distance_squared(bot_position, &flag_position);
+		if (distance2 < closest_flag_distance2)
+		{
+			closest_flag_distance2 = distance2;
+			closest_flag_index = objects.index;
+			*objective = flag_position;
+		}
+	}
+	if (closest_flag_index != NONE)
+	{
+		*objective_index = closest_flag_index;
 		return variant->game_engine_index == game_engine_ctf ? 5 : 7;
 	}
 	return 0;
@@ -669,11 +698,17 @@ void n3ds_bots_fill_action(short queue_index, short identifier,
 	}
 	if (state->weapon_target != NONE)
 	{
-		if (bot->action_object_index == state->weapon_target &&
+		struct weapon_datum *target_weapon = weapon_try_and_get(state->weapon_target);
+		if (!target_weapon)
+		{
+			state->weapon_target = NONE;
+			state->last_scan_tick = -1000;
+		}
+		else if (bot->action_object_index == state->weapon_target &&
 			(bot->action_result == _player_action_result_add_weapon_to_inventory ||
 			 bot->action_result == _player_action_result_swap_for_weapon) &&
 			combat_bot_distance_squared(&bot_unit->object.position,
-				&object_get(state->weapon_target)->object.position) < 1.2f * 1.2f)
+				&target_weapon->object.position) < 1.2f * 1.2f)
 		{
 			long weapon_index = state->weapon_target;
 			const char *weapon_name = tag_get_name(object_get(weapon_index)->definition_index);

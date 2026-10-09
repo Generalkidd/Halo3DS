@@ -1,24 +1,21 @@
 # Local solo multiplayer bots
 
-The New 3DS runtime can add 0 to 15 local AI players when the original menu starts a solo multiplayer match. The local player uses one of the engine's 16 player slots. Put a single decimal number from `0` to `15` in `sdmc:/halo-source/bots.txt`, or pass `-BotCount` to the PC ISO installer. Missing or invalid settings disable bots. The selected map and game variant still come from the game's multiplayer menu.
+The New 3DS runtime can add 0 to 15 local AI players to a solo multiplayer match. The local player uses one of the engine's 16 player slots. Put a decimal number from `0` to `15` in `sdmc:/halo-source/bots.txt`, or pass `-BotCount` to the PC installer. Invalid settings disable bots. The multiplayer menu selects the map and variant.
 
-The behavior is adapted from the local Halo CE recomp combat bots. Bots follow BSP routes, steer around short obstacles, seek enemies, weapons, equipment and vehicles, and use weapon definitions and line of sight for combat. The mode objectives cover Slayer combat, CTF flags, Oddball, King hills and Race checkpoints. Bots are registered as local match players before the game clock starts. Their actions enter the normal player action queue; no network service or external bot process is launched.
+Bots are local players in the original engine's player and action queues. There is no network bot process. The controller in `src/engine_bots.c` looks for enemies, weapons, grenades, vehicles, and mode objectives; uses BSP routes and short detours; and submits movement, aim, melee, grenade, and weapon actions. The game's pickup, damage, and scoring code remains in charge. Team bots leave a flag or ball held by an ally alone and select the nearest eligible one. A disappearing ground weapon target is checked before use.
 
-The implementation is in `src/engine_bots.c`. `main_new_map` creates bots only for solo multiplayer, and `update_server_next_update` asks the bot controller for an action only for a registered bot. Normal builds omit per action diagnostic logs. The opt-in `build.py --probe-solo-bots N --probe-solo-mode MODE` build queues Blood Gulch for emulator checks.
+Mode goals:
 
-Azahar OpenGL probes with private Xbox-format Blood Gulch and two bots reached game ticks past 2,900 in Slayer, selected CTF flag objectives, Oddball objectives, King hills and Race goals. A 15 bot Slayer probe registered all bots and reached tick 300. These checks establish match entry and AI decisions in the emulator; scoring, full matches, every map and weapon, physical New 3DS XL performance, and full PC retail compatibility still need validation. The existing PC retail runtime path is under integration and the PC installer cannot yet be packaged with a verified PC-capable 3DSX.
+- Slayer: seek and fight an enemy, with item and vehicle choices.
+- CTF: seek an enemy flag, bring a carried flag to the home base, or defend and return a displaced home flag.
+- Oddball: seek a free or enemy-held ball, then evade nearby enemies while carrying it.
+- King: move toward the active hill and fight nearby enemies.
+- Race: pursue the next eligible checkpoint, preferring a vehicle.
 
-Experimental PC retail probes now cover two bot CTF on Timberland, and two bot
-Oddball and Race on Blood Gulch. The original engine placed flags and four
-Warthogs in Timberland CTF; the bots spawned and selected flag objectives.
-The original path search filled its 1,024 node list on long routes in that BSP.
-The bot controller now accepts the original path builder's closest explored
-point as a partial waypoint when the node list fills, then searches again.
-In the CTF probe, both bots received four step routes and closed their
-remaining goal distances over successive searches, though they did not
-complete a flag capture in the observed interval. Blood Gulch Oddball bots
-selected the ball, routed and exchanged hits; a Race bot entered and drove a
-map owned Warthog. These are emulator diagnostics, not a claim that every PC
-map, weapon, vehicle, mode objective or full match has been verified.
+The PC and Xbox launchers use the same bot controller. The PC runtime lets the menu select the bot count; `bots.txt` supplies a default. Bots are created only for a solo multiplayer match. Test builds can queue a match directly with `build.py --diagnostic-pc-play MAP --diagnostic-pc-mode MODE --diagnostic-pc-bots N` or `--probe-solo-bots N --probe-solo-mode MODE` for Xbox format Blood Gulch.
 
-The project does not include or distribute game maps, an ISO, Xbox game files, or bot executables.
+## Checks and limits
+
+Azahar 2126.2 reached PC Timberland CTF frame 691 with two registered bots, 24 route decisions, both bots selecting enemy flags, decreasing goal distances, and no fatal error after the ally-target and stale-weapon fixes. Earlier emulator probes entered Slayer, CTF, Oddball, King, and Race matches; a 15-bot Slayer probe reached tick 300. The PC mode cross section reached active frames on Gephyrophobia CTF, Death Island Oddball, Ice Fields King, Infinity Race, and Timberland Slayer. A Race bot entered and drove a Warthog in Blood Gulch. These checks establish match entry and decisions, not full match outcomes.
+
+Full flag captures, Oddball and hill scoring, Race lap completion, reliable combat on every map and weapon, and physical New 3DS XL performance still need device validation. Path building can return a partial route on long Timberland paths and the bot retries from there. Some combat damage is applied directly for a bot's confirmed line-of-sight weapon hit because the local fake client cannot report projectile impact. This can differ from human projectile behavior. The project contains no game maps, ISO, Xbox game files, or bot executables.
