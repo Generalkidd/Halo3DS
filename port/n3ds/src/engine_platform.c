@@ -35,7 +35,9 @@ int n3ds_engine_float_tests(void)
 
 long long n3ds_engine_ticks(void) { return (long long)svcGetSystemTick(); }
 long long n3ds_engine_tick_frequency(void) { return SYSCLOCK_ARM11; }
-int n3ds_engine_app_running(void) { return aptMainLoop(); }
+static volatile int n3ds_exit_requested;
+void n3ds_engine_request_exit(void) { n3ds_exit_requested=1; }
+int n3ds_engine_app_running(void) { return !n3ds_exit_requested && aptMainLoop(); }
 float n3ds_platform_3d_slider(void) { return osGet3DSliderState(); }
 int n3ds_input_platform_original_model(void)
 {

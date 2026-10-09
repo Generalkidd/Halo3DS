@@ -920,6 +920,7 @@ struct event_record;
 #ifdef HALO_N3DS
 #include "input/input.h"
 #include "engine_input.h"
+int n3ds_pc_tags_active(void);
 #endif
 #include "saved games/saved_game_files.h"
 #include "saved games/playlist_profile.h"
@@ -2138,7 +2139,11 @@ static boolean exit_to_xbox_dashboard(
 	boolean *widget_deleted)
 {
 	xbox_dashboard_launch();
+#ifdef HALO_N3DS
+	return TRUE; /* the 3DS loop observes the deferred exit request */
+#else
 	return FALSE;
+#endif
 }
 
 static boolean clear_multiplayer_player_joins(
@@ -3494,8 +3499,24 @@ boolean ui_widget_event_handler_function_invoke(
 	match_vassert("c:\\halo\\SOURCE\\interface\\ui_widget_event_handler_functions.c", 478,
 		widget != NULL && widget_deleted != NULL,
 		"(widget != NULL) && (widget_deleted != NULL)");
+#ifdef HALO_N3DS
+	/* PC retail ui.map uses a larger function table than the Xbox game.
+	 * Its quit_button_ok is the sole widget referencing function 107.
+	 * Route that verified PC action to the native application exit. */
+	if (function_index == 107 && n3ds_pc_tags_active())
+	{
+		n3ds_log("PC UI: quit button requested application close");
+		xbox_dashboard_launch();
+		return TRUE;
+	}
+#endif
 	if ((short)function_index >= 0 && function_index < 102)
 	{
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_MENU_KEYS
+		{ char message[192]; snprintf(message,sizeof(message),"MENU EVENT: index=%u name=%s widget=%s",
+			(unsigned)function_index,event_handler_function_list.names[(short)function_index],
+			widget->name?widget->name:""); n3ds_log(message); }
+#endif
 		result = event_handler_function_list.functions[(short)function_index](widget, event, widget_deleted);
 		if (!result)
 			console_warning("event handler '%s' failed", event_handler_function_list.names[(short)function_index]);
