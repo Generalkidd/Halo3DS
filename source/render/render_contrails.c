@@ -139,6 +139,8 @@ void render_contrail(
 	/* Kevin Boggs: keep a narrow PC rifle trace legible on the 3DS LCD. */
 	boolean rifle_tracer = strcmp(tag_get_name(contrail->definition_index),
 		"weapons\\assault rifle\\bullet") == 0;
+	boolean sniper_smoke = strcmp(tag_get_name(contrail->definition_index),
+		"weapons\\sniper rifle\\sniper") == 0;
 #endif
 
 	bitmap = bitmap_group_get_bitmap_from_sequence(
@@ -216,6 +218,8 @@ void render_contrail(
 #ifdef HALO_N3DS
 				if (rifle_tracer && width < 0.12f)
 					width = 0.12f;
+				if (sniper_smoke && width < 0.15f)
+					width = 0.15f;
 #endif
 				half_width = width;
 				color.alpha = (state->color_upper_bound.alpha - state->color_lower_bound.alpha) * color_scale + state->color_lower_bound.alpha;
@@ -242,6 +246,12 @@ void render_contrail(
 					next_width = next_state->width;
 					if (next_state->scale_flags & (1 << _contrail_state_width_bit))
 						next_width *= point->density;
+#ifdef HALO_N3DS
+					if (rifle_tracer && next_width < 0.12f)
+						next_width = 0.12f;
+					if (sniper_smoke && next_width < 0.15f)
+						next_width = 0.15f;
+#endif
 					next_color.alpha = (next_state->color_upper_bound.alpha - next_state->color_lower_bound.alpha) * next_color_scale + next_state->color_lower_bound.alpha;
 					next_color.red = (next_state->color_upper_bound.red - next_state->color_lower_bound.red) * next_color_scale + next_state->color_lower_bound.red;
 					next_color.green = (next_state->color_upper_bound.green - next_state->color_lower_bound.green) * next_color_scale + next_state->color_lower_bound.green;
@@ -403,6 +413,11 @@ void render_contrail(
 					shader->framebuffer_fade_mode,
 					&point->position,
 					&orientation);
+#ifdef HALO_N3DS
+				/* Kevin Boggs: let the original sniper bitmap read as smoke instead
+				 * of an opaque white flash at the lower LCD resolution. */
+				if (sniper_smoke) color.alpha *= 0.55f;
+#endif
 				color.alpha = PIN(color.alpha, 0.f, 1.f);
 				vertices[0].color = vertices[1].color = real_argb_color_to_pixel32(&color);
 				texture_u += texture_u_step;
@@ -415,15 +430,20 @@ void render_contrail(
 			first_vertex = vertices;
 			if (!(definition->flags & (1 << _contrail_first_point_unfaded_bit)))
 			{
-				((byte *)&first_vertex[0].color)[3] = 0;
-				((byte *)&first_vertex[1].color)[3] = 0;
+#ifdef HALO_N3DS
+				byte head_alpha = sniper_smoke ? 48 : 0;
+#else
+				byte head_alpha = 0;
+#endif
+				((byte *)&first_vertex[0].color)[3] = head_alpha;
+				((byte *)&first_vertex[1].color)[3] = head_alpha;
 			}
 			if (!(definition->flags & (1 << _contrail_last_point_unfaded_bit)))
 			{
 				/* Kevin Boggs: a two-point rifle trace needs a visible far edge
 				 * after the authored 30 Hz lifetime adjustment. */
 #ifdef HALO_N3DS
-				byte tail_alpha = rifle_tracer && vertex_count == 4 ? 96 : 0;
+				byte tail_alpha = rifle_tracer && vertex_count == 4 ? 96 : sniper_smoke ? 48 : 0;
 #else
 				byte tail_alpha = 0;
 #endif
