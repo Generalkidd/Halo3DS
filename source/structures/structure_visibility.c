@@ -271,7 +271,9 @@ static struct native_portal_cache_entry {
     short result;
     short vertex_count;
     real_point2d vertices[24];
-} native_portal_cache[128];
+/* Timberland's directed portal keys collide in the smaller direct table.
+ * More slots avoid repeated projection without changing visibility results. */
+} native_portal_cache[512];
 static unsigned int native_portal_generation=1;
 static boolean native_portal_cache_enabled=TRUE;
 #endif
@@ -952,7 +954,7 @@ static short portal_hull_from_portal(
 {
 #ifdef HALO_N3DS
     unsigned int key=((unsigned int)(unsigned short)portal_index<<1)|(direction?1u:0u);
-    struct native_portal_cache_entry *entry=&native_portal_cache[key&127u];
+    struct native_portal_cache_entry *entry=&native_portal_cache[key&511u];
     if(native_portal_cache_enabled && entry->generation==native_portal_generation && entry->key==key) {
         if(entry->result==_portal_hull_from_portal_succeeded) {
             result->vertex_count=entry->vertex_count;
