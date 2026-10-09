@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /*
 GEOMETRY.C
 
@@ -1099,6 +1100,37 @@ short convex_hull2d_intersect(
 
 		if (plane2d_from_points(&plane, p + index, p + previous_index))
 		{
+#ifdef HALO_N3DS
+            /* Kevin Boggs: match the original epsilon classification and
+             * skip clipping small polygons wholly inside or outside a plane. */
+            if(result_count>=3 && result_count<=16 && maximum_count>=2*result_count) {
+                boolean any_in_front=FALSE,any_behind=FALSE;
+                for(short vertex=0;vertex<result_count;++vertex) {
+                    real distance=plane2d_distance_to_point(&plane,source+vertex);
+                    if(distance>epsilon)any_in_front=TRUE;
+                    else if(distance< -epsilon)any_behind=TRUE;
+                }
+                if(!any_in_front) {
+#ifdef HALO_N3DS_AUDIO_TRACE
+                    real_point2d verify[CLIP_BUFFER_SIZE];
+                    short original=convex_polygon2d_clip_to_plane(result_count,source,&plane,maximum_count,verify,NULL,NULL,epsilon);
+                    match_assert(__FILE__,__LINE__,original==0);
+#endif
+                    return 0;
+                }
+                if(!any_behind) {
+#ifdef HALO_N3DS_AUDIO_TRACE
+                    real_point2d verify[CLIP_BUFFER_SIZE];
+                    short original=convex_polygon2d_clip_to_plane(result_count,source,&plane,maximum_count,verify,NULL,NULL,epsilon);
+                    match_assert(__FILE__,__LINE__,original==result_count &&
+                        !csmemcmp(verify,source,sizeof(real_point2d)*result_count));
+#endif
+                    csmemcpy(output,source,sizeof(real_point2d)*result_count);
+                    source=output;
+                    continue;
+                }
+            }
+#endif
 			result_count = convex_polygon2d_clip_to_plane(result_count, source, &plane, maximum_count, output, NULL, NULL, epsilon);
 			if (result_count == NONE)
 			{

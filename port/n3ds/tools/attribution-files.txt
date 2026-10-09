@@ -81,6 +81,7 @@ source/interface/ui_widget_event_handler_functions.c
 source/interface/ui_widget_game_data_input_functions.c
 source/items/weapons.c
 source/main/main.c
+source/math/geometry.c
 source/objects/objects.c
 source/rasterizer/xbox/rasterizer_xbox_decals.c
 source/render/render_contrails.c
