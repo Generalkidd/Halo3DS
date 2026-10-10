@@ -24,10 +24,10 @@ upstream release remains Xbox-only.
 1. Download the setup tool for **Windows 10/11** or **Windows 7** from the
    [releases page](https://github.com/Generalkidd/Halo3DS/releases). Both include the game executable. The Windows 7 version is
    also compatible with Wine on Linux and Mac OS. 
-3. Open the tool and select your **Xbox ISO/XISO** or **dumped maps folder**.
-4. Select your SD card's drive, such as `H:\`, and click **Prepare SD card**.
+2. Open the tool and select your **Xbox ISO/XISO** or **dumped maps folder**.
+3. Select your SD card's drive, such as `H:\`, and click **Prepare SD card**.
    Leave the card connected until setup finishes.
-5. Safely eject the card, put it back in your console, and launch **Halo3DS**
+4. Safely eject the card, put it back in your console, and launch **Halo3DS**
    from the Homebrew Launcher. The first load may take a while.
 
 Use the English North American retail Xbox release. If you're using a maps
@@ -66,6 +66,8 @@ Check logs before sharing them, and don't include game files or firmware.
 
 [Developer notes](docs/DEVELOPMENT.md) cover building the game and both setup
 tools, the code layout, testing, and details to watch out for when making changes.
+The [integration plan for the original author](docs/INTEGRATION_PLAN.md) explains
+the proposed review order, what is ready, and what still needs hardware testing.
 The [modding guide](port/n3ds/MODDING.md) points to gameplay, bot, renderer,
 cache and campaign extension code.
 For the setup tools, start with the [Visual Studio solution instructions](docs/DEVELOPMENT.md#visual-studio).

@@ -208,6 +208,9 @@ static void n3ds_multiplayer_banshees_update(const char *base)
     }
 }
 
+/* Campaign areas stream in as the player moves. Wait until a player is close
+ * and the point belongs to the active area, then add one optional pickup.
+ * The saved placed mask prevents duplicates after a checkpoint restore. */
 /* Kevin Boggs: n3ds_campaign_extras_update - New3DS integration. */
 void n3ds_campaign_extras_update(long player_unit)
 {

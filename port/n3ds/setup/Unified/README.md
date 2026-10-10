@@ -5,6 +5,12 @@ data for one New 3DS launcher. It installs Xbox campaign and multiplayer maps,
 PC retail multiplayer maps, and `3ds/Halo3DS/Halo3DS.3dsx`. The package contains
 no disc image, map, sound, HUD, XBE, DSP firmware, or extracted game asset.
 
+**At a glance:** extract the ZIP on your Windows PC, run the command below
+with your own game sources and SD card root, check its `-WhatIf` result, then
+repeat without `-WhatIf` to install. The installer prints three steps so you
+can see which source it is checking. If a check fails, correct that source and
+rerun it; a failed preflight does not write to the SD card.
+
 Use the supported English North American Xbox retail XISO and PC retail v7
 maps. For the PC source, give either its ISO or a complete extracted `maps`
 folder containing `ui.map`, `bitmaps.map`, `sounds.map`, and `bloodgulch.map`.

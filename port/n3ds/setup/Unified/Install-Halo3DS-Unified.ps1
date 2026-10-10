@@ -56,9 +56,11 @@ if ($XboxCompatibilityFile) { $XboxCompatibilityFile = (Resolve-Path -LiteralPat
 
 $xboxArgs = @('--validate',$xbox,$sd)
 if ($XboxCompatibilityFile) { $xboxArgs += $XboxCompatibilityFile }
+Write-Output 'Step 1 of 3: checking the Xbox game source and SD destination...'
 & $xboxCli @xboxArgs
 if ($LASTEXITCODE -ne 0) { throw 'Xbox source validation failed; nothing was installed.' }
 
+Write-Output 'Step 2 of 3: checking the PC maps and unified launcher...'
 $pcArgs = @{ SdRoot=$sd; LauncherPath=$pcLauncher; RuntimeManifest=$pcManifest; UnifiedLauncher=$true; WhatIf=$true }
 if ($PcIso) { $pcArgs.PcIso = $pc } else { $pcArgs.PcMapsFolder = $pc }
 if ($PcMapNames.Count) { $pcArgs.MapNames = @($PcMapNames) + @('bloodgulch') | Select-Object -Unique }
@@ -68,11 +70,12 @@ if ($SevenZipPath) { $pcArgs.SevenZipPath = $SevenZipPath }
 if ($LASTEXITCODE -ne 0 -or !$?) { throw 'PC source validation failed; nothing was installed.' }
 
 if ($dryRun) {
-    Write-Output 'What if: both game sources and the unified launcher passed preflight; one Halo3DS launcher would be installed on the selected SD card.'
+    Write-Output 'Step 3 of 3: dry run complete. Both game sources and the unified launcher passed preflight; one Halo3DS launcher would be installed on the selected SD card.'
     return
 }
 if (!$PSCmdlet.ShouldProcess($sd,'Install Xbox and PC Halo3DS data with one launcher')) { return }
 
+Write-Output 'Step 3 of 3: installing verified game data and the unified launcher...'
 $xboxArgs[0] = '--install'
 & $xboxCli @xboxArgs
 if ($LASTEXITCODE -ne 0) { throw 'Xbox installation failed. No PC installation was started; rerun after correcting the Xbox source.' }
