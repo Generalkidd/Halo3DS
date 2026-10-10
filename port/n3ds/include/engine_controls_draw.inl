@@ -120,16 +120,32 @@ void n3ds_gpu_match_scoreboard(const struct native_score_row *rows,int count)
  /* Only the touch button calls this; SELECT uses the original upper-screen
   * scoreboard. Leave the lower touch controls visible during either path. */
  void *saved=n3ds_gpu_texture_bound(0);n3ds_gpu_hud_screen(0);n3ds_gpu_hud_layout(0);
- controls_quad(24,24,352,192,0xffb97535,1);controls_quad(26,26,348,188,0xff221a12,1);
- controls_text(40,34,"MULTIPLAYER SCORE",0xfff6dcaa,1);
- controls_text(40,49,"PLAYER          SCORE  K  D  K/D MED",0xffa8d8ec,1);
+ if(count<0)count=0;if(count>16)count=16;
+ int height=62+count*10;
+ controls_quad(12,12,376,height,0xffb97535,1);
+ controls_quad(14,14,372,height-4,0xff221a12,1);
+ controls_text(24,21,"MATCH SCORE",0xfff6dcaa,1);
+ controls_quad(18,38,364,17,0xff403024,1);
+ controls_text(24,43,"PLAYER",0xffa8d8ec,1);
+ controls_text(184,43,"SCORE",0xffa8d8ec,1);
+ controls_text(240,43,"K",0xffa8d8ec,1);
+ controls_text(264,43,"D",0xffa8d8ec,1);
+ controls_text(288,43,"K/D",0xffa8d8ec,1);
+ controls_text(344,43,"MED",0xffa8d8ec,1);
  for(int i=0;i<count && i<16;++i){
   int ratio=(int)rows[i].kills*10/(rows[i].deaths>0?rows[i].deaths:1);
   if(ratio>999)ratio=999;
-  char line[64];snprintf(line,sizeof(line),"%-14.14s %5ld %2d %2d %2d.%1d %3d",
-   rows[i].name,rows[i].score,rows[i].kills,rows[i].deaths,
-   ratio/10,ratio%10,rows[i].medals);
-  controls_text(40,63+i*9,line,rows[i].local?0xff6de5ff:0xffe8e4d5,1);
+  int y=59+i*10;
+  if(rows[i].local)controls_quad(18,y-2,364,10,0xff51462d,1);
+  else if(i&1)controls_quad(18,y-2,364,10,0xff2d241b,1);
+  unsigned int ink=rows[i].local?0xff6de5ff:0xffe8e4d5;
+  char value[24];
+  controls_text(24,y,rows[i].name,ink,1);
+  snprintf(value,sizeof(value),"%5ld",rows[i].score);controls_text(184,y,value,ink,1);
+  snprintf(value,sizeof(value),"%2d",rows[i].kills);controls_text(232,y,value,ink,1);
+  snprintf(value,sizeof(value),"%2d",rows[i].deaths);controls_text(256,y,value,ink,1);
+  snprintf(value,sizeof(value),"%2d.%1d",ratio/10,ratio%10);controls_text(288,y,value,ink,1);
+  snprintf(value,sizeof(value),"%3d",rows[i].medals);controls_text(344,y,value,ink,1);
  }
  n3ds_gpu_hud_screen(0);n3ds_gpu_texture_bind(0,saved);n3ds_gpu_world_state_restore();
 }
