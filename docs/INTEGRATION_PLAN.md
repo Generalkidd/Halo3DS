@@ -78,6 +78,18 @@ New 3DS testing for campaign progression, visual quality, effects, busy bot
 combat, and save and restore behavior. Emulator results should be reported as
 emulator results.
 
+The PC map selector now keeps every BSP triangle in the 19 supported retail
+multiplayer maps; the previous 2,048-triangle limit left visible gaps. Death
+Island scales its oversized decorative water only for the preview and uses dry
+terrain to set the initial zoom. The lower screen gives the map most of its
+space, with mode, bots, difficulty, and texture preference on the top screen.
+Emulator replays checked map selection, gear/back navigation, option changes,
+Death Island, and the optional NAV overlay without a fatal error. A New 3DS XL
+Death Island match with seven bots crashed in an earlier launcher while a
+layered shader requested a texture at the 8 MiB cache limit. The current code
+reuses its base texture for that layer when allocation fails; that visual
+fallback still needs a physical replay of the same match and tank firing.
+
 For a reproducible review, run `python port/n3ds/tools/check_attribution.py`
 and `python tools/check_repository_contents.py --working-tree`,
 build with the command in [developer notes](DEVELOPMENT.md), and run the

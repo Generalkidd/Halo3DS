@@ -201,12 +201,26 @@ void n3ds_gpu_pc_local_menu(int map,int mode,int bots,int difficulty,int weapon_
  n3ds_pc_preview_draw(map,page,field,weapon_set,vehicle_choice);
  n3ds_gpu_hud_layout(0);n3ds_gpu_hud_screen(0);
  controls_quad(0,0,400,240,0xff24150c,1);
- controls_text_center(400,45,page?"MATCH EQUIPMENT":"LOCAL MULTIPLAYER",0xffffffff,1);
- controls_text_center(400,84,page?"Pick map weapon and vehicle rules.":"Choose a PC retail map and original game mode.",0xffe9d6aa,1);
- controls_text_center(400,116,page?"Normal keeps PC map weapon pickups.":"The match runs on this 3DS with bots.",0xffe9d6aa,1);
- controls_text_center(400,157,"Drag to turn  L/R: zoom",0xffffffff,1);
- if(!page)controls_text_center(400,138,"VIEW cycles styles  BACKS hides rear faces",0xffe9d6aa,1);
- controls_text_center(400,179,page?"X: match setup  B: back":"X: equipment  B: back",0xffffffff,1);
+ if(page){
+  controls_text_center(400,45,"MATCH EQUIPMENT",0xffffffff,1);
+  controls_text_center(400,84,"Pick map weapon and vehicle rules.",0xffe9d6aa,1);
+  controls_text_center(400,116,"Normal keeps PC map weapon pickups.",0xffe9d6aa,1);
+  controls_text_center(400,157,"Drag to turn  L/R: zoom",0xffffffff,1);
+  controls_text_center(400,179,"X: match setup  B: back",0xffffffff,1);
+ }else{
+  controls_text_center(400,23,"LOCAL MULTIPLAYER",0xffffffff,1);
+  controls_text_center(400,52,"D-pad up/down: option   left/right: change",0xffe9d6aa,1);
+  for(int row=1;row<(original?4:5);++row){
+   float y=78+(row-1)*31;
+   controls_quad(24,y,352,27,field==row?0xff805527:0xff35251a,1);
+   if(row==1)snprintf(line,sizeof(line),"Mode: %s",modes[mode]);
+   else if(row==2)snprintf(line,sizeof(line),"Bots: %d",bots);
+   else if(row==3)snprintf(line,sizeof(line),"Difficulty: %s",difficulties[difficulty]);
+   else snprintf(line,sizeof(line),"PC textures: %s",high_textures?"128 + mip":"64 standard");
+   controls_text_center(400,y+8,line,0xffffffff,1);
+  }
+  controls_text_center(400,218,"SELECT: close   X: equipment   A: start",0xffe9d6aa,1);
+ }
  n3ds_gpu_hud_screen(1);
  controls_quad(0,0,320,23,0xff24150c,0);
  controls_quad(0,22,320,1,0xffbd8142,0);
@@ -223,8 +237,8 @@ void n3ds_gpu_pc_local_menu(int map,int mode,int bots,int difficulty,int weapon_
   controls_text(255,35,n3ds_pc_preview_nav_enabled()?"NAV ON":"NAV OFF",0xfffbd29b,0);
  }else if(field==0 && weapon_set==10)controls_text_center(320,81,"NO WEAPON",0xfffbd29b,0);
  else if(field==1 && vehicle_choice==2)controls_text_center(320,81,"NO VEHICLES",0xfffbd29b,0);
- controls_quad(0,144,320,96,0xff24150c,0);
  if(page){
+  controls_quad(0,144,320,96,0xff24150c,0);
   for(int row=0;row<2;++row){
    float y=148+row*24;controls_quad(12,y,296,22,field==row?0xff805527:0xff35251a,0);
    snprintf(line,sizeof(line),"%s: %s",row?"Vehicles":"Weapons",row?vehicles[vehicle_choice]:weapons[weapon_set]);
@@ -232,17 +246,12 @@ void n3ds_gpu_pc_local_menu(int map,int mode,int bots,int difficulty,int weapon_
   }
   controls_text_center(320,193,"All adds Banshees to 3 maps",0xffe9d6aa,0);
  }else{
-  for(int row=0;row<(original?4:5);++row){
-   float y=148+row*10;controls_quad(12,y,296,10,field==row?0xff805527:0xff35251a,0);
-   if(row==0)snprintf(line,sizeof(line),"Map %02d/19: %s",map+1,maps[map]);
-   else if(row==1)snprintf(line,sizeof(line),"Mode: %s",modes[mode]);
-   else if(row==2)snprintf(line,sizeof(line),"Bots: %d",bots);
-   else if(row==3)snprintf(line,sizeof(line),"Difficulty: %s",difficulties[difficulty]);
-   else snprintf(line,sizeof(line),"PC textures: %s",high_textures?"128 + mip":"64 standard");
-   controls_text_center(320,y+1,line,0xffffffff,0);
-  }
+  controls_quad(0,180,320,60,0xff24150c,0);
+  controls_quad(12,182,296,22,field==0?0xff805527:0xff35251a,0);
+  snprintf(line,sizeof(line),"MAP %02d/19: %s  < >",map+1,maps[map]);
+  controls_text_center(320,189,line,0xffffffff,0);
  }
- if(error)controls_text_center(320,193,"Save or launch failed",0xff70a0ff,0);
+ if(error)controls_text_center(320,page?193:171,"Save or launch failed",0xff70a0ff,0);
  controls_quad(16,205,136,30,0xffbd8142,0);controls_quad(18,207,132,26,0xff654321,0);
  controls_quad(168,205,136,30,0xffbd8142,0);controls_quad(170,207,132,26,0xff3c291a,0);
  controls_text(55,216,page?"A: DONE":"A: START",0xffffffff,0);controls_text(206,216,page?"X: BACK":"X: GEAR",0xffffffff,0);

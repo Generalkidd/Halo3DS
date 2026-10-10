@@ -38,8 +38,11 @@ your own prior installation. ISO extraction needs 7-Zip; pass `-SevenZipPath`
 if it is not found. The Xbox converter uses .NET Framework 3.5.
 
 The Xbox main menu starts Campaign and Xbox multiplayer. Press **SELECT** for
-PC Local Multiplayer, then choose a PC map, mode, bot count, difficulty, and on New 3DS,
-tap **PC textures** to switch between standard 64-pixel textures and the
+PC Local Multiplayer. The lower screen is the map preview: tap the map name
+to advance through maps, or select it with the D-pad and press left/right.
+Mode, bot count, difficulty, and on New 3DS the PC texture option appear on
+the top screen. Use D-pad up/down to select an option and left/right to change
+it. **PC textures** switches between standard 64-pixel textures and the
 experimental 128-pixel texture with mip. This choice saves immediately and
 applies when the map loads. Difficulty changes ordinary bot accuracy and firing
 rate. ChaoticSPARTAN1 and KodeBreaker16 each have an independent 50% chance
@@ -60,7 +63,9 @@ The lower screen previews the selected map's geometry. Tap **VIEW** to cycle
 shows interiors through ceilings and walls; the combined view adds their
 edges. Textured Lit reads base textures from the installed PC maps. Tap
 **BACKS ON/OFF** to include or cull rear facing map surfaces, and **NAV ON/OFF**
-to show or hide the blue walkable-surface overlay. The gear page previews the
+to show or hide the blue walkable-surface overlay. NAV starts off so the map
+textures remain visible. Death Island's water is shrunk in this menu preview;
+only its playable terrain sets the camera scale. The gear page previews the
 selected weapon or vehicle as a textured blue hologram from that PC map, with
 three-point studio lighting that follows the turntable camera.
 Drag a preview to turn it, use **L/R** to zoom, or leave it idle for a slow

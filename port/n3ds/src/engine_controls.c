@@ -269,16 +269,13 @@ void n3ds_pc_local_menu_filter(struct native_input_sample *sample)
   if(delta)pc_menu_error=0;
  }
  else if((fresh&NATIVE_KEY_TOUCH) && sample->touch_x>=12 && sample->touch_x<308 &&
-         sample->touch_y>=148 && sample->touch_y<200){
-  int row=pc_menu_page?(sample->touch_y-148)/24:(sample->touch_y-148)/10;
-  if(row<pc_menu_field_count()){
+         ((!pc_menu_page && sample->touch_y>=182 && sample->touch_y<204) ||
+          (pc_menu_page && sample->touch_y>=148 && sample->touch_y<196))){
+  if(!pc_menu_page){pc_menu_field=0;pc_menu_map=(pc_menu_map+1)%19;pc_menu_error=0;}
+  else {int row=(sample->touch_y-148)/24;
    pc_menu_field=row;
-   if(pc_menu_page){
-    if(row==0)pc_menu_weapon_set=(pc_menu_weapon_set+1)%13;
-    else pc_menu_vehicle_choice=(pc_menu_vehicle_choice+1)%6;
-   }else if(row==3)pc_menu_difficulty=(pc_menu_difficulty+1)%3;
-   else if(row==4)pc_menu_toggle_textures();
-   else pc_menu_error=0;
+   if(row==0)pc_menu_weapon_set=(pc_menu_weapon_set+1)%13;
+   else pc_menu_vehicle_choice=(pc_menu_vehicle_choice+1)%6;
   }
  }
  else if(pc_menu_page && ((fresh&NATIVE_KEY_A) || ((fresh&NATIVE_KEY_TOUCH) &&

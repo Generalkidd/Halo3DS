@@ -20,7 +20,9 @@
 void n3ds_log(const char *message);
 long long n3ds_engine_ticks(void);
 long long n3ds_engine_tick_frequency(void);
-enum { PREVIEW_TRIANGLES=2048, PREVIEW_VERTICES=PREVIEW_TRIANGLES*3,
+/* 21,840 triangles fit 16-bit indices (65,520 vertices). The largest PC
+ * multiplayer BSP has 21,304 faces; preserving them avoids preview holes. */
+enum { PREVIEW_TRIANGLES=21840, PREVIEW_VERTICES=PREVIEW_TRIANGLES*3,
        NAV_TRIANGLES=1024, PREVIEW_TEXTURE_SIZE=64, PREVIEW_TEXTURE_LIMIT=48,
        MODEL_GEOMETRIES=128,
        VIEW_LIT=0, VIEW_XRAY=1, VIEW_WIRE=2, VIEW_XRAY_WIRE=3,
@@ -42,9 +44,10 @@ static unsigned short *indices;
 static float *material_uv;
 static float *model_normals;
 static unsigned int triangles;
+static float focus_lo[3],focus_hi[3];static int focus_bounds_valid;
 static struct native_widget_vertex *nav_vertices;
 static unsigned int nav_triangles;
-static int nav_visible=1,backfaces_enabled=1,view_mode=VIEW_LIT,touch_held,touch_owner;
+static int nav_visible=0,backfaces_enabled=1,view_mode=VIEW_LIT,touch_held,touch_owner;
 static int selected_map=-1,selected_page=-1,selected_field=-1,selected_weapon=-1,selected_vehicle=-1;
 static int state_loaded;
 static int uv_mode;
@@ -63,7 +66,7 @@ void n3ds_pc_preview_close(void)
     free(material_uv);material_uv=NULL;
     free(model_normals);model_normals=NULL;
     free(nav_vertices);nav_vertices=NULL;nav_triangles=0;
-    vertices=NULL;indices=NULL;triangles=0;state_loaded=0;
+    vertices=NULL;indices=NULL;triangles=0;state_loaded=0;focus_bounds_valid=0;
     uv_mode=0;model_detail=-1;model_geometries=0;
     if(white){n3ds_gpu_texture_destroy(white);white=NULL;}
     if(xray_texture){n3ds_gpu_texture_destroy(xray_texture);xray_texture=NULL;}
@@ -106,13 +109,13 @@ static void emit_triangle(const float *a,const float *b,const float *c,int kind,
     }
     ++triangles;
 }
-struct preview_face {float points[9],uv[6],area;uint32_t shader_datum;};
+struct preview_face {float points[9],uv[6],area;uint32_t shader_datum;unsigned char water;};
 static void face_swap(struct preview_face *a,struct preview_face *b)
 {struct preview_face tmp=*a;*a=*b;*b=tmp;}
 /* Retain broad surfaces rather than every Nth triangle. The latter leaves
  * isolated specks across large Halo BSPs and hides their terrain shape. */
 static void face_keep(struct preview_face *heap,unsigned int *count,unsigned int limit,
-    const float *a,const float *b,const float *c,const float *uv,uint32_t shader_datum)
+    const float *a,const float *b,const float *c,const float *uv,uint32_t shader_datum,int water)
 {
     float u[3],v[3],cross[3];
     for(int i=0;i<3;++i){u[i]=b[i]-a[i];v[i]=c[i]-a[i];}
@@ -128,7 +131,7 @@ static void face_keep(struct preview_face *heap,unsigned int *count,unsigned int
     memcpy(face->points,a,3*sizeof(float));memcpy(face->points+3,b,3*sizeof(float));
     memcpy(face->points+6,c,3*sizeof(float));
     if(uv)memcpy(face->uv,uv,sizeof(face->uv));else memset(face->uv,0,sizeof(face->uv));
-    face->shader_datum=shader_datum;face->area=area;
+    face->shader_datum=shader_datum;face->area=area;face->water=(unsigned char)water;
     if(index){
         while(index){unsigned int parent=(index-1)/2;
             if(heap[parent].area<=heap[index].area)break;
@@ -150,8 +153,17 @@ static void load_nav(const struct halo_pc_bsp *bsp)
     for(uint32_t surface=0;surface<bsp->nav_surface_count;++surface){
         float points[8][3];
         int count=halo_pc_bsp_nav_polygon(bsp,surface,points);
+        if(count && selected_map==7 && focus_bounds_valid){
+            int outside=0;
+            for(int corner=0;corner<count && !outside;++corner)for(int axis=0;axis<2;++axis){
+                float pad=(focus_hi[axis]-focus_lo[axis])*.1f;
+                if(points[corner][axis]<focus_lo[axis]-pad ||
+                   points[corner][axis]>focus_hi[axis]+pad){outside=1;break;}
+            }
+            if(outside)continue;
+        }
         for(int i=1;i<count-1;++i)
-            face_keep(heap,&kept,NAV_TRIANGLES,points[0],points[i],points[i+1],NULL,0);
+            face_keep(heap,&kept,NAV_TRIANGLES,points[0],points[i],points[i+1],NULL,0,0);
     }
     if(kept){
         nav_vertices=malloc((size_t)kept*3*sizeof(*nav_vertices));
@@ -265,6 +277,12 @@ static int load_bsp(struct halo_cache *cache)
             struct halo_pc_bsp_material m;
             if(!halo_pc_bsp_material_at(&bsp,lm,mi,&m,error,sizeof(error)))continue;
             if(!m.surface_count || !m.vertex_count || m.vertex_count>65535)continue;
+            struct halo_cache_tag shader;
+            int water=m.shader_group==0x73776174u;
+            if(find_tag(cache,m.shader_datum,0,&shader)){
+                if(strstr(shader.name,"underwater"))water=2;
+                else if(strstr(shader.name,"waves") || strstr(shader.name,"water"))water=1;
+            }
             float *positions=malloc((size_t)m.vertex_count*5*sizeof(float));
             unsigned short *surface=malloc((size_t)m.surface_count*3*sizeof(short));
             if(positions && surface && halo_pc_bsp_read_material_uv(&bsp,&m,positions,
@@ -277,12 +295,29 @@ static int load_bsp(struct halo_cache *cache)
                     for(int channel=0;channel<6;++channel)
                         if(!isfinite(uv[channel]) || fabsf(uv[channel])>100000.f)uv[channel]=0.f;
                     face_keep(heap,&kept,PREVIEW_TRIANGLES,a,b,c,uv,
-                        m.shader_group==0x73656e76u?m.shader_datum:0xffffffffu);
+                        m.shader_group==0x73656e76u?m.shader_datum:0xffffffffu,water);
                 }
             }
             free(positions);free(surface);
         }
     }
+    /* Water is decoration in this selector. It cannot determine camera scale:
+     * Death Island's underwater quad reaches over a kilometer from the island. */
+    for(int axis=0;axis<3;++axis){focus_lo[axis]=FLT_MAX;focus_hi[axis]=-FLT_MAX;}
+    for(unsigned int i=0;i<kept;++i)if(!heap[i].water)
+        for(int corner=0;corner<3;++corner)for(int axis=0;axis<3;++axis){
+            float x=heap[i].points[corner*3+axis];
+            if(x<focus_lo[axis])focus_lo[axis]=x;
+            if(x>focus_hi[axis])focus_hi[axis]=x;
+        }
+    focus_bounds_valid=focus_lo[0]<focus_hi[0] && focus_lo[1]<focus_hi[1];
+    if(focus_bounds_valid && !strcmp(map_files[selected_map],"deathisland"))
+        for(unsigned int i=0;i<kept;++i)if(heap[i].water)
+            for(int corner=0;corner<3;++corner)for(int axis=0;axis<2;++axis){
+                float center=(focus_lo[axis]+focus_hi[axis])*.5f;
+                float *x=heap[i].points+corner*3+axis;
+                *x=center+(*x-center)*(heap[i].water==2?.08f:.84f);
+            }
     qsort(heap,kept,sizeof(*heap),face_material_compare);
     for(unsigned int i=0;i<kept;++i){
         if(!batch_count || batches[batch_count-1].shader_datum!=heap[i].shader_datum){
@@ -292,6 +327,11 @@ static int load_bsp(struct halo_cache *cache)
         unsigned int before=triangles;
         emit_triangle(heap[i].points,heap[i].points+3,heap[i].points+6,0,heap[i].uv,NULL);
         batches[batch_count-1].count+=(triangles-before)*3u;
+        if(heap[i].water && triangles>before)
+            for(unsigned int corner=0;corner<3;++corner){
+                struct native_render_vertex *v=vertices+before*3u+corner;
+                v->color[0]*=.22f;v->color[1]*=.49f;v->color[2]*=.76f;
+            }
     }
     material_uv=malloc((size_t)triangles*3u*2u*sizeof(float));
     if(material_uv)for(unsigned int i=0;i<triangles*3u;++i){
@@ -390,7 +430,8 @@ static int load_model(struct halo_cache *cache,const char *wanted,int kind)
 static void normalize_mesh(void)
 {
     float lo[3]={FLT_MAX,FLT_MAX,FLT_MAX},hi[3]={-FLT_MAX,-FLT_MAX,-FLT_MAX};
-    for(unsigned int i=0;i<triangles*3;++i)for(int a=0;a<3;++a){
+    if(focus_bounds_valid){memcpy(lo,focus_lo,sizeof(lo));memcpy(hi,focus_hi,sizeof(hi));}
+    else for(unsigned int i=0;i<triangles*3;++i)for(int a=0;a<3;++a){
         float x=vertices[i].position[a];if(x<lo[a])lo[a]=x;if(x>hi[a])hi[a]=x;
     }
     float span=fmaxf(hi[0]-lo[0],fmaxf(hi[1]-lo[1],hi[2]-lo[2]));
@@ -457,12 +498,13 @@ void n3ds_pc_preview_input(const struct native_input_sample *sample)
             }
         }
         if(touch_owner==TOUCH_NONE && sample->touch_x>=12 && sample->touch_x<308 &&
-           sample->touch_y>=24 && sample->touch_y<145){
+           sample->touch_y>=24 && sample->touch_y<(selected_page?145:180)){
             touch_owner=TOUCH_DRAG;dragging=1;
             last_x=sample->touch_x;last_y=sample->touch_y;idle_frames=0;
         }
     }else if(touch_owner==TOUCH_DRAG){
-        if(sample->touch_x>=12 && sample->touch_x<308 && sample->touch_y>=24 && sample->touch_y<145){
+        if(sample->touch_x>=12 && sample->touch_x<308 && sample->touch_y>=24 &&
+           sample->touch_y<(selected_page?145:180)){
             yaw+=(sample->touch_x-last_x)*.013f;
             elevation=fmaxf(.28f,fminf(1.30f,elevation+(sample->touch_y-last_y)*.008f));
             last_x=sample->touch_x;last_y=sample->touch_y;dragging=1;idle_frames=0;
@@ -548,9 +590,8 @@ void n3ds_pc_preview_draw(int map,int page,int field,int weapon_set,int vehicle_
     float distance=zoom*(page?1.8f:1.f);
     float eye[3]={distance*cosf(yaw)*cosf(elevation),distance*sinf(yaw)*cosf(elevation),
         distance*sinf(elevation)};
-    /* The preview occupies the upper 120 pixels; aim below mesh center so
-     * its visual center sits above the controls instead of behind them. */
-    float forward[3]={-eye[0],-eye[1],-.45f-eye[2]};
+    /* Aim the miniature above the lower map selector and action buttons. */
+    float forward[3]={-eye[0],-eye[1],(page?-.45f:-.20f)-eye[2]};
     float length=sqrtf(forward[0]*forward[0]+forward[1]*forward[1]+forward[2]*forward[2]);
     struct native_render_camera camera={0};
     for(int i=0;i<3;++i){camera.position[i]=eye[i];camera.forward[i]=forward[i]/length;}

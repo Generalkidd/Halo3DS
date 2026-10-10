@@ -366,8 +366,12 @@ void n3ds_chicago_model_draw(const struct shader *shader,short permutation,
             rasterizer_set_texture_direct(four?0:(short)m,map->bitmap.index,bitmap_index);
         if(!bound) {
             char text[192]; snprintf(text,sizeof(text),"CHICAGO BITMAP: stage=%ld tag=%08lx permutation=%d cache_count=%u cache_bytes=%u",m,map->bitmap.index,permutation,n3ds_engine_texture_count(),n3ds_engine_texture_bytes()); n3ds_log(text);
+            /* A crowded frame can use every safe cache slot before a later
+             * Chicago layer is loaded. Keep its already-bound base image for
+             * that layer so the effect can draw without terminating play. */
+            void *base=n3ds_gpu_texture_bound(0);
+            if(!m || !base || !n3ds_gpu_texture_bind(four?0:(short)m,base))return;
         }
-        assert(bound);
         if(four) {
             bake.textures[m]=n3ds_gpu_texture_bound(0);
             bake.point[m]=!!(map->flags&1);bake.clamp_u[m]=!!(map->flags&4);bake.clamp_v[m]=!!(map->flags&8);
