@@ -77,7 +77,8 @@ static int allocate_mesh(void)
     indices=n3ds_gpu_geometry_optional_allocate(PREVIEW_VERTICES*sizeof(*indices));
     return vertices && indices;
 }
-static void emit_triangle(const float *a,const float *b,const float *c,int kind,const float *uv)
+static void emit_triangle(const float *a,const float *b,const float *c,int kind,
+    const float *uv,const float *const *smooth_normals)
 {
     if(triangles>=PREVIEW_TRIANGLES)return;
     float e0[3],e1[3],n[3];
@@ -94,8 +95,12 @@ static void emit_triangle(const float *a,const float *b,const float *c,int kind,
         struct native_render_vertex *v=vertices+triangles*3+j;
         for(int i=0;i<3;++i){v->position[i]=points[j][i];v->color[i]=base[kind][i]*light;}
         v->uv[0]=uv?uv[j*2]:0.f;v->uv[1]=uv?uv[j*2+1]:0.f;
-        if(kind && model_normals)for(int i=0;i<3;++i)
-            model_normals[(triangles*3+j)*3+i]=n[i]/area;
+        if(kind && model_normals){
+            const float *source=smooth_normals?smooth_normals[j]:NULL;
+            float length=source?sqrtf(source[0]*source[0]+source[1]*source[1]+source[2]*source[2]):0.f;
+            for(int i=0;i<3;++i)model_normals[(triangles*3+j)*3+i]=
+                isfinite(length) && length>.00001f?source[i]/length:n[i]/area;
+        }
         indices[triangles*3+j]=(unsigned short)(triangles*3+j);
     }
     ++triangles;
@@ -284,7 +289,7 @@ static int load_bsp(struct halo_cache *cache)
             *batch=(struct preview_batch){heap[i].shader_datum,triangles*3u,0,NULL};
         }
         unsigned int before=triangles;
-        emit_triangle(heap[i].points,heap[i].points+3,heap[i].points+6,0,heap[i].uv);
+        emit_triangle(heap[i].points,heap[i].points+3,heap[i].points+6,0,heap[i].uv,NULL);
         batches[batch_count-1].count+=(triangles-before)*3u;
     }
     material_uv=malloc((size_t)triangles*3u*2u*sizeof(float));
@@ -346,13 +351,13 @@ static int load_model(struct halo_cache *cache,const char *wanted,int kind)
             struct halo_pc_model_part part;
             if(!halo_pc_model_part_at(cache,&tag,chosen[g],p,&part,error,sizeof(error)) ||
                !part.vertex_count || part.vertex_count>65535)continue;
-            float *positions=malloc((size_t)part.vertex_count*5*sizeof(float));
+            float *positions=malloc((size_t)part.vertex_count*8*sizeof(float));
             unsigned short *strip=malloc(((size_t)part.strip_triangle_count+2u)*sizeof(short));
             uint32_t shader_datum=0xffffffffu;
             halo_pc_model_shader_datum(cache,&tag,part.shader_index,&shader_datum,
                 error,sizeof(error));
-            if(positions && strip && halo_pc_model_read_part_uv(cache,&part,positions,
-                (size_t)part.vertex_count*5,strip,part.strip_triangle_count+2u,error,sizeof(error))){
+            if(positions && strip && halo_pc_model_read_part_uv_normal(cache,&part,positions,
+                (size_t)part.vertex_count*8,strip,part.strip_triangle_count+2u,error,sizeof(error))){
                 if(batch_count>=PREVIEW_TRIANGLES){free(positions);free(strip);break;}
                 struct preview_batch *batch=batches+batch_count++;
                 *batch=(struct preview_batch){shader_datum,triangles*3u,0,NULL};
@@ -360,13 +365,14 @@ static int load_model(struct halo_cache *cache,const char *wanted,int kind)
                     if(global%step)continue;
                     unsigned short a=strip[t],b=strip[t+1],c=strip[t+2];
                     if(a==b || b==c || c==a)continue;
-                    const float *v[3]={positions+(t&1?b:a)*5,
-                        positions+(t&1?a:b)*5,positions+c*5};
+                    const float *v[3]={positions+(t&1?b:a)*8,
+                        positions+(t&1?a:b)*8,positions+c*8};
+                    const float *smooth[3]={v[0]+5,v[1]+5,v[2]+5};
                     float uv[6]={v[0][3],v[0][4],v[1][3],v[1][4],v[2][3],v[2][4]};
                     for(int channel=0;channel<6;++channel)
                         if(!isfinite(uv[channel]) || fabsf(uv[channel])>100000.f)uv[channel]=0.f;
                     unsigned int before=triangles;
-                    emit_triangle(v[0],v[1],v[2],kind,uv);
+                    emit_triangle(v[0],v[1],v[2],kind,uv,smooth);
                     batch->count+=(triangles-before)*3u;
                 }
             }else global+=part.strip_triangle_count;

@@ -62,4 +62,11 @@ int halo_pc_model_read_part_uv(const struct halo_cache *cache, const struct halo
                                uint16_t *indices, size_t index_count,
                                char *error, size_t error_size);
 
+/* Read xyz, uv, and authored xyz normal from each 0x44-byte PC vertex. */
+int halo_pc_model_read_part_uv_normal(const struct halo_cache *cache,
+                                      const struct halo_pc_model_part *part,
+                                      float *vertices, size_t vertex_floats,
+                                      uint16_t *indices, size_t index_count,
+                                      char *error, size_t error_size);
+
 #endif

@@ -283,3 +283,39 @@ int halo_pc_model_read_part_uv(const struct halo_cache *cache, const struct halo
     if (error && error_size) error[0] = '\0';
     return 1;
 }
+
+int halo_pc_model_read_part_uv_normal(const struct halo_cache *cache,
+                                      const struct halo_pc_model_part *part,
+                                      float *vertices, size_t vertex_floats,
+                                      uint16_t *indices, size_t index_count,
+                                      char *error, size_t error_size) {
+    uint8_t vertex[PC_VERTEX_BYTES];
+    uint8_t pair[2];
+    uint32_t i;
+    if (!cache || !cache->file || !part || !vertices || !indices ||
+        vertex_floats < (size_t)part->vertex_count * 8u ||
+        index_count < (size_t)part->strip_triangle_count + 2u)
+        return fail(error, error_size, "Model part normal buffers are too small");
+    if (part->vertex_file_offset > LONG_MAX || part->strip_file_offset > LONG_MAX ||
+        fseek(cache->file, (long)part->vertex_file_offset, SEEK_SET))
+        return fail(error, error_size, "Could not seek to model vertices");
+    for (i = 0; i < part->vertex_count; i++) {
+        float *out = vertices + (size_t)i * 8u;
+        if (fread(vertex, 1, sizeof(vertex), cache->file) != sizeof(vertex))
+            return fail(error, error_size, "Could not read model vertices");
+        memcpy(out, vertex, 3u * sizeof(float));
+        memcpy(out + 3u, vertex + 48u, 2u * sizeof(float));
+        memcpy(out + 5u, vertex + 12u, 3u * sizeof(float));
+    }
+    if (fseek(cache->file, (long)part->strip_file_offset, SEEK_SET))
+        return fail(error, error_size, "Could not seek to model strip");
+    for (i = 0; i < part->strip_triangle_count + 2u; i++) {
+        if (fread(pair, 1, 2, cache->file) != 2)
+            return fail(error, error_size, "Could not read model strip");
+        indices[i] = (uint16_t)((uint16_t)pair[0] | (uint16_t)pair[1] << 8);
+        if (indices[i] >= part->vertex_count)
+            return fail(error, error_size, "Model strip index exceeds vertex count");
+    }
+    if (error && error_size) error[0] = '\0';
+    return 1;
+}
