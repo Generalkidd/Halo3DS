@@ -124,6 +124,18 @@ static void flame_stream_lookup(void)
         break;
     }
 }
+/* Kevin Boggs: flame_owner_firing - New3DS integration. */
+static int flame_owner_firing(long unit_index)
+{
+    const struct unit_datum *unit=unit_index==NONE?NULL:unit_try_and_get(unit_index);
+    if(!unit || unit->unit.current_weapon_index<0 ||
+       unit->unit.current_weapon_index>=MAXIMUM_WEAPONS_PER_UNIT) return 0;
+    long weapon_index=unit->unit.weapon_object_indices[unit->unit.current_weapon_index];
+    const struct weapon_datum *weapon=weapon_index==NONE?NULL:weapon_try_and_get(weapon_index);
+    const char *name=weapon?tag_get_name(weapon->definition_index):NULL;
+    return name && !strcmp(name,"weapons\\flamethrower\\flamethrower") &&
+           game_time_get()-weapon->weapon.game_time_last_fired<=5;
+}
 /* Kevin Boggs: display the original simulated flamethrower projectiles as a visible jet. */
 /* Kevin Boggs: flame_stream_draw - New3DS integration. */
 static void flame_stream_draw(void)
@@ -137,94 +149,86 @@ static void flame_stream_draw(void)
     object_iterator_new(&iterator,_object_mask_projectile,0);
     unsigned int used=0;
     short image=NONE;
-    unsigned int flame_count=0;
+    unsigned int flame_count=0,local_projectiles=0,remote_projectiles=0;
     float local_depth=0.f;
-    int local_near=0,local_firing=0;
     long player=local_player_get_player_index(0);
     long local_unit=player==NONE?NONE:player_get(player)->unit_index;
-    const struct unit_datum *unit=local_unit==NONE?NULL:unit_try_and_get(local_unit);
-    if(unit && unit->unit.current_weapon_index>=0 &&
-       unit->unit.current_weapon_index<MAXIMUM_WEAPONS_PER_UNIT) {
-        long weapon_index=unit->unit.weapon_object_indices[unit->unit.current_weapon_index];
-        const struct weapon_datum *weapon=weapon_index==NONE?NULL:weapon_try_and_get(weapon_index);
-        const char *weapon_name=weapon?tag_get_name(weapon->definition_index):NULL;
-        local_firing=weapon_name && !strcmp(weapon_name,"weapons\\flamethrower\\flamethrower") &&
-            game_time_get()-weapon->weapon.game_time_last_fired<=2;
-    }
+    int local_firing=flame_owner_firing(local_unit);
     static const unsigned char order[6]={0,1,2,0,2,3};
     while(object_iterator_next(&iterator)) {
         const struct object_datum *projectile=object_get(iterator.index);
         const char *name=tag_get_name(projectile->definition_index);
         if(!name || strcmp(name,"weapons\\flamethrower\\flame")) continue;
         ++flame_count;
-        if(local_firing) {
+        long owner_index=projectile->object.owner_object_index;
+        const struct unit_datum *owner=owner_index==NONE?NULL:unit_try_and_get(owner_index);
+        if(!owner || !flame_owner_firing(owner_index)) continue;
+        real_vector3d travel;
+        vector_from_points3d(&owner->object.position,&projectile->object.position,&travel);
+        /* The gameplay projectile may survive for seconds and travel up to
+         * 16 m. Its visible flame belongs to the short, active firing jet. */
+        if(dot_product3d(&travel,&travel)>25.f) continue;
+        if(owner_index==local_unit) {
+            ++local_projectiles;
             real_vector3d relative;
             vector_from_points3d(&render.camera.position,&projectile->object.position,&relative);
             float depth=dot_product3d(&relative,&render.camera.forward);
             float lateral_squared=dot_product3d(&relative,&relative)-depth*depth;
-            if(depth>0.f && depth<6.f && lateral_squared<.81f) {
+            if(depth>0.f && depth<5.f && lateral_squared<.81f) {
                 if(depth>local_depth) local_depth=depth;
-                if(depth<1.3f) local_near=1;
             }
+            continue;
         }
-        /* The original projectile lives for only a few frames. Velocity is
-         * distance per simulation tick; short samples behind it make its
-         * travel readable at 240p. */
-        for(unsigned int segment=0;segment<2;++segment) {
-            const struct flame_sprite *sprite=&flame_sprites[
-                ((unsigned int)iterator.index+segment)%flame_sprite_count];
-            if(used && (image!=sprite->image || used+6>NUMBEROF(flame_vertices))) {
-                flame_stream_flush(used,image);used=0;
-            }
-            image=sprite->image;
-            real_point3d center=projectile->object.position;
+        ++remote_projectiles;
+        const struct flame_sprite *sprite=&flame_sprites[(unsigned int)iterator.index%flame_sprite_count];
+        if(used && (image!=sprite->image || used+6>NUMBEROF(flame_vertices))) {
+            flame_stream_flush(used,image);used=0;
+        }
+        image=sprite->image;
+        const float radius=.14f;
+        for(unsigned int corner=0;corner<6;++corner) {
+            struct native_widget_vertex *v=flame_vertices+used+corner;
+            int index=order[corner];
+            float x=(index==0 || index==3)?-radius:radius;
+            float y=(index<2)?-radius:radius;
             for(int axis=0;axis<3;++axis)
-                center.n[axis]-=projectile->object.translational_velocity.n[axis]*(.55f*segment);
-            real_vector3d from_camera;
-            vector_from_points3d(&render.camera.position,&center,&from_camera);
-            if(dot_product3d(&from_camera,&from_camera)<.64f) continue;
-            const float radius=.11f;
-            for(unsigned int corner=0;corner<6;++corner) {
-                struct native_widget_vertex *v=flame_vertices+used+corner;
-                int index=order[corner];
-                float x=(index==0 || index==3)?-radius:radius;
-                float y=(index<2)?-radius:radius;
-                for(int axis=0;axis<3;++axis)
-                    v->position[axis]=center.n[axis]+right.n[axis]*x+render.camera.up.n[axis]*y;
-                v->color[0]=1.f;v->color[1]=.5f;v->color[2]=.1f;
-                v->color[3]=.11f-.03f*segment;
-                v->uv[0]=(index==0 || index==3)?sprite->uv.x0:sprite->uv.x1;
-                v->uv[1]=(index<2)?sprite->uv.y1:sprite->uv.y0;
-            }
-            used+=6;
+                v->position[axis]=projectile->object.position.n[axis]+right.n[axis]*x+render.camera.up.n[axis]*y;
+            v->color[0]=1.f;v->color[1]=.45f;v->color[2]=.08f;
+            v->color[3]=.14f;
+            v->uv[0]=(index==0 || index==3)?sprite->uv.x0:sprite->uv.x1;
+            v->uv[1]=(index<2)?sprite->uv.y1:sprite->uv.y0;
         }
+        used+=6;
     }
     flame_stream_flush(used,image);
 #ifdef HALO_N3DS_EXPERIMENTAL_PC_ARSENAL
     if(flame_count && render.frame_index%15==0) {
         char message[128];
-        snprintf(message,sizeof(message),"FLAME RAY: projectiles=%u local_fire=%d near=%d depth=%.2f time=%ld",
-            flame_count,local_firing,local_near,local_depth,game_time_get());
+        snprintf(message,sizeof(message),"FLAME RAY: live=%u local_fire=%d local=%u remote=%u depth=%.2f time=%ld",
+            flame_count,local_firing,local_projectiles,remote_projectiles,local_depth,game_time_get());
         n3ds_log(message);
     }
 #endif
     /* Fill the gap from the local muzzle to its simulated projectile front.
      * These quads are visual only and vanish as soon as the original stream
      * stops. Other players' projectiles never originate at our camera. */
-    if(local_near && local_depth>1.3f) {
+    if(local_firing && local_projectiles) {
+        if(local_depth<1.45f)local_depth=1.45f;
         if(local_depth>4.5f)local_depth=4.5f;
         unsigned int count=0;
-        for(float depth=1.05f;depth<local_depth && count+6<=NUMBEROF(flame_vertices);depth+=.22f) {
-            const struct flame_sprite *sprite=&flame_sprites[(count/6)%flame_sprite_count];
+        float phase=(render.frame_index%5)*.06f;
+        for(float depth=.95f+phase;depth<local_depth && count+6<=NUMBEROF(flame_vertices);depth+=.30f) {
+            const struct flame_sprite *sprite=&flame_sprites[
+                ((unsigned int)(depth/.30f)+render.frame_index/5)%flame_sprite_count];
             if(count && image!=sprite->image) {
                 flame_stream_flush(count,image);count=0;
             }
             image=sprite->image;
             float fraction=depth/local_depth;
-            float radius=.13f+.08f*fraction;
+            float radius=.12f+.05f*fraction;
             float horizontal=.48f*(1.f-fraction);
             float vertical=-.30f*(1.f-fraction);
-            float jitter=((count/6)%3==0?.05f:(count/6)%3==1?-.04f:.015f)*fraction;
+            float jitter=((count/6)%3==0?.025f:(count/6)%3==1?-.02f:.01f)*fraction;
             real_point3d center=render.camera.position;
             for(int axis=0;axis<3;++axis)
                 center.n[axis]+=render.camera.forward.n[axis]*depth+
@@ -236,8 +240,8 @@ static void flame_stream_draw(void)
                 float y=(index<2)?-radius:radius;
                 for(int axis=0;axis<3;++axis)
                     v->position[axis]=center.n[axis]+right.n[axis]*x+render.camera.up.n[axis]*y;
-                v->color[0]=1.f;v->color[1]=.42f;v->color[2]=.055f;
-                v->color[3]=.36f-.10f*fraction;
+                v->color[0]=1.f;v->color[1]=.40f;v->color[2]=.05f;
+                v->color[3]=.22f-.12f*fraction;
                 v->uv[0]=(index==0 || index==3)?sprite->uv.x0:sprite->uv.x1;
                 v->uv[1]=(index<2)?sprite->uv.y1:sprite->uv.y0;
             }

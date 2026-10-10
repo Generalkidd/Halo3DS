@@ -117,12 +117,24 @@ void n3ds_gpu_match_scoreboard(const struct native_score_row *rows,int count)
  void *saved=n3ds_gpu_texture_bound(0);n3ds_gpu_hud_screen(0);n3ds_gpu_hud_layout(0);
  controls_quad(24,24,352,192,0xffb97535,1);controls_quad(26,26,348,188,0xff221a12,1);
  controls_text(40,34,"MULTIPLAYER SCORE",0xfff6dcaa,1);
- controls_text(40,49,"PLAYER          SCORE   K   D",0xffa8d8ec,1);
+ controls_text(40,49,"PLAYER            SCORE   K   D",0xffa8d8ec,1);
  for(int i=0;i<count && i<16;++i){
-  char line[48];snprintf(line,sizeof(line),"%-12.12s  %5ld  %2d  %2d",
+  char line[48];snprintf(line,sizeof(line),"%-15.15s  %5ld  %2d  %2d",
    rows[i].name,rows[i].score,rows[i].kills,rows[i].deaths);
   controls_text(40,63+i*9,line,rows[i].local?0xff6de5ff:0xffe8e4d5,1);
  }
+ n3ds_gpu_hud_screen(0);n3ds_gpu_texture_bind(0,saved);n3ds_gpu_world_state_restore();
+}
+/* Kevin Boggs: n3ds_gpu_match_postgame_lobby - New3DS integration. */
+void n3ds_gpu_match_postgame_lobby(void)
+{
+ void *saved=n3ds_gpu_texture_bound(0);n3ds_gpu_hud_screen(1);n3ds_gpu_hud_layout(0);
+ controls_panel_rect(8,8,304,52,0xffb97535);
+ controls_panel_rect(11,11,298,46,0xff221a12);
+ controls_panel_flush();
+ controls_text(88,17,"MATCH COMPLETE",0xfff6dcaa,0);
+ controls_text(80,34,"RETURN TO LOBBY",0xff7eecd7,0);
+ controls_text(120,47,"TAP OR B",0xffe9cf9a,0);
  n3ds_gpu_hud_screen(0);n3ds_gpu_texture_bind(0,saved);n3ds_gpu_world_state_restore();
 }
 void n3ds_gpu_controls_entry(void)

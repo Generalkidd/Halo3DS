@@ -103,15 +103,23 @@ bots from the selector, loaded the PC cache, registered both bots and captured
 an active gameplay frame. This is a local single-console match, not LAN play.
 The same replay succeeded with the isolated emulator's player profile set aside,
 so a saved profile is not required to enter this local match.
+ChaoticSPARTAN1 and KodeBreaker16 are independent named bot rolls, each with
+a 50% match chance when at least two AI slots are available. Both can appear
+together. KodeBreaker16 has a 10% chance on each spawn to receive the game's
+timed active camouflage powerup for 60 seconds.
 
 During a solo PC match, hold SELECT or the lower-right SCORE touch panel to
 display the player scoreboard on the top screen. Three other panels surround
 the motion tracker; they show press feedback but have no action yet. The
 Controller Settings screen offers a saved X/Y button swap and an optional
-bottom-screen FPS readout. Both start off. The Decals switch starts on and
+bottom-screen FPS readout. Switch X/Y starts on for new profiles; FPS starts
+off. Saved profiles keep their chosen values. The Decals switch starts on and
 controls creation and drawing of surface marks without changing their authored
 lifetimes. Weapon meters use compact bars below the ammo count to remain
 legible at the 3DS resolution.
+After a local multiplayer match ends, the upper part of the bottom screen
+shows Return to Lobby. Tap it or press B to reopen the Local Multiplayer
+selector with the previous map, mode and bot choices.
 
 For bounded local probes, `--diagnostic-pc-play MAP` accepts the nineteen stock
 PC multiplayer maps. `--diagnostic-pc-mode` selects Slayer, CTF, Oddball, King
@@ -597,7 +605,7 @@ texture bases, a generated 64-pixel mip level, and an 8 MiB gameplay cache
 against the standard 64-pixel profile. The original 3DS and Xbox maps keep
 their established profile. Existing version-one, version-two, and version-three
 controller settings load with their prior values preserved. Fields absent from
-older files take their defaults: X/Y swap and FPS OFF, Decals ON. The file
+older files take their defaults: Switch X/Y ON, FPS OFF, Decals ON. The file
 upgrades on save.
 
 `--diagnostic-high-textures` still

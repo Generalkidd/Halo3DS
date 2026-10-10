@@ -64,6 +64,14 @@ static long touch_unit(void)
     long unit=player_get(player)->unit_index;
     return unit!=NONE && unit==control_unit && !TEST_FLAG(unit_get(unit)->object.damage_flags,_object_dead_bit)?unit:NONE;
 }
+/* Kevin Boggs: n3ds_postgame_return_to_lobby - New3DS integration. */
+void n3ds_postgame_return_to_lobby(void)
+{
+#ifdef HALO_N3DS_PC_LOCAL_MENU
+    n3ds_pc_local_menu_queue_reopen();
+#endif
+    main_goto_main_menu();
+}
 /* Kevin Boggs: halo_touch_zone - New3DS integration. */
 static int halo_touch_zone(unsigned int x,unsigned int y)
 {
@@ -76,6 +84,12 @@ static int halo_touch_zone(unsigned int x,unsigned int y)
 }
 static unsigned int touch_action(unsigned int x,unsigned int y)
 {
+    if(n3ds_main_is_solo_multiplayer() && !game_engine_allow_pause()) {
+        if(x>=8 && x<312 && y>=8 && y<60 && !n3ds_controls_active()) {
+            n3ds_postgame_return_to_lobby();n3ds_log("POSTGAME: return to lobby requested by bottom-screen touch");
+        }
+        return 0;
+    }
     long unit=touch_unit();
     if(unit==NONE || x>=320) return 0;
     if(hud_visible && !cinematic_in_progress() && player_input_enabled()) {
@@ -289,7 +303,7 @@ void n3ds_hud_draw_screen(void)
                 if(entry->quit_out_of_game)continue;
                 struct native_score_row row={0};
                 const wchar_t *name=n3ds_bots_display_name(entry);
-                for(int c=0;c<12 && name[c];++c)
+                for(int c=0;c<15 && name[c];++c)
                     row.name[c]=name[c]>=32 && name[c]<=126?(char)name[c]:'?';
                 if(!row.name[0])snprintf(row.name,sizeof(row.name),"Player %d",count+1);
                 row.score=game_engine && game_engine->get_player_score?
@@ -325,6 +339,8 @@ void n3ds_menu_draw_screen(void)
 #ifdef HALO_N3DS_PC_LOCAL_MENU
     n3ds_pc_local_menu_draw();
 #endif
+    if(n3ds_main_is_solo_multiplayer() && !game_engine_allow_pause() &&
+       !n3ds_controls_active()) n3ds_gpu_match_postgame_lobby();
     for(int i=0;i<4;++i) *rects[i]=saved[i];
 }
 void n3ds_cinematic_draw_screen(void)

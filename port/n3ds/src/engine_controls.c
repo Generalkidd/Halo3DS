@@ -13,8 +13,8 @@ int n3ds_pc_tags_active(void);
 
 void n3ds_log(const char *message);
 void n3ds_ui_controls_back(void);
-static const struct native_control_settings defaults={100,100,0,0,0,0,0,1};
-static struct native_control_settings settings={100,100,0,0,0,0,0,1},opened_settings;
+static const struct native_control_settings defaults={100,100,0,0,0,1,0,1};
+static struct native_control_settings settings={100,100,0,0,0,1,0,1},opened_settings;
 static int initialized,modal,main_route,selected,save_error,repeat_ticks,swallow;
 static unsigned int previous_keys;
 static const char path[]="t:\\controller-settings.bin";
@@ -174,7 +174,7 @@ void n3ds_controls_draw(void)
 }
 #ifdef HALO_N3DS_PC_LOCAL_MENU
 static int pc_menu_open,pc_menu_page,pc_menu_field,pc_menu_map,pc_menu_mode,pc_menu_bots,pc_menu_difficulty=1;
-static int pc_menu_weapon_set,pc_menu_vehicle_choice,pc_menu_error,pc_menu_swallow;
+static int pc_menu_weapon_set,pc_menu_vehicle_choice,pc_menu_error,pc_menu_swallow,pc_menu_reopen_pending;
 static int pc_match_weapon_override;
 /* Kevin Boggs: n3ds_pc_local_weapon_override - New3DS integration. */
 int n3ds_pc_local_weapon_override(void){return pc_match_weapon_override;}
@@ -209,11 +209,18 @@ static void pc_menu_toggle_textures(void)
 }
 /* Kevin Boggs: n3ds_pc_local_menu_active - New3DS integration. */
 int n3ds_pc_local_menu_active(void){return pc_menu_open;}
+/* Kevin Boggs: n3ds_pc_local_menu_queue_reopen - New3DS integration. */
+void n3ds_pc_local_menu_queue_reopen(void){pc_menu_reopen_pending=1;}
 /* Kevin Boggs: n3ds_pc_local_menu_filter - New3DS integration. */
 void n3ds_pc_local_menu_filter(struct native_input_sample *sample)
 {
  unsigned int held=sample->held,fresh=held&~pc_menu_previous;
  pc_menu_previous=held;
+ if(pc_menu_reopen_pending && pc_menu_available()){
+  pc_menu_reopen_pending=0;pc_menu_open=1;pc_menu_page=0;pc_menu_field=0;pc_menu_error=0;
+  pc_menu_bots=n3ds_bots_requested_count();pc_menu_swallow=1;
+  n3ds_log("PC LOCAL MENU: reopened after postgame");memset(sample,0,sizeof(*sample));return;
+ }
  if(pc_menu_swallow){if(!held)pc_menu_swallow=0;memset(sample,0,sizeof(*sample));return;}
  if(!pc_menu_open){
   if((fresh&NATIVE_KEY_SELECT) && pc_menu_available() && !n3ds_controls_active()){
@@ -298,7 +305,7 @@ int n3ds_controls_tests(void)
 {
  n3ds_controls_initialize();
  struct native_control_settings saved=settings;int ok=1;
- settings=defaults;settings.xbox_buttons=settings.swap_shoulders=1;
+ settings=defaults;settings.xbox_buttons=settings.swap_shoulders=1;settings.swap_xy=0;
  for(unsigned int key=1;key<=NATIVE_KEY_TOUCH;key<<=1){
   unsigned int twice=n3ds_controls_buttons(n3ds_controls_buttons(key,0,1),0,1);if(twice!=key)ok=0;
  }
@@ -313,11 +320,12 @@ int n3ds_controls_tests(void)
  struct settings_file f={0x3343544c,4,settings,0};f.checksum=checksum(&f);f.settings.touch^=1;
  if(f.checksum==checksum(&f))ok=0;
  settings.touch=0;if(valid(&settings))ok=0;settings.touch=301;if(valid(&settings))ok=0;
- settings=defaults;if(!settings.decals || !n3ds_controls_decals())ok=0;
+ settings=defaults;if(!settings.decals || !n3ds_controls_decals() || !settings.swap_xy ||
+                      n3ds_controls_buttons(NATIVE_KEY_X,0,1)!=NATIVE_KEY_Y)ok=0;
  settings.decals=0;if(n3ds_controls_decals() || !valid(&settings))ok=0;
  settings.decals=2;if(valid(&settings))ok=0;
  settings=saved;
- if(ok)n3ds_log("PASS: controller settings ranges, checksum, decals default/on/off, independent sensitivities, reversible Xbox face mapping, and New-only gameplay shoulder swap");
+ if(ok)n3ds_log("PASS: controller settings ranges, checksum, decals default/on/off, Switch X/Y default, independent sensitivities, reversible Xbox face mapping, and New-only gameplay shoulder swap");
  return ok;
 }
 

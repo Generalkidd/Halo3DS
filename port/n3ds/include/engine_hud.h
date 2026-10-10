@@ -16,6 +16,7 @@ struct native_menu_plasma {
     int point,wrap[3],blend;
 };
 void n3ds_hud_screen(int bottom);
+void n3ds_postgame_return_to_lobby(void);
 void n3ds_hud_record_weapon_meter(int state,int value,float multiplier,float bias,int minimum);
 void n3ds_gpu_hud_layout(int group);
 void n3ds_gpu_hud_sensor_origin(float x,float y,float radius);

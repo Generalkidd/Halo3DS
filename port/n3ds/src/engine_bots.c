@@ -51,7 +51,10 @@ static void platform_log(char const *format, ...)
 static boolean n3ds_bots_is_registered(short queue_index, short identifier);
 #define MAXIMUM_NUMBER_OF_PLAYERS 16
 static long n3ds_bot_players[MAXIMUM_NUMBER_OF_PLAYERS];
+/* The "ghosts of lockout": ChaoticSPARTAN1 and KodeBreaker16. Do not remove
+ * these named bot profiles or their full scoreboard names. */
 static long n3ds_star_bot_index = NONE;
+static long n3ds_kode_bot_index = NONE;
 static unsigned long n3ds_bot_match_serial;
 static short n3ds_bot_difficulty=1;
 static const char *const n3ds_bot_guest_names[]={
@@ -67,12 +70,21 @@ static boolean combat_bot_is_star(short queue_index)
 	return n3ds_star_bot_index != NONE &&
 		DATUM_INDEX_TO_ABSOLUTE_INDEX(n3ds_star_bot_index) == queue_index;
 }
+/* Kevin Boggs: combat_bot_is_kode - New3DS integration. */
+static boolean combat_bot_is_kode(short queue_index)
+{
+	return n3ds_kode_bot_index != NONE &&
+		DATUM_INDEX_TO_ABSOLUTE_INDEX(n3ds_kode_bot_index) == queue_index;
+}
 wchar_t const *n3ds_bots_display_name(struct player_datum const *player)
 {
 	/* must keep */
 	if (player && n3ds_star_bot_index != NONE &&
 		player == player_try_and_get(n3ds_star_bot_index))
 		return L"ChaoticSPARTAN1";
+	if (player && n3ds_kode_bot_index != NONE &&
+		player == player_try_and_get(n3ds_kode_bot_index))
+		return L"KodeBreaker16";
 	return player ? player->name : L"";
 }
 struct scenario_netgame_flag
@@ -91,6 +103,7 @@ boolean unit_get_seat_entrance_point(long unit_index, long target_unit_index,
 struct combat_bot_state
 {
 	short identifier;
+	long last_unit_index;
 	long last_tick;
 	long weapon_target;
 	long equipment_target;
@@ -742,6 +755,7 @@ void n3ds_bots_fill_action(short queue_index, short identifier,
 	{
 		csmemset(state, 0, sizeof(*state));
 		state->identifier = identifier;
+		state->last_unit_index = NONE;
 		state->weapon_target = NONE;
 		state->equipment_target = NONE;
 		state->vehicle_target = NONE;
@@ -761,6 +775,25 @@ void n3ds_bots_fill_action(short queue_index, short identifier,
 		state->route_last_tick = -1000;
 	}
 	state->last_tick = tick;
+	if (state->last_unit_index != bot->unit_index)
+	{
+		/* A new datum marks a new spawn, including the first one. Use the
+		 * game's normal timed powerup so death, firing, and expiry still apply. */
+		state->last_unit_index = bot->unit_index;
+		if (combat_bot_is_kode(queue_index))
+		{
+			unsigned long camo_seed = (unsigned long)bot->unit_index ^
+				((unsigned long)tick * 0x9e3779b9UL) ^
+				(n3ds_bot_match_serial * 0x85ebca6bUL);
+			if (seed_random_range(&camo_seed, 0, 10) == 0)
+			{
+				player_handle_powerup_minor(bot_index,
+					_player_powerup_active_camouflage, 60 * 30);
+				unit->unit.active_camouflage = 1.f;
+				platform_log("BOTS: KodeBreaker16 spawned with active camo unit %08lx", bot->unit_index);
+			}
+		}
+	}
 	vehicle_parent = bot_unit->object.parent_object_index;
 	if (vehicle_parent != NONE && (!object_try_and_get(vehicle_parent) ||
 		object_get(vehicle_parent)->object.type != _object_type_vehicle))
@@ -1316,6 +1349,7 @@ void n3ds_bots_reset(void)
 	for (i = 0; i < MAXIMUM_NUMBER_OF_PLAYERS; ++i)
 		n3ds_bot_players[i] = NONE;
 	n3ds_star_bot_index = NONE;
+	n3ds_kode_bot_index = NONE;
 	csmemset(combat_bot_states, 0, sizeof(combat_bot_states));
 }
 
@@ -1377,6 +1411,7 @@ short n3ds_bots_create(short count)
 {
 	short i, created = 0;
 	short named_slot = NONE;
+	short kode_slot = NONE;
 	unsigned long seed;
 	unsigned char guest_order[NUMBEROF(n3ds_bot_guest_names)];
 	unsigned char color_order[16];
@@ -1387,9 +1422,24 @@ short n3ds_bots_create(short count)
 	seed = (unsigned long)system_seconds() ^
 		((unsigned long)system_milliseconds() * 0x85ebca6bUL) ^
 		(++n3ds_bot_match_serial * 0x9e3779b9UL);
-	if (count && seed_random_range(&seed, 0,
-		(n3ds_bot_difficulty==0?12:n3ds_bot_difficulty==2?3:4)) == 0)
+	/* Each named profile has its own 50% match roll. They can coexist when
+	 * the match has two or more AI slots. */
+	if (count && seed_random_range(&seed, 0, 2) == 0)
 		named_slot = seed_random_range(&seed, 0, count);
+	if (count && seed_random_range(&seed, 0, 2) == 0)
+	{
+		kode_slot = seed_random_range(&seed, 0, count);
+		if (kode_slot == named_slot)
+		{
+			if (count > 1)
+				kode_slot = (short)((kode_slot + 1 +
+					seed_random_range(&seed, 0, count - 1)) % count);
+			else if (seed_random_range(&seed, 0, 2) == 0)
+				named_slot = NONE;
+			else
+				kode_slot = NONE;
+		}
+	}
 	for (i=0;i<NUMBEROF(guest_order);++i) guest_order[i]=(unsigned char)i;
 	for (i=NUMBEROF(guest_order)-1;i>0;--i) {
 		short chosen=seed_random_range(&seed,0,i+1);
@@ -1415,6 +1465,8 @@ short n3ds_bots_create(short count)
 		short n;
 		if (i == named_slot)
 			snprintf(name, sizeof(name), "ChaoticSP1");
+		else if (i == kode_slot)
+			snprintf(name, sizeof(name), "KodeBrkr16");
 		else
 			snprintf(name, sizeof(name), "%s", n3ds_bot_guest_names[guest_order[guest_count++]]);
 		for (n = 0; name[n] && n < 11; ++n)
@@ -1433,6 +1485,8 @@ short n3ds_bots_create(short count)
 		n3ds_bot_players[DATUM_INDEX_TO_ABSOLUTE_INDEX(player_index)] = player_index;
 		if (i == named_slot)
 			n3ds_star_bot_index = player_index;
+		if (i == kode_slot)
+			n3ds_kode_bot_index = player_index;
 		platform_log("BOTS: player %d profile %s color %d", slot, name,
 			profile.primary_color_index);
 #ifdef HALO_N3DS_EXPERIMENTAL_PC_MENU_KEYS

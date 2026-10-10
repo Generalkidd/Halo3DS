@@ -13,6 +13,7 @@ short n3ds_ui_pc_expansion_map_count(void);
 #include "units/units.h"
 #include "engine_game.h"
 #include "engine_hud.h"
+#include "engine_controls.h"
 #include "engine_generic.h"
 #include "engine_chicago.h"
 #include "engine_transparent.h"
@@ -55,7 +56,6 @@ short n3ds_ui_pc_expansion_map_count(void);
 #include "items/weapons.h"
 #endif
 #ifdef HALO_N3DS_EXPERIMENTAL_PC_ARSENAL
-#include "engine_controls.h"
 #include "units/unit_definitions.h"
 #include "game/game_globals.h"
 #include "effects/particles.h"
@@ -1041,6 +1041,7 @@ int halo_engine_boot(void)
 #ifdef HALO_N3DS_EXPERIMENTAL_PC_MENU_KEYS
     CHECK(!menu_keys_load());
 #endif
+    unsigned int previous_postgame_buttons=0;
     for(frame=0;(!HALO_N3DS_MISSION_TICKS || frame<HALO_N3DS_MISSION_TICKS) && n3ds_engine_app_running();++frame) {
         struct native_input_sample sample;
         long long start=n3ds_engine_ticks();long local,player,unit=NONE;
@@ -1129,6 +1130,25 @@ int halo_engine_boot(void)
         long long services_end=n3ds_engine_ticks();
         n3ds_frontend_trace("input");
         n3ds_input_platform_poll(&sample);
+#ifdef HALO_N3DS_POSTGAME_RETURN_TEST
+        if(frame+1==450) {
+            CHECK(n3ds_main_is_solo_multiplayer());
+            game_engine_end_game();
+            n3ds_log("POSTGAME TEST: ended original multiplayer match");
+        }
+        if(frame+1==840) {
+            CHECK(n3ds_main_is_solo_multiplayer() && !game_engine_allow_pause());
+            sample.held|=NATIVE_KEY_TOUCH;sample.touch_x=160;sample.touch_y=36;
+            n3ds_log("POSTGAME TEST: tapped bottom-screen Return to Lobby");
+        }
+        if(frame+1==900) {
+            CHECK(main_menu_is_active() && !n3ds_main_is_solo_multiplayer());
+#ifdef HALO_N3DS_PC_LOCAL_MENU
+            CHECK(n3ds_pc_local_menu_active());
+#endif
+            n3ds_log("PASS: postgame touch returned from bot match to lobby");
+        }
+#endif
 #ifdef HALO_N3DS_EXPERIMENTAL_PC_ARSENAL
         if(frame+1==28) n3ds_controls_open(1);
         if(frame+1==44) sample.held|=NATIVE_KEY_START;
@@ -1285,6 +1305,13 @@ int halo_engine_boot(void)
         }
 #endif
         if((sample.held&(NATIVE_KEY_START|NATIVE_KEY_SELECT))==(NATIVE_KEY_START|NATIVE_KEY_SELECT)) break;
+        unsigned int postgame_buttons=sample.held;
+        if(n3ds_main_is_solo_multiplayer() && !game_engine_allow_pause() &&
+           (sample.held&NATIVE_KEY_B) && !(previous_postgame_buttons&NATIVE_KEY_B)) {
+            n3ds_postgame_return_to_lobby();n3ds_log("POSTGAME: return to lobby requested by B");
+            sample.held&=~NATIVE_KEY_B;
+        }
+        previous_postgame_buttons=postgame_buttons;
         n3ds_engine_input_sample(&sample);input_update();input_abstraction_update();
         if(frame%30==0 || memcmp(&sample,&prior,sizeof(sample))) {
             snprintf(message,sizeof(message),"FRONTEND INPUT: frame=%ld held=%08x circle=%d,%d look=%d,%d enabled=%d cinematic=%d skip=%d touch=%u,%u",frame+1,sample.held,sample.circle_x,sample.circle_y,sample.cstick_x,sample.cstick_y,player_input_enabled(),cinematic_in_progress(),cinematic_can_be_skipped(),sample.touch_x,sample.touch_y);n3ds_log(message);prior=sample;
@@ -1668,6 +1695,9 @@ int halo_engine_boot(void)
             snprintf(message,sizeof(message),"FRONTEND FRAME: frame=%ld time=%ld menu=%d local=%ld unit=%08lx held=%08x",frame+1,game_time_get(),main_menu_is_active(),local,unit,sample.held);
             n3ds_log(message);
         }
+#ifdef HALO_N3DS_POSTGAME_RETURN_TEST
+        if(frame+1==832) CHECK(!n3ds_gpu_screen_quad_capture());
+#endif
         if(HALO_N3DS_MISSION_TICKS && frame+1==200) CHECK(!n3ds_gpu_screen_quad_capture());
         input_frame_end();
         const long long pacing_stages[5]={services_end,simulation_start,simulation_end,audio_end,n3ds_engine_ticks()};

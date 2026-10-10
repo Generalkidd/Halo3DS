@@ -23,11 +23,13 @@ void n3ds_gpu_controls_entry(void);
 struct native_touch_meter { float fill; int state; };
 void n3ds_gpu_match_touch_overlay(int fps,int show_fps,int show_score,int pressed,
     const struct native_touch_meter *meters,int meter_count);
-struct native_score_row { char name[13]; long score; short kills,deaths; int local; };
+struct native_score_row { char name[16]; long score; short kills,deaths; int local; };
 void n3ds_gpu_match_scoreboard(const struct native_score_row *rows,int count);
+void n3ds_gpu_match_postgame_lobby(void);
 #ifdef HALO_N3DS_PC_LOCAL_MENU
 void n3ds_pc_local_menu_filter(struct native_input_sample *sample);
 void n3ds_pc_local_menu_draw(void);
+void n3ds_pc_local_menu_queue_reopen(void);
 int n3ds_pc_local_menu_active(void);
 void n3ds_gpu_pc_local_menu(int map,int mode,int bots,int difficulty,int weapon_set,int vehicle_choice,int page,int field,int error,int high_textures,int original);
 #endif

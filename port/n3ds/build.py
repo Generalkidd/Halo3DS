@@ -73,6 +73,7 @@ def main():
     parser.add_argument('--diagnostic-pc-mode', choices=['slayer','ctf','oddball','king','race'], default='slayer', help='Game variant for --diagnostic-pc-play')
     parser.add_argument('--diagnostic-pc-bots', type=int, default=0, help='With --diagnostic-pc-play, use 1-15 local bot players')
     parser.add_argument('--diagnostic-pc-fire', action='store_true', help='With --diagnostic-pc-play, exercise the original local weapon input path')
+    parser.add_argument('--diagnostic-postgame-return', action='store_true', help='With --diagnostic-pc-play, end a bot match and touch Return to Lobby')
     parser.add_argument('--diagnostic-pc-arsenal', action='store_true', help='Experimental only: exercise map-owned PC weapons and Rocket Warthog through original input and render paths')
     parser.add_argument('--diagnostic-pc-rocket-warthog', action='store_true', help='Experimental only: isolate the PC Rocket Warthog gunner firing fixture')
     parser.add_argument('--diagnostic-pc-matrix', action='store_true', help='Experimental only: read map and mode from isolated sdmc:/halo-source/pc-matrix.txt for repeated smoke runs with two bots')
@@ -105,6 +106,8 @@ def main():
         parser.error('PC mode and bot options require --diagnostic-pc-play; bot count must be 1-15')
     if args.diagnostic_pc_fire and not args.diagnostic_pc_play:
         parser.error('--diagnostic-pc-fire requires --diagnostic-pc-play')
+    if args.diagnostic_postgame_return and not args.diagnostic_pc_play:
+        parser.error('--diagnostic-postgame-return requires --diagnostic-pc-play')
     if args.diagnostic_high_textures and not args.diagnostic_pc_play:
         parser.error('--diagnostic-high-textures requires --diagnostic-pc-play')
     if args.diagnostic_texture_clip and args.diagnostic_pc_play != 'timberland':
@@ -180,6 +183,8 @@ def main():
             defines.append(f'-DHALO_N3DS_BOT_TEST_COUNT={args.diagnostic_pc_bots}')
         if args.diagnostic_pc_fire:
             defines.append('-DHALO_N3DS_EXPERIMENTAL_PC_FIRE=1')
+        if args.diagnostic_postgame_return:
+            defines.extend(['-DHALO_N3DS_POSTGAME_RETURN_TEST=1','-DHALO_N3DS_PC_LOCAL_MENU=1'])
         if args.diagnostic_pc_arsenal or args.diagnostic_pc_rocket_warthog:
             defines.append('-DHALO_N3DS_EXPERIMENTAL_PC_ARSENAL=1')
         if args.diagnostic_pc_rocket_warthog:
@@ -246,6 +251,7 @@ def main():
             'diagnostic_pc_mode':args.diagnostic_pc_mode,
             'diagnostic_pc_bots':args.diagnostic_pc_bots,
             'diagnostic_pc_fire':args.diagnostic_pc_fire,
+            'diagnostic_postgame_return':args.diagnostic_postgame_return,
             'diagnostic_pc_arsenal':args.diagnostic_pc_arsenal,
             'diagnostic_pc_rocket_warthog':args.diagnostic_pc_rocket_warthog,
             'diagnostic_pc_matrix':args.diagnostic_pc_matrix,

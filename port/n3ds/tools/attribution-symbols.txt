@@ -5,6 +5,7 @@ port/n3ds/include/engine_controls_draw.inl|controls_panel_rect
 port/n3ds/include/engine_controls_draw.inl|controls_panel_trapezoid
 port/n3ds/include/engine_controls_draw.inl|controls_radar_edge
 port/n3ds/include/engine_controls_draw.inl|n3ds_gpu_match_scoreboard
+port/n3ds/include/engine_controls_draw.inl|n3ds_gpu_match_postgame_lobby
 port/n3ds/include/engine_controls_draw.inl|n3ds_gpu_match_touch_overlay
 port/n3ds/include/engine_controls_draw.inl|n3ds_gpu_pc_local_menu
 port/n3ds/pc/cache_file_formats.c|animation_graph_overlays_repair
@@ -106,6 +107,7 @@ port/n3ds/src/engine_bots.c|combat_bot_fire_range
 port/n3ds/src/engine_bots.c|combat_bot_flag_held_by_ally
 port/n3ds/src/engine_bots.c|combat_bot_ground_surface
 port/n3ds/src/engine_bots.c|combat_bot_is_star
+port/n3ds/src/engine_bots.c|combat_bot_is_kode
 port/n3ds/src/engine_bots.c|combat_bot_local_detour
 port/n3ds/src/engine_bots.c|combat_bot_objective
 port/n3ds/src/engine_bots.c|combat_bot_route_point
@@ -148,6 +150,7 @@ port/n3ds/src/engine_controls.c|n3ds_controls_show_fps
 port/n3ds/src/engine_controls.c|n3ds_pc_local_menu_active
 port/n3ds/src/engine_controls.c|n3ds_pc_local_menu_draw
 port/n3ds/src/engine_controls.c|n3ds_pc_local_menu_filter
+port/n3ds/src/engine_controls.c|n3ds_pc_local_menu_queue_reopen
 port/n3ds/src/engine_controls.c|n3ds_pc_local_weapon_override
 port/n3ds/src/engine_controls.c|pc_menu_available
 port/n3ds/src/engine_controls.c|pc_menu_field_count
@@ -175,7 +178,9 @@ port/n3ds/src/engine_gpu_textures.c|mip_texel
 port/n3ds/src/engine_gpu_textures.c|n3ds_gpu_texture_set_lod_bias
 port/n3ds/src/engine_hud.c|halo_touch_zone
 port/n3ds/src/engine_hud.c|n3ds_hud_record_weapon_meter
+port/n3ds/src/engine_hud.c|n3ds_postgame_return_to_lobby
 port/n3ds/src/engine_input.c|n3ds_input_touch_panel_pressed
+port/n3ds/src/engine_mission_render.c|flame_owner_firing
 port/n3ds/src/engine_mission_render.c|flame_stream_draw
 port/n3ds/src/engine_mission_render.c|flame_stream_flush
 port/n3ds/src/engine_mission_render.c|flame_stream_lookup
