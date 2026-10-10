@@ -28,6 +28,7 @@ port/n3ds/setup/Unified/Install-Halo3DS-Unified.ps1
 port/n3ds/setup/Unified/Package-Halo3DS-Unified.ps1
 port/n3ds/setup/Windows7/InstallCli.cs
 port/n3ds/setup/Windows7/build.ps1
+port/n3ds/setup/tools/source-files.ps1
 port/n3ds/src/cache_reader.c
 port/n3ds/src/engine_audio_platform.c
 port/n3ds/src/engine_bots.c

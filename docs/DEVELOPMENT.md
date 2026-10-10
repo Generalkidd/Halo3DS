@@ -324,6 +324,38 @@ minimum and a DPI-aware manifest.
 
 ### Setup source and release checks
 
+The public unified release ZIP is ready to install with a player's own supported
+Xbox and PC retail sources. It includes the 3DSX, the Xbox installer, the PC
+installer, the unified entry script, the runtime hash manifest, corresponding
+source archives, and license notices. Players do not need a game compiler or
+Xbox SDK to use it. The game files themselves are never bundled.
+
+To make a new asset-free package from a checked-out commit and the binaries in
+an existing release ZIP, extract that ZIP to a temporary folder and run:
+
+```powershell
+$release = 'C:/Downloads/Halo3DS-Unified.zip'
+$stage = 'build/unified-repack'
+New-Item -ItemType Directory -Path $stage -Force | Out-Null
+Expand-Archive -LiteralPath $release -DestinationPath "$stage/input"
+git archive --format=zip "--output=$stage/Halo3DS-Source.zip" HEAD
+./port/n3ds/setup/Unified/Package-Halo3DS-Unified.ps1 `
+  -XboxInstallerPath "$stage/input/Halo3DS-Xbox-Install.exe" `
+  -XboxSourceZip "$stage/input/Xbox-Setup-Source.zip" `
+  -SourceSnapshotZip "$stage/Halo3DS-Source.zip" `
+  -UnifiedLauncherPath "$stage/input/Halo3DS.3dsx" `
+  -RuntimeManifest "$stage/input/unified-runtime.json" `
+  -OutputZip "$stage/Halo3DS-Unified.zip"
+```
+
+The package script checks both executable signatures,
+the launcher-manifest hash, required source files, and its fixed output list;
+it refuses an existing output ZIP. This repacks the supplied binaries and the
+current tracked source. To rebuild the binaries, use the game build instructions
+above and the Windows 7 setup build command below. That development path needs
+the documented toolchains and locally supplied XDK declarations; no restricted
+SDK files are included in the repository or release.
+
 The setup source is organized as follows:
 
 | Directory under `port/n3ds/setup/` | Purpose |

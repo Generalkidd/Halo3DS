@@ -1,3 +1,4 @@
+# New3DS integration additions by Kevin Boggs.
 # One source-file list for both release packages. Never include local IDE settings,
 # build output, game data or credentials from a developer's working directory.
 function Get-HaloSetupRepositoryRoot([string]$SetupRoot) {
@@ -15,7 +16,7 @@ function Get-HaloSetupSourceFiles([string]$SetupRoot) {
         Get-Item -LiteralPath (Join-Path $SetupRoot $name)
     }
     $repositoryRoot = Get-HaloSetupRepositoryRoot $SetupRoot
-    foreach ($name in @('README.md','docs/DEVELOPMENT.md','LICENSE.md','port/n3ds/vendor/lz4/LICENSE','port/n3ds/vendor/libctru-allocator/LICENSE.txt')) {
+    foreach ($name in @('README.md','docs/DEVELOPMENT.md','LICENSE.md','LICENSE-KEVIN-MIT.md','LICENSING.md','port/n3ds/vendor/lz4/LICENSE','port/n3ds/vendor/libctru-allocator/LICENSE.txt')) {
         Get-Item -LiteralPath (Join-Path $repositoryRoot $name)
     }
 }
