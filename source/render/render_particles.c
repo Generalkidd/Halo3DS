@@ -285,10 +285,25 @@ void render_particles(
                             particle->last_rendered_frame_index=render.frame_index;
                             ++native_omitted;++rendered_particle;continue;
                         }
-                        ++native_selected;if(particle->object_index==NONE)++native_draw_count;
 #endif
 						real radius =
 							particle_get_radius(rendered_particle->particle_index);
+#ifdef HALO_N3DS
+                        /* Cluster visibility includes particles beyond the
+                         * camera. Cull detached sprites before transforms and
+                         * batching, with a conservative half-meter margin for
+                         * screen-sized sprites at the edge of the view. */
+                        if(particle->object_index==NONE) {
+                            if(!render_frustum_sphere_visible(&render.frustum,
+                                &particle->position,radius+0.5f)) {
+                                particle->last_rendered_frame_index=render.frame_index;
+                                ++native_omitted;
+                                ++rendered_particle;continue;
+                            }
+                            ++native_draw_count;
+                        }
+                        ++native_selected;
+#endif
 
 						if (particle->object_index != NONE)
 						{
