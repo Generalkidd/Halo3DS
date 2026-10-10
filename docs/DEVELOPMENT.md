@@ -605,9 +605,9 @@ textures** switch. It defaults OFF and saves with the other controller
 settings. Turn it ON, save, then reload the PC map to compare 128-pixel
 texture bases, a generated 64-pixel mip level, and an 8 MiB gameplay cache
 against the standard 64-pixel profile. The original 3DS and Xbox maps keep
-their established profile. Existing version-one, version-two, and version-three
-controller settings load with their prior values preserved. Fields absent from
-older files take their defaults: Switch X/Y ON, FPS OFF, Decals ON. The file
+their established profile. Existing version-one through version-four controller
+settings load with their prior values preserved. Fields absent from older files
+take their defaults: Switch X/Y ON, Swap A/B ON, FPS OFF, Decals ON. The file
 upgrades on save.
 
 `--diagnostic-high-textures` still
@@ -655,3 +655,21 @@ far respawn to avoid cache exhaustion and did not sustain the 30 FPS target.
 The ordinary launcher retains the bounded texture profile. The guarded
 near-world and smooth-promotion build options remain experiments, not a
 replacement for the release texture policy.
+
+In the unified PC match selector, **All PC vehicles** enables every authored
+vehicle type and adds two Banshees each to Danger Canyon, Ice Fields and
+Timberland. The added vehicles use assets already present in those retail PC
+caches. The native runtime checks ground slope, nearby terrain, player starts
+and existing vehicles before placing them. The isolated Azahar menu fixture
+spawned both Banshees on all three maps without a fatal error. A Timberland
+driver-entry check succeeded and a later capture showed the player seated in
+the vehicle. Physical New 3DS XL vehicle handling still needs testing.
+
+The native flamethrower renderer now draws the PC map's own flame sprite at
+simulated projectile positions and keeps a short history of world-space muzzle
+emissions. A turn leaves the older flame behind instead of rotating the entire
+jet with the camera. The native game tick also advances authored decal decay,
+and additive particles apply vertex alpha to their light contribution so
+explosions fade. The isolated Azahar arsenal fixture fired all 11 weapons;
+captured turn and Fuel Rod frames showed the flame lag and blast decay. The
+physical display and sustained frame rate still need checking.

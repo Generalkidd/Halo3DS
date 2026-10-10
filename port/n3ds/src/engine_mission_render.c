@@ -71,7 +71,7 @@ struct mission_batch {
 static unsigned int batch_visible,batch_culled;
 /* PC flamethrower projectiles have neither model nor attachment. Its authored
  * jet effect only flashes at the muzzle, leaving the simulated stream invisible.
- * Place that same map's flash sprite along the live projectile path. No extra
+ * Place its map-owned flame sprite along the live projectile path. No extra
  * simulation objects or bitmap allocations are created. */
 static struct native_widget_vertex flame_vertices[64*6];
 static unsigned int flame_tag_generation;
@@ -79,6 +79,15 @@ static long flame_bitmap=NONE;
 struct flame_sprite {short image;real_rectangle2d uv;};
 static struct flame_sprite flame_sprites[4];
 static unsigned int flame_sprite_count;
+enum { FLAME_EMISSIONS=24 };
+struct flame_emission {
+    real_point3d origin;
+    real_vector3d direction;
+    unsigned int frame;
+    int valid;
+};
+static struct flame_emission flame_emissions[FLAME_EMISSIONS];
+static unsigned int flame_last_emitted=~0u;
 /* Kevin Boggs: flame_stream_flush - New3DS integration. */
 static void flame_stream_flush(unsigned int count,short image)
 {
@@ -92,6 +101,7 @@ static void flame_stream_lookup(void)
     unsigned int generation=n3ds_engine_tag_generation();
     if(flame_tag_generation==generation) return;
     flame_tag_generation=generation;flame_bitmap=NONE;flame_sprite_count=0;
+    memset(flame_emissions,0,sizeof(flame_emissions));flame_last_emitted=~0u;
     const struct n3ds_cache_view *view=n3ds_engine_cache_view(0);
     if(!view || !view->tag_header || !view->instances) return;
     for(long i=0;i<view->tag_header->tag_count;++i) {
@@ -124,17 +134,17 @@ static void flame_stream_lookup(void)
         break;
     }
 }
-/* Kevin Boggs: flame_owner_firing - New3DS integration. */
-static int flame_owner_firing(long unit_index)
+/* Kevin Boggs: flame_owner_fire_age - New3DS integration. */
+static long flame_owner_fire_age(long unit_index)
 {
     const struct unit_datum *unit=unit_index==NONE?NULL:unit_try_and_get(unit_index);
     if(!unit || unit->unit.current_weapon_index<0 ||
-       unit->unit.current_weapon_index>=MAXIMUM_WEAPONS_PER_UNIT) return 0;
+       unit->unit.current_weapon_index>=MAXIMUM_WEAPONS_PER_UNIT) return NONE;
     long weapon_index=unit->unit.weapon_object_indices[unit->unit.current_weapon_index];
     const struct weapon_datum *weapon=weapon_index==NONE?NULL:weapon_try_and_get(weapon_index);
     const char *name=weapon?tag_get_name(weapon->definition_index):NULL;
-    return name && !strcmp(name,"weapons\\flamethrower\\flamethrower") &&
-           game_time_get()-weapon->weapon.game_time_last_fired<=5;
+    return name && !strcmp(name,"weapons\\flamethrower\\flamethrower")?
+        game_time_get()-weapon->weapon.game_time_last_fired:NONE;
 }
 /* Kevin Boggs: display the original simulated flamethrower projectiles as a visible jet. */
 /* Kevin Boggs: flame_stream_draw - New3DS integration. */
@@ -150,10 +160,10 @@ static void flame_stream_draw(void)
     unsigned int used=0;
     short image=NONE;
     unsigned int flame_count=0,local_projectiles=0,remote_projectiles=0;
-    float local_depth=0.f;
     long player=local_player_get_player_index(0);
     long local_unit=player==NONE?NONE:player_get(player)->unit_index;
-    int local_firing=flame_owner_firing(local_unit);
+    long local_fire_age=flame_owner_fire_age(local_unit);
+    int local_firing=local_fire_age!=NONE && local_fire_age>=0 && local_fire_age<=2;
     static const unsigned char order[6]={0,1,2,0,2,3};
     while(object_iterator_next(&iterator)) {
         const struct object_datum *projectile=object_get(iterator.index);
@@ -162,30 +172,21 @@ static void flame_stream_draw(void)
         ++flame_count;
         long owner_index=projectile->object.owner_object_index;
         const struct unit_datum *owner=owner_index==NONE?NULL:unit_try_and_get(owner_index);
-        if(!owner || !flame_owner_firing(owner_index)) continue;
+        long fire_age=flame_owner_fire_age(owner_index);
+        if(!owner || fire_age==NONE || fire_age<0 || fire_age>18) continue;
         real_vector3d travel;
         vector_from_points3d(&owner->object.position,&projectile->object.position,&travel);
         /* The gameplay projectile may survive for seconds and travel up to
          * 16 m. Its visible flame belongs to the short, active firing jet. */
         if(dot_product3d(&travel,&travel)>25.f) continue;
-        if(owner_index==local_unit) {
-            ++local_projectiles;
-            real_vector3d relative;
-            vector_from_points3d(&render.camera.position,&projectile->object.position,&relative);
-            float depth=dot_product3d(&relative,&render.camera.forward);
-            float lateral_squared=dot_product3d(&relative,&relative)-depth*depth;
-            if(depth>0.f && depth<5.f && lateral_squared<.81f) {
-                if(depth>local_depth) local_depth=depth;
-            }
-            continue;
-        }
-        ++remote_projectiles;
+        if(owner_index==local_unit) ++local_projectiles;
+        else ++remote_projectiles;
         const struct flame_sprite *sprite=&flame_sprites[(unsigned int)iterator.index%flame_sprite_count];
         if(used && (image!=sprite->image || used+6>NUMBEROF(flame_vertices))) {
             flame_stream_flush(used,image);used=0;
         }
         image=sprite->image;
-        const float radius=.14f;
+        const float radius=owner_index==local_unit?.26f:.14f;
         for(unsigned int corner=0;corner<6;++corner) {
             struct native_widget_vertex *v=flame_vertices+used+corner;
             int index=order[corner];
@@ -193,8 +194,53 @@ static void flame_stream_draw(void)
             float y=(index<2)?-radius:radius;
             for(int axis=0;axis<3;++axis)
                 v->position[axis]=projectile->object.position.n[axis]+right.n[axis]*x+render.camera.up.n[axis]*y;
-            v->color[0]=1.f;v->color[1]=.45f;v->color[2]=.08f;
-            v->color[3]=.14f;
+            v->color[0]=1.f;v->color[1]=.70f;v->color[2]=.08f;
+            v->color[3]=owner_index==local_unit?.25f:.14f;
+            v->uv[0]=(index==0 || index==3)?sprite->uv.x0:sprite->uv.x1;
+            v->uv[1]=(index<2)?sprite->uv.y1:sprite->uv.y0;
+        }
+        used+=6;
+    }
+    flame_stream_flush(used,image);
+    /* Record each emitted muzzle direction once. The sample then moves and
+     * fades in world space, leaving the bend of a hose when the player turns. */
+    if(local_firing && local_projectiles && flame_last_emitted!=render.frame_index) {
+        real_vector3d direction=render.camera.forward;
+        if(normalize3d(&direction)>0) {
+            struct flame_emission *sample=flame_emissions+render.frame_index%FLAME_EMISSIONS;
+            sample->origin=render.camera.position;
+            sample->direction=direction;sample->frame=render.frame_index;sample->valid=1;
+            for(int axis=0;axis<3;++axis)
+                sample->origin.n[axis]+=direction.n[axis]*.6f+
+                    right.n[axis]*.48f-render.camera.up.n[axis]*.30f;
+            flame_last_emitted=render.frame_index;
+        }
+    }
+    used=0;image=NONE;
+    for(unsigned int slot=0;slot<FLAME_EMISSIONS;++slot) {
+        const struct flame_emission *sample=flame_emissions+slot;
+        unsigned int age=render.frame_index-sample->frame;
+        if(!sample->valid || age>=FLAME_EMISSIONS)continue;
+        const struct flame_sprite *sprite=&flame_sprites[slot%flame_sprite_count];
+        if(used && (image!=sprite->image || used+6>NUMBEROF(flame_vertices))) {
+            flame_stream_flush(used,image);used=0;
+        }
+        image=sprite->image;
+        real_point3d center=sample->origin;
+        for(int axis=0;axis<3;++axis)
+            center.n[axis]+=sample->direction.n[axis]*(.4f+.18f*age);
+        center.z-=.0008f*age*age;
+        float fraction=(float)age/FLAME_EMISSIONS;
+        float radius=.25f+.15f*fraction;
+        float opacity=.40f*(1.f-fraction);
+        for(unsigned int corner=0;corner<6;++corner) {
+            struct native_widget_vertex *v=flame_vertices+used+corner;
+            int index=order[corner];
+            float x=(index==0 || index==3)?-radius:radius;
+            float y=(index<2)?-radius:radius;
+            for(int axis=0;axis<3;++axis)
+                v->position[axis]=center.n[axis]+right.n[axis]*x+render.camera.up.n[axis]*y;
+            v->color[0]=1.f;v->color[1]=.70f;v->color[2]=.08f;v->color[3]=opacity;
             v->uv[0]=(index==0 || index==3)?sprite->uv.x0:sprite->uv.x1;
             v->uv[1]=(index<2)?sprite->uv.y1:sprite->uv.y0;
         }
@@ -204,51 +250,11 @@ static void flame_stream_draw(void)
 #ifdef HALO_N3DS_EXPERIMENTAL_PC_ARSENAL
     if(flame_count && render.frame_index%15==0) {
         char message[128];
-        snprintf(message,sizeof(message),"FLAME RAY: live=%u local_fire=%d local=%u remote=%u depth=%.2f time=%ld",
-            flame_count,local_firing,local_projectiles,remote_projectiles,local_depth,game_time_get());
+        snprintf(message,sizeof(message),"FLAME RAY: live=%u local_fire=%d local=%u remote=%u time=%ld",
+            flame_count,local_firing,local_projectiles,remote_projectiles,game_time_get());
         n3ds_log(message);
     }
 #endif
-    /* Fill the gap from the local muzzle to its simulated projectile front.
-     * These quads are visual only and vanish as soon as the original stream
-     * stops. Other players' projectiles never originate at our camera. */
-    if(local_firing && local_projectiles) {
-        if(local_depth<1.45f)local_depth=1.45f;
-        if(local_depth>4.5f)local_depth=4.5f;
-        unsigned int count=0;
-        float phase=(render.frame_index%5)*.06f;
-        for(float depth=.95f+phase;depth<local_depth && count+6<=NUMBEROF(flame_vertices);depth+=.30f) {
-            const struct flame_sprite *sprite=&flame_sprites[
-                ((unsigned int)(depth/.30f)+render.frame_index/5)%flame_sprite_count];
-            if(count && image!=sprite->image) {
-                flame_stream_flush(count,image);count=0;
-            }
-            image=sprite->image;
-            float fraction=depth/local_depth;
-            float radius=.12f+.05f*fraction;
-            float horizontal=.48f*(1.f-fraction);
-            float vertical=-.30f*(1.f-fraction);
-            float jitter=((count/6)%3==0?.025f:(count/6)%3==1?-.02f:.01f)*fraction;
-            real_point3d center=render.camera.position;
-            for(int axis=0;axis<3;++axis)
-                center.n[axis]+=render.camera.forward.n[axis]*depth+
-                    right.n[axis]*(horizontal+jitter)+render.camera.up.n[axis]*vertical;
-            for(unsigned int corner=0;corner<6;++corner) {
-                struct native_widget_vertex *v=flame_vertices+count+corner;
-                int index=order[corner];
-                float x=(index==0 || index==3)?-radius:radius;
-                float y=(index<2)?-radius:radius;
-                for(int axis=0;axis<3;++axis)
-                    v->position[axis]=center.n[axis]+right.n[axis]*x+render.camera.up.n[axis]*y;
-                v->color[0]=1.f;v->color[1]=.40f;v->color[2]=.05f;
-                v->color[3]=.22f-.12f*fraction;
-                v->uv[0]=(index==0 || index==3)?sprite->uv.x0:sprite->uv.x1;
-                v->uv[1]=(index<2)?sprite->uv.y1:sprite->uv.y0;
-            }
-            count+=6;
-        }
-        flame_stream_flush(count,image);
-    }
 }
 /* A box is outside only when its nearest point is beyond one side plane.
  * The per-eye rasterizer frustum already includes the stereo projection shift.

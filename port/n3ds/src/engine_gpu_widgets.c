@@ -281,6 +281,14 @@ static int effect_draw(const void *input,unsigned int count,
             C3D_TexEnvFunc(env,C3D_RGB,GPU_MULTIPLY_ADD);
         }
     }
+    if(blend==NATIVE_BLEND_ADD) {
+        /* Additive framebuffer factors ignore source alpha. Apply the authored
+         * per-particle fade to RGB after the texture-alpha stage instead. */
+        env=C3D_GetTexEnv(4);
+        C3D_TexEnvSrc(env,C3D_RGB,GPU_PREVIOUS,GPU_PRIMARY_COLOR,GPU_CONSTANT);
+        C3D_TexEnvOpRgb(env,GPU_TEVOP_RGB_SRC_COLOR,GPU_TEVOP_RGB_SRC_ALPHA,GPU_TEVOP_RGB_SRC_COLOR);
+        C3D_TexEnvFunc(env,C3D_RGB,GPU_MODULATE);
+    }
     }
     C3D_CullFace(GPU_CULL_NONE);C3D_AlphaTest(false,GPU_ALWAYS,0);n3ds_gpu_framebuffer_blend(blend);
     } else ++effect_state_reused;

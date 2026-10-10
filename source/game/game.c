@@ -510,6 +510,11 @@ void game_tick(
 	recorded_animations_update();
     NATIVE_GAME_STAMP(3);
 	objects_update();
+#ifdef HALO_N3DS
+	/* The native renderer consumes the original decal list every frame. Advance
+	 * its authored lifetime and decay values on the simulation clock. */
+	decals_update();
+#endif
     NATIVE_GAME_STAMP(4);
 	players_update_after_game();
 	hud_update();

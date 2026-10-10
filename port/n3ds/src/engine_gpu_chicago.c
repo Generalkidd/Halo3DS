@@ -308,6 +308,13 @@ int n3ds_gpu_effect_layer_draw(struct native_chicago_vertex *vertices,unsigned i
     C3D_TexEnvSrc(env,C3D_RGB,GPU_PREVIOUS,GPU_TEXTURE0,GPU_CONSTANT);
     C3D_TexEnvOpRgb(env,GPU_TEVOP_RGB_SRC_COLOR,GPU_TEVOP_RGB_SRC_ALPHA,GPU_TEVOP_RGB_SRC_COLOR);
     C3D_TexEnvFunc(env,C3D_RGB,GPU_MODULATE);
+    if(blend==NATIVE_BLEND_ADD) {
+        /* The framebuffer's ONE factor does not consume particle alpha. */
+        env=C3D_GetTexEnv(4);
+        C3D_TexEnvSrc(env,C3D_RGB,GPU_PREVIOUS,GPU_PRIMARY_COLOR,GPU_CONSTANT);
+        C3D_TexEnvOpRgb(env,GPU_TEVOP_RGB_SRC_COLOR,GPU_TEVOP_RGB_SRC_ALPHA,GPU_TEVOP_RGB_SRC_COLOR);
+        C3D_TexEnvFunc(env,C3D_RGB,GPU_MODULATE);
+    }
     C3D_CullFace(GPU_CULL_NONE);C3D_AlphaTest(false,GPU_ALWAYS,0);
     C3D_DepthTest(!(geometry_flags&(1u<<3)),GPU_GEQUAL,GPU_WRITE_COLOR&~GPU_WRITE_ALPHA);
     C3D_StencilTest(true,GPU_EQUAL,0,1,0);

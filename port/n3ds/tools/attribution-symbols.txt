@@ -180,7 +180,7 @@ port/n3ds/src/engine_hud.c|halo_touch_zone
 port/n3ds/src/engine_hud.c|n3ds_hud_record_weapon_meter
 port/n3ds/src/engine_hud.c|n3ds_postgame_return_to_lobby
 port/n3ds/src/engine_input.c|n3ds_input_touch_panel_pressed
-port/n3ds/src/engine_mission_render.c|flame_owner_firing
+port/n3ds/src/engine_mission_render.c|flame_owner_fire_age
 port/n3ds/src/engine_mission_render.c|flame_stream_draw
 port/n3ds/src/engine_mission_render.c|flame_stream_flush
 port/n3ds/src/engine_mission_render.c|flame_stream_lookup
