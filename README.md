@@ -14,9 +14,10 @@ The `local-integration` branch also has an **experimental unified New 3DS**
 launcher for Xbox campaign and PC retail v7 local multiplayer. Its
 [two-ISO installer](port/n3ds/setup/Unified/README.md) places one launcher on
 the SD card. The campaign difficulty screen can enable extra PC weapons and a
-Rocket Warthog while preserving the original Xbox map files. Emulator checks
-are in progress; physical New 3DS XL testing remains. The default upstream
-release remains Xbox-only.
+Rocket Warthog while preserving the original Xbox map files. A New 3DS XL
+test completed a six-bot Timberland match on an earlier build; the current
+launcher and campaign progression still need device checks. The default
+upstream release remains Xbox-only.
 
 ## Setup
 
