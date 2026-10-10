@@ -86,14 +86,15 @@ static void controls_halo_touch_panel(int right,int lower,int pressed,int blank)
 }
 /* Kevin Boggs: n3ds_gpu_match_touch_overlay - New3DS integration. */
 void n3ds_gpu_match_touch_overlay(int fps,int show_fps,int show_score,int pressed,
- const struct native_touch_meter *meters,int meter_count)
+ const struct native_touch_meter *meters,int meter_count,int loaded,int reserve)
 {
  void *saved=n3ds_gpu_texture_bound(0);n3ds_gpu_hud_screen(1);n3ds_gpu_hud_layout(0);
- if(meter_count>0){
-  controls_panel_rect(8,27,104,28,0xff281808);
+ if(meter_count>0 || loaded>=0){
+  controls_panel_rect(8,27,104,loaded>=0?36:28,0xff281808);
   controls_panel_rect(11,29,98,1,0xffe5be63);
   for(int i=0;i<meter_count && i<3;++i){
-   float y=meter_count==1?39.f:meter_count==2?35.f+10.f*i:33.f+8.f*i;
+   float y=loaded>=0?(meter_count==1?51.f:meter_count==2?47.f+8.f*i:44.f+7.f*i):
+       meter_count==1?39.f:meter_count==2?35.f+10.f*i:33.f+8.f*i;
    float fill=fmaxf(0.f,fminf(1.f,meters[i].fill));
    unsigned int color=meters[i].state==2?0xff329bfa:meters[i].state>=4?0xffe47db4:0xfff4da64;
    controls_panel_rect(12,y,96,5,0xff4d381d);
@@ -105,6 +106,8 @@ void n3ds_gpu_match_touch_overlay(int fps,int show_fps,int show_score,int presse
  controls_halo_touch_panel(0,1,pressed==3,1);
  controls_halo_touch_panel(1,1,pressed==4,show_score?0:1);
  controls_panel_flush();
+ if(loaded>=0){char ammo[24];snprintf(ammo,sizeof(ammo),"AMMO %d/%d",loaded,reserve);
+  controls_text(15,33,ammo,0xfff6dcaa,0);}
  if(show_score){controls_text(253,132,"SCORE",0xfffff5e9,0);controls_text(257,146,"HOLD",0xffe9cf9a,0);}
  if(show_fps){char label[20];snprintf(label,sizeof(label),"FPS %02d",fps);
   controls_text(232,47,label,fps>=28?0xff7eecd7:fps>=20?0xffaad6e9:0xff7070ff,0);
@@ -182,6 +185,9 @@ void n3ds_gpu_controls_draw(const struct native_control_settings *s,int selected
  n3ds_gpu_hud_screen(0);n3ds_gpu_texture_bind(0,saved);n3ds_gpu_world_state_restore();
 }
 #ifdef HALO_N3DS_PC_LOCAL_MENU
+#include "engine_pc_preview.h"
+static void controls_text_center(float width,float y,const char *message,unsigned int color,int top)
+{controls_text((width-(float)strlen(message)*8.f)*.5f,y,message,color,top);}
 /* Kevin Boggs: n3ds_gpu_pc_local_menu - New3DS integration. */
 void n3ds_gpu_pc_local_menu(int map,int mode,int bots,int difficulty,int weapon_set,int vehicle_choice,int page,int field,int error,int high_textures,int original)
 {
@@ -191,37 +197,47 @@ void n3ds_gpu_pc_local_menu(int map,int mode,int bots,int difficulty,int weapon_
  static const char *const weapons[]={"Normal (PC map)","Pistols","Rifles","Plasma","Snipers","No sniping","Rockets","Shotguns","Short range","Human","None","Flamethrowers","Fuel Rods"};
  static const char *const vehicles[]={"Mode default","All PC vehicles","None","Warthog + Rocket","Ghost","Scorpion"};
  char line[48];void *saved=n3ds_gpu_texture_bound(0);
- n3ds_gpu_hud_layout(0);n3ds_gpu_hud_screen(1);
+ n3ds_pc_preview_draw(map,page,field,weapon_set,vehicle_choice);
+ n3ds_gpu_hud_layout(0);n3ds_gpu_hud_screen(0);
  controls_quad(0,0,400,240,0xff24150c,1);
- controls_text(104,48,page?"MATCH EQUIPMENT":"LOCAL MULTIPLAYER",0xffffffff,1);
- controls_text(48,90,page?"Pick map weapon and vehicle rules.":"Choose a PC retail map and original game mode.",0xffe9d6aa,1);
- controls_text(80,120,page?"Normal keeps PC map weapon pickups.":"The match runs on this 3DS with bots.",0xffe9d6aa,1);
- controls_text(96,170,page?"X: match setup  B: back":"X: equipment  B: back",0xffffffff,1);
- n3ds_gpu_hud_screen(0);controls_quad(0,0,320,240,0xff24150c,0);
- controls_text(72,10,page?"MATCH EQUIPMENT":"LOCAL MULTIPLAYER",0xffffffff,0);
+ controls_text_center(400,45,page?"MATCH EQUIPMENT":"LOCAL MULTIPLAYER",0xffffffff,1);
+ controls_text_center(400,84,page?"Pick map weapon and vehicle rules.":"Choose a PC retail map and original game mode.",0xffe9d6aa,1);
+ controls_text_center(400,116,page?"Normal keeps PC map weapon pickups.":"The match runs on this 3DS with bots.",0xffe9d6aa,1);
+ controls_text_center(400,157,"Drag model to turn  L/R: zoom",0xffffffff,1);
+ controls_text_center(400,179,page?"X: match setup  B: back":"X: equipment  B: back",0xffffffff,1);
+ n3ds_gpu_hud_screen(1);
+ controls_quad(0,0,320,23,0xff24150c,0);
+ controls_quad(0,22,320,1,0xffbd8142,0);
+ controls_text_center(320,8,page?"MATCH EQUIPMENT":"LOCAL MULTIPLAYER",0xffffffff,0);
+ if(!page){
+  controls_quad(248,26,63,25,0xffbd8142,0);
+  controls_quad(250,28,59,21,n3ds_pc_preview_nav_enabled()?0xff694420:0xff302016,0);
+  controls_text(255,35,n3ds_pc_preview_nav_enabled()?"NAV ON":"NAV OFF",0xfffbd29b,0);
+ }else if(field==0 && weapon_set==10)controls_text_center(320,81,"NO WEAPON",0xfffbd29b,0);
+ else if(field==1 && vehicle_choice==2)controls_text_center(320,81,"NO VEHICLES",0xfffbd29b,0);
+ controls_quad(0,144,320,96,0xff24150c,0);
  if(page){
   for(int row=0;row<2;++row){
-   float y=40+row*42;controls_quad(12,y,296,36,field==row?0xff674826:0xff35251a,0);
+   float y=148+row*24;controls_quad(12,y,296,22,field==row?0xff805527:0xff35251a,0);
    snprintf(line,sizeof(line),"%s: %s",row?"Vehicles":"Weapons",row?vehicles[vehicle_choice]:weapons[weapon_set]);
-   controls_text(20,y+13,line,0xffffffff,0);
+   controls_text_center(320,y+7,line,0xffffffff,0);
   }
-  controls_text(18,143,"Normal uses original PC placements.",0xffe9d6aa,0);
-  controls_text(18,160,"All adds Banshees to 3 PC maps",0xffe9d6aa,0);
-  controls_text(18,174,"and keeps original vehicles.",0xffe9d6aa,0);
+  controls_text_center(320,193,"All adds Banshees to 3 maps",0xffe9d6aa,0);
  }else{
   for(int row=0;row<(original?4:5);++row){
-   float y=27+row*33;controls_quad(12,y,296,30,field==row?0xff674826:0xff35251a,0);
+   float y=148+row*10;controls_quad(12,y,296,10,field==row?0xff805527:0xff35251a,0);
    if(row==0)snprintf(line,sizeof(line),"Map %02d/19: %s",map+1,maps[map]);
    else if(row==1)snprintf(line,sizeof(line),"Mode: %s",modes[mode]);
    else if(row==2)snprintf(line,sizeof(line),"Bots: %d",bots);
    else if(row==3)snprintf(line,sizeof(line),"Difficulty: %s",difficulties[difficulty]);
    else snprintf(line,sizeof(line),"PC textures: %s",high_textures?"128 + mip":"64 standard");
-   controls_text(20,y+10,line,0xffffffff,0);
+   controls_text_center(320,y+1,line,0xffffffff,0);
   }
  }
- controls_text(16,191,error?"Save or launch failed":"Tap choice or use left/right",error?0xff70a0ff:0xffe9d6aa,0);
- controls_quad(16,202,136,30,0xff674826,0);controls_quad(168,202,136,30,0xff53391a,0);
- controls_text(55,214,page?"A: DONE":"A: START",0xffffffff,0);controls_text(206,214,page?"X: BACK":"X: GEAR",0xffffffff,0);
+ if(error)controls_text_center(320,193,"Save or launch failed",0xff70a0ff,0);
+ controls_quad(16,205,136,30,0xffbd8142,0);controls_quad(18,207,132,26,0xff654321,0);
+ controls_quad(168,205,136,30,0xffbd8142,0);controls_quad(170,207,132,26,0xff3c291a,0);
+ controls_text(55,216,page?"A: DONE":"A: START",0xffffffff,0);controls_text(206,216,page?"X: BACK":"X: GEAR",0xffffffff,0);
  n3ds_gpu_hud_screen(0);n3ds_gpu_texture_bind(0,saved);n3ds_gpu_world_state_restore();
 }
 #endif

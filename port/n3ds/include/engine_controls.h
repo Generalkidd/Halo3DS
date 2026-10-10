@@ -22,7 +22,7 @@ void n3ds_gpu_controls_draw(const struct native_control_settings *settings,int s
 void n3ds_gpu_controls_entry(void);
 struct native_touch_meter { float fill; int state; };
 void n3ds_gpu_match_touch_overlay(int fps,int show_fps,int show_score,int pressed,
-    const struct native_touch_meter *meters,int meter_count);
+    const struct native_touch_meter *meters,int meter_count,int loaded,int reserve);
 struct native_score_row { char name[16]; long score; short kills,deaths; int local; };
 void n3ds_gpu_match_scoreboard(const struct native_score_row *rows,int count);
 void n3ds_gpu_match_postgame_lobby(void);

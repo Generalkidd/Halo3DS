@@ -17,6 +17,8 @@
 #include "main/main.h"
 #include "cutscene/cinematics.h"
 #include "units/units.h"
+#include "items/weapons.h"
+#include "items/weapon_definitions.h"
 #include "engine_input.h"
 #include "engine_controls.h"
 #include "render/render.h"
@@ -290,8 +292,21 @@ void n3ds_hud_draw_screen(void)
             int state=priority[i];if(weapon_meter_mask&(1u<<state))
                 visible_meters[meter_count++]=weapon_meters[state];
         }
+        int loaded=-1,reserve=0;
+        long unit_index=touch_unit();
+        const struct unit_datum *unit=unit_index==NONE?NULL:unit_get(unit_index);
+        if(unit && unit->unit.current_weapon_index>=0 &&
+           unit->unit.current_weapon_index<MAXIMUM_WEAPONS_PER_UNIT){
+            long weapon_index=unit->unit.weapon_object_indices[unit->unit.current_weapon_index];
+            const struct weapon_datum *weapon=weapon_index==NONE?NULL:weapon_try_and_get(weapon_index);
+            const struct weapon_definition *definition=weapon?weapon_definition_get(weapon->definition_index):NULL;
+            if(definition && definition->weapon.magazines.count>0){
+                loaded=MAX(0,weapon->weapon.magazines[0].rounds_loaded);
+                reserve=MAX(0,weapon->weapon.magazines[0].rounds_total);
+            }
+        }
         n3ds_gpu_match_touch_overlay(fps_value,n3ds_controls_show_fps(),
-            n3ds_main_is_solo_multiplayer(),n3ds_input_touch_panel_pressed(),visible_meters,meter_count);
+            n3ds_main_is_solo_multiplayer(),n3ds_input_touch_panel_pressed(),visible_meters,meter_count,loaded,reserve);
     }
     if(hud_visible && !cinematic_in_progress() && n3ds_main_is_solo_multiplayer()) {
         const struct gamepad_state *pad=input_get_gamepad_state(0);

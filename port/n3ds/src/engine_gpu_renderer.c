@@ -1045,7 +1045,8 @@ void n3ds_gpu_window_begin(const struct native_render_camera *camera)
 {
     C3D_Mtx projection, view, combined;
     window_state_begin(camera);
-    Mtx_PerspTilt(&projection, camera->vertical_fov, 400.f/240.f, camera->near_clip, camera->far_clip, false);
+    Mtx_PerspTilt(&projection, camera->vertical_fov, (bottom_selected?320.f:400.f)/240.f,
+        camera->near_clip, camera->far_clip, false);
     /* The camera already carries its eye translation; only shift the frustum
      * here, keeping a point 1.5 world units away at zero disparity. */
     projection.r[1].z=-projection.r[1].x*eye_offset/1.5f;

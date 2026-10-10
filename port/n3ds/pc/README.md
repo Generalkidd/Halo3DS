@@ -43,7 +43,8 @@ still needs a repeat hardware check.
 
 The PC Blood Gulch arsenal fixture fired all 11 tested weapons or mounted gun
 paths. Captures show map textures, vehicles, HUD, particles, tracers, the
-world-space flamethrower trail, and fading Fuel Rod impact. A sniper shot on a
+nozzle-anchored flamethrower trail with falling, fading sprites, and a fading
+Fuel Rod impact. A sniper shot on a
 136.84 m map-authored clear sightline rendered a 36-point contrail spanning
 136.28 m. The native two-map effect renderer also passed 50 independent GPU
 pixel comparisons, including premultiplied secondary effects.

@@ -8,6 +8,7 @@
 #include "game/game_engine.h"
 #include "engine_bots.h"
 #include "pc_diagnostic_maps.h"
+#include "engine_pc_preview.h"
 int n3ds_pc_tags_active(void);
 #endif
 
@@ -242,11 +243,12 @@ void n3ds_pc_local_menu_filter(struct native_input_sample *sample)
   return;
  }
  if(!pc_menu_available()){
-  pc_menu_open=0;pc_menu_swallow=1;memset(sample,0,sizeof(*sample));return;
+  pc_menu_open=0;n3ds_pc_preview_close();pc_menu_swallow=1;memset(sample,0,sizeof(*sample));return;
  }
+ n3ds_pc_preview_input(sample);
  if(fresh&NATIVE_KEY_B){
   if(pc_menu_page){pc_menu_page=0;pc_menu_field=0;}
-  else {pc_menu_open=0;pc_menu_swallow=1;n3ds_log("PC LOCAL MENU: closed");}
+  else {pc_menu_open=0;n3ds_pc_preview_close();pc_menu_swallow=1;n3ds_log("PC LOCAL MENU: closed");}
  }
  else if((fresh&NATIVE_KEY_X) || ((fresh&NATIVE_KEY_TOUCH) &&
          sample->touch_y>=202 && sample->touch_y<234 && sample->touch_x>=168 && sample->touch_x<304)){
@@ -267,8 +269,8 @@ void n3ds_pc_local_menu_filter(struct native_input_sample *sample)
   if(delta)pc_menu_error=0;
  }
  else if((fresh&NATIVE_KEY_TOUCH) && sample->touch_x>=12 && sample->touch_x<308 &&
-         sample->touch_y>=(pc_menu_page?40:27) && sample->touch_y<(pc_menu_page?124:192)){
-  int row=pc_menu_page?(sample->touch_y-40)/42:(sample->touch_y-27)/33;
+         sample->touch_y>=148 && sample->touch_y<200){
+  int row=pc_menu_page?(sample->touch_y-148)/24:(sample->touch_y-148)/10;
   if(row<pc_menu_field_count()){
    pc_menu_field=row;
    if(pc_menu_page){
@@ -301,7 +303,7 @@ void n3ds_pc_local_menu_filter(struct native_input_sample *sample)
    n3ds_bots_set_menu_difficulty((short)pc_menu_difficulty);
    pc_match_weapon_override=pc_menu_weapon_set==11?1:pc_menu_weapon_set==12?2:0;
    snprintf(message,sizeof(message),"PC LOCAL MENU: queued %s mode=%s bots=%d difficulty=%d weapons=%d vehicles=%d",map,pc_menu_modes[pc_menu_mode],pc_menu_bots,pc_menu_difficulty,pc_menu_weapon_set,variant.universal_variant.vehicle_set);
-   n3ds_log(message);pc_menu_open=0;pc_menu_swallow=1;
+   n3ds_log(message);pc_menu_open=0;n3ds_pc_preview_close();pc_menu_swallow=1;
   }
  }
  memset(sample,0,sizeof(*sample));

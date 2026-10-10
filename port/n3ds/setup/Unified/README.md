@@ -49,6 +49,11 @@ vehicles** enables every vehicle type that the map places, including Rocket
 Warthog and Banshee where present. It also places two Banshees at clear sites
 on opposing sides of Danger Canyon, Ice Fields, and Timberland; their PC caches contain
 the Banshee asset. Other vehicle choices retain the original placements.
+The lower screen previews the selected map's geometry. Tap **NAV ON/OFF** to
+show or hide its blue walkable-surface overlay. The gear page previews the
+selected weapon or vehicle using models available in that PC map. Drag a
+preview to turn it, use **L/R** to zoom, or leave it idle for a slow turntable.
+
 `-BotCount`
 sets a default from 0 to 15. On the campaign difficulty screen, the bottom
 touch screen toggles **PC weapons and vehicles in campaign**. It starts ON for
@@ -68,6 +73,8 @@ mode can take longer to load and may affect frame rate. Xbox maps and original
 During a solo PC match, hold **SELECT** or the lower-right **SCORE** touch
 panel around the motion tracker to show the scoreboard on the top screen.
 The three other touch panels give press feedback but have no assigned action.
+Magazine weapons show loaded rounds and reserve ammo above their meters on
+the lower screen; energy weapons keep their original charge and heat meters.
 Controller Settings also offers separate **Swap X/Y** and **Swap A/B** options,
 **Show FPS** on the bottom screen, and **Decals**. Both face-button swaps and
 Decals start ON for new profiles; FPS starts OFF. The Xbox face layout preset

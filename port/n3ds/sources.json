@@ -1170,6 +1170,22 @@
       ]
     },
     {
+      "source": "port/n3ds/preview/halo_cache_reader.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/n3ds/preview/halo_pc_bsp.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/n3ds/preview/halo_pc_model.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/n3ds/preview/engine_pc_preview.c",
+      "compiler": "gcc"
+    },
+    {
       "source": "port/n3ds/src/engine_campaign_options.c",
       "compiler": "clang",
       "defines": [

@@ -118,10 +118,27 @@ bottom-screen FPS readout. Switch X/Y starts on for new profiles; FPS starts
 off. Saved profiles keep their chosen values. The Decals switch starts on and
 controls creation and drawing of surface marks without changing their authored
 lifetimes. Weapon meters use compact bars below the ammo count to remain
-legible at the 3DS resolution.
+legible at the 3DS resolution. Magazine weapons read loaded and reserve rounds
+from the live original weapon datum for the lower-screen ammo label.
 After a local multiplayer match ends, the upper part of the bottom screen
 shows Return to Lobby. Tap it or press B to reopen the Local Multiplayer
 selector with the previous map, mode and bot choices.
+
+The Local Multiplayer selector reads the owner's selected PC cache for a
+disposable 3D preview. The map page samples broad BSP render surfaces and
+the original collision BSP's walkable surfaces (pathfinding flag `0x40`),
+with a blue alpha-blended overlay that the bottom-screen NAV button toggles.
+The gear page previews a selected weapon or vehicle model. Touch dragging
+rotates the camera, L/R adjusts distance, and idle frames advance a slow
+turntable. The preview caps render geometry at 2,048 triangles and the nav
+overlay at 1,024, so it is an overview rather than a complete path graph.
+It releases the copied cache and geometry when the selector closes.
+Isolated Azahar captures showed Blood Gulch with the nav overlay on and off,
+plus a pistol and vehicle preview on the gear page. A separate selector sweep
+loaded geometry and walkable overlays on all 19 stock PC multiplayer maps
+without a fatal error. An arsenal match capture showed the
+assault rifle's lower-screen ammo label at 44 loaded and 180 reserve rounds.
+Preview responsiveness and readability still need device checks.
 
 For bounded local probes, `--diagnostic-pc-play MAP` accepts the nineteen stock
 PC multiplayer maps. `--diagnostic-pc-mode` selects Slayer, CTF, Oddball, King
@@ -676,13 +693,18 @@ last-fired time from 0 to 299. After its cooldown, the secondary trigger
 advanced that time to 379 and referenced a valid projectile tag. Both were
 driven through the native controller and original player/vehicle weapon code.
 
-The native flamethrower renderer now draws the PC map's own flame sprite at
-simulated projectile positions and keeps a short history of world-space muzzle
-emissions. A turn leaves the older flame behind instead of rotating the entire
-jet with the camera. The native game tick also advances authored decal decay,
-and additive particles apply vertex alpha to their light contribution so
-explosions fade. The isolated Azahar arsenal fixture fired all 11 weapons;
-captured turn and Fuel Rod frames showed the flame lag and blast decay. The
+The native flamethrower renderer now uses the first-person model's animated
+`spawn fire` nozzle marker. It aims a short world-space sprite history from
+that marker toward the camera reticle's collision point, then applies a
+20-frame lifetime, downward acceleration, and fading alpha. The original
+projectiles still determine gameplay; their displaced world-weapon sprite
+positions are hidden for the local first-person view. A turn leaves older
+flame behind instead of rotating the whole jet with the camera. In the
+isolated Azahar arsenal replay, the marker resolved and all 11 weapon and
+mounted-gun paths fired without a fatal error. Captured turn and Fuel Rod
+frames showed flame lag and blast decay. The native game tick also advances
+authored decal decay, and additive particles apply vertex alpha to their
+light contribution so explosions fade. The
 physical display and sustained frame rate still need checking.
 
 An isolated Blood Gulch sniper fixture used a map-authored 136.84 m clear

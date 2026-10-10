@@ -33,6 +33,7 @@
 #include "game/players.h"
 #include "game/game.h"
 #include "items/weapons.h"
+#include "physics/collisions.h"
 void set_window_camera_values(struct render_window *window,const struct observer_result *observer);
 void n3ds_log(const char *message);
 void texture_cache_flush(void);
@@ -79,10 +80,11 @@ static long flame_bitmap=NONE;
 struct flame_sprite {short image;real_rectangle2d uv;};
 static struct flame_sprite flame_sprites[4];
 static unsigned int flame_sprite_count;
-enum { FLAME_EMISSIONS=24 };
+enum { FLAME_EMISSIONS=20 };
 struct flame_emission {
     real_point3d origin;
     real_vector3d direction;
+    float distance;
     unsigned int frame;
     int valid;
 };
@@ -146,6 +148,23 @@ static long flame_owner_fire_age(long unit_index)
     return name && !strcmp(name,"weapons\\flamethrower\\flamethrower")?
         game_time_get()-weapon->weapon.game_time_last_fired:NONE;
 }
+/* Keep near-plane billboards and old turn samples from splashing across the
+ * opposite edge of the first-person view. Samples within the view still keep
+ * their original world position, so the jet bends naturally on a turn. */
+static int flame_sprite_in_view(const real_point3d *center,float radius,
+    const real_vector3d *right)
+{
+    real_vector3d delta;
+    vector_from_points3d(&render.camera.position,center,&delta);
+    float depth=dot_product3d(&delta,&render.camera.forward);
+    float side=dot_product3d(&delta,right);
+    float height=dot_product3d(&delta,&render.camera.up);
+    if(depth<radius+0.15f) return 0;
+    /* Halo's top display is wider than it is high. Leave a narrow guard band
+     * for the sprite radius while avoiding out-of-frustum additive blooms. */
+    return fabsf(side)<depth*.90f+radius*.25f &&
+        fabsf(height)<depth*.55f+radius*.25f;
+}
 /* Kevin Boggs: display the original simulated flamethrower projectiles as a visible jet. */
 /* Kevin Boggs: flame_stream_draw - New3DS integration. */
 static void flame_stream_draw(void)
@@ -179,14 +198,20 @@ static void flame_stream_draw(void)
         /* The gameplay projectile may survive for seconds and travel up to
          * 16 m. Its visible flame belongs to the short, active firing jet. */
         if(dot_product3d(&travel,&travel)>25.f) continue;
-        if(owner_index==local_unit) ++local_projectiles;
-        else ++remote_projectiles;
+        if(owner_index==local_unit) {
+            ++local_projectiles;
+            /* The simulated projectile starts at the world weapon origin,
+             * which is displaced from the first-person nozzle on screen. */
+            continue;
+        }
+        const float radius=.14f;
+        if(!flame_sprite_in_view(&projectile->object.position,radius,&right))continue;
+        ++remote_projectiles;
         const struct flame_sprite *sprite=&flame_sprites[(unsigned int)iterator.index%flame_sprite_count];
         if(used && (image!=sprite->image || used+6>NUMBEROF(flame_vertices))) {
             flame_stream_flush(used,image);used=0;
         }
         image=sprite->image;
-        const float radius=owner_index==local_unit?.26f:.14f;
         for(unsigned int corner=0;corner<6;++corner) {
             struct native_widget_vertex *v=flame_vertices+used+corner;
             int index=order[corner];
@@ -202,17 +227,51 @@ static void flame_stream_draw(void)
         used+=6;
     }
     flame_stream_flush(used,image);
-    /* Record each emitted muzzle direction once. The sample then moves and
-     * fades in world space, leaving the bend of a hose when the player turns. */
+    /* Emit at the animated first-person "spawn fire" marker on the nozzle.
+     * The world weapon's "primary trigger" belongs to the simulated shot.
+     * The aim point comes from the camera ray, so the visible jet converges on the same
+     * impact point as the reticle while preserving the real projectile logic. */
     if(local_firing && local_projectiles && flame_last_emitted!=render.frame_index) {
-        real_vector3d direction=render.camera.forward;
-        if(normalize3d(&direction)>0) {
-            struct flame_emission *sample=flame_emissions+render.frame_index%FLAME_EMISSIONS;
-            sample->origin=render.camera.position;
-            sample->direction=direction;sample->frame=render.frame_index;sample->valid=1;
+        const struct unit_datum *unit=unit_try_and_get(local_unit);
+        long weapon_index=unit && unit->unit.current_weapon_index>=0 &&
+            unit->unit.current_weapon_index<MAXIMUM_WEAPONS_PER_UNIT?
+            unit->unit.weapon_object_indices[unit->unit.current_weapon_index]:NONE;
+        struct object_marker marker;
+        short marker_count=weapon_index==NONE?0:first_person_weapon_get_marker_by_name_render(
+            weapon_index,"spawn fire",&marker,1);
+        real_point3d muzzle;
+        if(marker_count>0) muzzle=marker.matrix.position;
+        else {
+            /* A few map variants omit the marker; keep their effect aligned
+             * with the visible weapon until a marker is available. */
+            muzzle=render.camera.position;
             for(int axis=0;axis<3;++axis)
-                sample->origin.n[axis]+=direction.n[axis]*.6f+
-                    right.n[axis]*.48f-render.camera.up.n[axis]*.30f;
+                muzzle.n[axis]+=render.camera.forward.n[axis]*.65f+
+                    right.n[axis]*.22f-render.camera.up.n[axis]*.16f;
+        }
+        real_vector3d aim=render.camera.forward;
+        for(int axis=0;axis<3;++axis)aim.n[axis]*=16.f;
+        struct collision_result hit;
+        real_point3d target;
+        if(collision_test_vector(_collision_test_for_line_of_sight_flags,
+            &render.camera.position,&aim,local_unit,&hit)) target=hit.point;
+        else {target=render.camera.position;
+            for(int axis=0;axis<3;++axis)target.n[axis]+=aim.n[axis];}
+        real_vector3d direction;
+        vector_from_points3d(&muzzle,&target,&direction);
+        float distance=normalize3d(&direction);
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_ARSENAL
+        if(render.frame_index%30==0){char message[192];
+            snprintf(message,sizeof(message),
+                "FLAME NOZZLE: marker=%d muzzle=%.2f,%.2f,%.2f target=%.2f,%.2f,%.2f distance=%.2f",
+                marker_count,muzzle.x,muzzle.y,muzzle.z,target.x,target.y,target.z,distance);
+            n3ds_log(message);}
+#endif
+        if(distance>0) {
+            struct flame_emission *sample=flame_emissions+render.frame_index%FLAME_EMISSIONS;
+            sample->origin=muzzle;
+            sample->direction=direction;sample->distance=distance;
+            sample->frame=render.frame_index;sample->valid=1;
             flame_last_emitted=render.frame_index;
         }
     }
@@ -227,12 +286,17 @@ static void flame_stream_draw(void)
         }
         image=sprite->image;
         real_point3d center=sample->origin;
+        float travel=fminf(sample->distance,.4f+.18f*age);
         for(int axis=0;axis<3;++axis)
-            center.n[axis]+=sample->direction.n[axis]*(.4f+.18f*age);
-        center.z-=.0008f*age*age;
+            center.n[axis]+=sample->direction.n[axis]*travel;
+        /* Twenty 30 Hz frames is a brief jet, not an endless beam. A modest
+         * downward acceleration makes spent flame visibly fall before fade. */
+        float seconds=(float)age/30.f;
+        center.z-=.5f*4.5f*seconds*seconds;
         float fraction=(float)age/FLAME_EMISSIONS;
         float radius=.25f+.15f*fraction;
         float opacity=.40f*(1.f-fraction);
+        if(!flame_sprite_in_view(&center,radius,&right))continue;
         for(unsigned int corner=0;corner<6;++corner) {
             struct native_widget_vertex *v=flame_vertices+used+corner;
             int index=order[corner];
