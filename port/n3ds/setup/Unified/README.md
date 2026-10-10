@@ -38,8 +38,9 @@ experimental 128-pixel texture with mip. This choice saves immediately and
 applies when the map loads. Difficulty changes ordinary bot accuracy and firing
 rate. ChaoticSPARTAN1 and KodeBreaker16 each have an independent 50% chance
 per match when at least two bot slots are available; both can appear together.
-KodeBreaker16 has a 10% chance of 60 seconds of active camouflage on each
-spawn. Press **X** or tap
+KodeBreaker16 has teal armor and a 25% chance of 60 seconds of active
+camouflage on each spawn. ChaoticSPARTAN1 has green armor and a 10% chance.
+Press **X** or tap
 **X: Gear** to choose a weapon set and vehicle set before the match. **Normal
 (PC map)** keeps each PC map's original pickups, including Flamethrower and
 Fuel Rod placements where the map has them. The extra **Flamethrowers** and

@@ -105,8 +105,10 @@ The same replay succeeded with the isolated emulator's player profile set aside,
 so a saved profile is not required to enter this local match.
 ChaoticSPARTAN1 and KodeBreaker16 are independent named bot rolls, each with
 a 50% match chance when at least two AI slots are available. Both can appear
-together. KodeBreaker16 has a 10% chance on each spawn to receive the game's
-timed active camouflage powerup for 60 seconds.
+together. KodeBreaker16 has a 25% chance on each spawn to receive the game's
+timed active camouflage powerup for 60 seconds. His armor uses the original
+teal profile color. ChaoticSPARTAN1 keeps the green profile color and has a
+10% active camouflage chance per spawn.
 
 During a solo PC match, hold SELECT or the lower-right SCORE touch panel to
 display the player scoreboard on the top screen. Three other panels surround

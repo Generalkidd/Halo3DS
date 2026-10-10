@@ -780,17 +780,21 @@ void n3ds_bots_fill_action(short queue_index, short identifier,
 		/* A new datum marks a new spawn, including the first one. Use the
 		 * game's normal timed powerup so death, firing, and expiry still apply. */
 		state->last_unit_index = bot->unit_index;
-		if (combat_bot_is_kode(queue_index))
+		if (combat_bot_is_kode(queue_index) || combat_bot_is_star(queue_index))
 		{
 			unsigned long camo_seed = (unsigned long)bot->unit_index ^
 				((unsigned long)tick * 0x9e3779b9UL) ^
 				(n3ds_bot_match_serial * 0x85ebca6bUL);
-			if (seed_random_range(&camo_seed, 0, 10) == 0)
+			boolean kode = combat_bot_is_kode(queue_index);
+			/* Independent chance on each spawn: KodeBreaker16 25%,
+			 * ChaoticSPARTAN1 10%. */
+			if (seed_random_range(&camo_seed, 0, 100) < (kode ? 25 : 10))
 			{
 				player_handle_powerup_minor(bot_index,
 					_player_powerup_active_camouflage, 60 * 30);
 				unit->unit.active_camouflage = 1.f;
-				platform_log("BOTS: KodeBreaker16 spawned with active camo unit %08lx", bot->unit_index);
+				platform_log("BOTS: %s spawned with active camo unit %08lx",
+					kode ? "KodeBreaker16" : "ChaoticSPARTAN1", bot->unit_index);
 			}
 		}
 	}
@@ -1415,7 +1419,7 @@ short n3ds_bots_create(short count)
 	unsigned long seed;
 	unsigned char guest_order[NUMBEROF(n3ds_bot_guest_names)];
 	unsigned char color_order[16];
-	short guest_count=0;
+	short guest_count=0, guest_color_count=0, guest_color_cursor=0;
 	n3ds_bots_reset();
 	if (count < 0 || count > 15)
 		return 0;
@@ -1447,8 +1451,11 @@ short n3ds_bots_create(short count)
 		guest_order[i]=guest_order[chosen];
 		guest_order[chosen]=prior;
 	}
-	for (i=0;i<NUMBEROF(color_order);++i)
-		color_order[i]=(unsigned char)(i<6?i:i+1);
+	/* The original profile palette uses 6 for green and 12 (0x1ECC91)
+	 * for teal. Keep both named profiles recognizable in solo matches. */
+	for (i=0;i<18;++i)
+		if (i!=6 && i!=12)
+			color_order[guest_color_count++]=(unsigned char)i;
 	for (i=NUMBEROF(color_order)-1;i>0;--i) {
 		short chosen=seed_random_range(&seed,0,i+1);
 		unsigned char prior=color_order[i];
@@ -1472,7 +1479,7 @@ short n3ds_bots_create(short count)
 		for (n = 0; name[n] && n < 11; ++n)
 			profile.name[n] = (wchar_t)(unsigned char)name[n];
 		profile.primary_color_index = i == named_slot ? 6 :
-			color_order[i < named_slot || named_slot == NONE ? i : i-1];
+			(i == kode_slot ? 12 : color_order[guest_color_cursor++]);
 		profile.machine_index = (char)machine;
 		profile.controller_index = (char)(slot % 4);
 		profile.player_list_index = (char)slot;
