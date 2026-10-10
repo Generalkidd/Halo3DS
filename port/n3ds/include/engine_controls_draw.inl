@@ -206,8 +206,8 @@ void n3ds_gpu_pc_local_menu(int map,int mode,int bots,int difficulty,int weapon_
    controls_text(20,y+13,line,0xffffffff,0);
   }
   controls_text(18,143,"Normal uses original PC placements.",0xffe9d6aa,0);
-  controls_text(18,160,"All adds Rocket Hog + Banshee",0xffe9d6aa,0);
-  controls_text(18,174,"on maps that support them.",0xffe9d6aa,0);
+  controls_text(18,160,"All adds Banshees to 3 PC maps",0xffe9d6aa,0);
+  controls_text(18,174,"and keeps original vehicles.",0xffe9d6aa,0);
  }else{
   for(int row=0;row<(original?4:5);++row){
    float y=27+row*33;controls_quad(12,y,296,30,field==row?0xff674826:0xff35251a,0);

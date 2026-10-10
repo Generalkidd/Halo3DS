@@ -46,7 +46,10 @@ Press **X** or tap
 Fuel Rod placements where the map has them. The extra **Flamethrowers** and
 **Fuel Rods** sets replace weapon pickups across the chosen PC map. **All PC
 vehicles** enables every vehicle type that the map places, including Rocket
-Warthog and Banshee where present. `-BotCount`
+Warthog and Banshee where present. It also places two Banshees at clear sites
+on opposing sides of Danger Canyon, Ice Fields, and Timberland; their PC caches contain
+the Banshee asset. Other vehicle choices retain the original placements.
+`-BotCount`
 sets a default from 0 to 15. On the campaign difficulty screen, the bottom
 touch screen toggles **PC weapons and vehicles in campaign**. It starts ON for
 testing and persists until changed there. The added pickups are beside
