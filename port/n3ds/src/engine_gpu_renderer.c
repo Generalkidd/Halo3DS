@@ -2482,7 +2482,7 @@ void n3ds_gpu_campaign_help(void)
 {
     struct native_control_settings s;n3ds_controls_get(&s);
 #ifdef HALO_N3DS_UNIFIED_UI
-    const char *lines[]={"Campaign uses the Xbox retail maps.",s.xbox_buttons?"B: Start mission   R + B: Resume save":"A: Start mission   R + A: Resume save","SELECT: PC maps, modes and bots"};
+    const char *lines[]={"Campaign uses the Xbox retail maps.",(s.xbox_buttons^s.swap_ab)?"B: Start mission   R + B: Resume save":"A: Start mission   R + A: Resume save","SELECT: PC maps, modes and bots"};
     n3ds_gpu_hud_screen(1);status_text(lines,3,1);
     {
         extern int n3ds_ui_difficulty_menu_active(void);
@@ -2495,7 +2495,7 @@ void n3ds_gpu_campaign_help(void)
         }
     }
 #else
-    const char *lines[]={"At difficulty selection:",s.xbox_buttons?"B: Start mission   R + B: Resume save":"A: Start mission   R + A: Resume save"};
+    const char *lines[]={"At difficulty selection:",(s.xbox_buttons^s.swap_ab)?"B: Start mission   R + B: Resume save":"A: Start mission   R + A: Resume save"};
     n3ds_gpu_hud_screen(1);status_text(lines,2,1);
 #endif
     n3ds_gpu_hud_screen(0);n3ds_gpu_world_state_restore();

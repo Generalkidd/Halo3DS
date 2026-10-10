@@ -29,7 +29,7 @@ static unsigned int test_aim_touch(unsigned int x,unsigned int y)
 }
 int halo_engine_touch_aim_tests(void)
 {
-    n3ds_controls_initialize();struct native_control_settings saved,defaults={100,100,0,0,0,0,0,1};n3ds_controls_get(&saved);n3ds_controls_set(&defaults);
+    n3ds_controls_initialize();struct native_control_settings saved,defaults={100,100,0,0,0,0,0,1,0};n3ds_controls_get(&saved);n3ds_controls_set(&defaults);
     struct native_input_sample s={0};const struct gamepad_state *pad;
 #define AIM_CHECK(e) do {if(!(e)){n3ds_log("TOUCH AIM FAIL: " #e);input_dispose();n3ds_controls_set(&saved);return 1;}}while(0)
 #define SAMPLE() n3ds_engine_input_sample(&s)
@@ -105,7 +105,7 @@ int halo_engine_touch_aim_tests(void)
 
 int halo_engine_input_tests(void)
 {
-    n3ds_controls_initialize();struct native_control_settings saved,defaults={100,100,0,0,0,0,0,1};n3ds_controls_get(&saved);n3ds_controls_set(&defaults);
+    n3ds_controls_initialize();struct native_control_settings saved,defaults={100,100,0,0,0,0,0,1,0};n3ds_controls_get(&saved);n3ds_controls_set(&defaults);
     static const struct { unsigned int key; short button; } cases[]={
         {NATIVE_KEY_A,_gamepad_analog_button_a},{NATIVE_KEY_B,_gamepad_analog_button_b},
         {NATIVE_KEY_X,_gamepad_analog_button_x},{NATIVE_KEY_Y,_gamepad_analog_button_y},

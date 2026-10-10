@@ -160,20 +160,21 @@ void n3ds_gpu_controls_draw(const struct native_control_settings *s,int selected
  if(!original)controls_text(64,208,"PC high textures apply next map load.",0xffe9d6aa,1);
  n3ds_gpu_hud_screen(1);controls_quad(0,0,320,240,0xff24150c,0);
  controls_text(108,16,"GAME SETTINGS",0xffffffff,0);
- const char *labels[]={"C-stick aim","Touch aim","ABXY layout","Swap shoulders","PC textures","Swap X/Y","Show FPS","Decals"};
- for(int row=0;row<(original?6:8);++row){int field=original && row>=3?row+2:row;
-  unsigned int color=0xffffffff;float y=24+row*20;
-  controls_quad(12,y,296,19,selected==row?0xff674826:0xff35251a,0);
-  controls_text(20,y+6,labels[field],color,0);char value[32];
+ const char *labels[]={"C-stick aim","Touch aim","ABXY layout","Swap shoulders","PC textures","Swap X/Y","Swap A/B","Show FPS","Decals"};
+ for(int row=0;row<(original?7:9);++row){int field=original && row>=3?row+2:row;
+  unsigned int color=0xffffffff;float y=24+row*18;
+  controls_quad(12,y,296,17,selected==row?0xff674826:0xff35251a,0);
+  controls_text(20,y+5,labels[field],color,0);char value[32];
   if(field<2)snprintf(value,sizeof(value),"%u%%",field?s->touch:s->cstick);
   else snprintf(value,sizeof(value),"%s",field==2?(s->xbox_buttons?"Xbox":"Nintendo"):
       field==3?(s->swap_shoulders?"On":"Off"):
       field==4?(s->high_textures?"128+mip":"64"):
       field==5?(s->swap_xy?"On":"Off"):
-      field==6?(s->show_fps?"On":"Off"):(s->decals?"On":"Off"));
-  controls_text(164,y+6,value,color,0);
-  controls_quad(242,y+1,28,17,0xff735333,0);controls_quad(274,y+1,28,17,0xff735333,0);
-  controls_text(252,y+6,"-",color,0);controls_text(284,y+6,"+",color,0);
+      field==6?(s->swap_ab?"On":"Off"):
+      field==7?(s->show_fps?"On":"Off"):(s->decals?"On":"Off"));
+  controls_text(164,y+5,value,color,0);
+  controls_quad(242,y+1,28,15,0xff735333,0);controls_quad(274,y+1,28,15,0xff735333,0);
+  controls_text(252,y+5,"-",color,0);controls_text(284,y+5,"+",color,0);
  }
  controls_text(16,188,save_error?"Save failed. START retry / B cancel":"Up/down: select  Left/right: change",save_error?0xff70a0ff:0xffe9d6aa,0);
  controls_quad(16,202,134,30,0xff53391a,0);controls_quad(170,202,134,30,0xff674826,0);

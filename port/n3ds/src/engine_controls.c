@@ -13,8 +13,8 @@ int n3ds_pc_tags_active(void);
 
 void n3ds_log(const char *message);
 void n3ds_ui_controls_back(void);
-static const struct native_control_settings defaults={100,100,0,0,0,1,0,1};
-static struct native_control_settings settings={100,100,0,0,0,1,0,1},opened_settings;
+static const struct native_control_settings defaults={100,100,0,0,0,1,0,1,1};
+static struct native_control_settings settings={100,100,0,0,0,1,0,1,1},opened_settings;
 static int initialized,modal,main_route,selected,save_error,repeat_ticks,swallow;
 static unsigned int previous_keys;
 static const char path[]="t:\\controller-settings.bin";
@@ -24,10 +24,11 @@ struct legacy_control_settings {unsigned int cstick,touch,xbox_buttons,swap_shou
 struct legacy_settings_file {unsigned int magic,version;struct legacy_control_settings settings;unsigned int checksum;};
 struct settings_file_v2 {unsigned int magic,version;unsigned int cstick,touch,xbox_buttons,swap_shoulders,high_textures;unsigned int checksum;};
 struct settings_file_v3 {unsigned int magic,version;unsigned int cstick,touch,xbox_buttons,swap_shoulders,high_textures,swap_xy,show_fps;unsigned int checksum;};
+struct settings_file_v4 {unsigned int magic,version;unsigned int cstick,touch,xbox_buttons,swap_shoulders,high_textures,swap_xy,show_fps,decals;unsigned int checksum;};
 struct settings_file {unsigned int magic,version;struct native_control_settings settings;unsigned int checksum;};
 
 static int valid(const struct native_control_settings *s)
-{return s->cstick>=25 && s->cstick<=300 && s->touch>=25 && s->touch<=300 && s->xbox_buttons<=1 && s->swap_shoulders<=1 && s->high_textures<=1 && s->swap_xy<=1 && s->show_fps<=1 && s->decals<=1;}
+{return s->cstick>=25 && s->cstick<=300 && s->touch>=25 && s->touch<=300 && s->xbox_buttons<=1 && s->swap_shoulders<=1 && s->high_textures<=1 && s->swap_xy<=1 && s->show_fps<=1 && s->decals<=1 && s->swap_ab<=1;}
 /* Kevin Boggs: checksum_bytes - New3DS integration. */
 static unsigned int checksum_bytes(const void *data,unsigned int size)
 {
@@ -38,10 +39,11 @@ static unsigned int checksum_bytes(const void *data,unsigned int size)
 static unsigned int checksum(const struct settings_file *f){return checksum_bytes(f,sizeof(*f));}
 static int read_settings(const char *name,struct native_control_settings *s)
 {
- struct settings_file f;struct settings_file_v3 prior3;struct settings_file_v2 prior;struct legacy_settings_file old;
+ struct settings_file f;struct settings_file_v4 prior4;struct settings_file_v3 prior3;struct settings_file_v2 prior;struct legacy_settings_file old;
  unsigned int h=n3ds_file_open(name,1);if(!h)return 0;
  unsigned int size=n3ds_file_size(h);
  int ok=size==sizeof(f)?n3ds_file_read(h,&f,sizeof(f)):
+     size==sizeof(prior4)?n3ds_file_read(h,&prior4,sizeof(prior4)):
      size==sizeof(prior3)?n3ds_file_read(h,&prior3,sizeof(prior3)):
      size==sizeof(prior)?n3ds_file_read(h,&prior,sizeof(prior)):
      size==sizeof(old)?n3ds_file_read(h,&old,sizeof(old)):0;
@@ -60,15 +62,22 @@ static int read_settings(const char *name,struct native_control_settings *s)
   *s=defaults;s->cstick=prior3.cstick;s->touch=prior3.touch;s->xbox_buttons=prior3.xbox_buttons;
   s->swap_shoulders=prior3.swap_shoulders;s->high_textures=prior3.high_textures;
   s->swap_xy=prior3.swap_xy;s->show_fps=prior3.show_fps;
+ }else if(size==sizeof(prior4)){
+  if(prior4.magic!=0x3343544c || prior4.version!=4 || prior4.checksum!=checksum_bytes(&prior4,sizeof(prior4)))return 0;
+  *s=defaults;s->cstick=prior4.cstick;s->touch=prior4.touch;s->xbox_buttons=prior4.xbox_buttons;
+  s->swap_shoulders=prior4.swap_shoulders;s->high_textures=prior4.high_textures;
+  s->swap_xy=prior4.swap_xy;s->show_fps=prior4.show_fps;s->decals=prior4.decals;
  }else{
-  if(f.magic!=0x3343544c || f.version!=4 || f.checksum!=checksum(&f))return 0;
+  if(f.magic!=0x3343544c || f.version!=5 || f.checksum!=checksum(&f))return 0;
   *s=f.settings;
  }
- return valid(s);
+ if(!valid(s))return 0;
+ if(size==sizeof(prior4))n3ds_log("CONTROLLER SETTINGS: loaded v4 profile with Swap A/B ON");
+ return 1;
 }
 static int save_settings(void)
 {
- struct settings_file f={0x3343544c,4,settings,0};f.checksum=checksum(&f);
+ struct settings_file f={0x3343544c,5,settings,0};f.checksum=checksum(&f);
  struct native_file_info info;
  if(n3ds_file_stat(settings_temporary,&info) && !n3ds_file_delete(settings_temporary,0))return 0;
  if(!n3ds_file_create(settings_temporary,0))return 0;
@@ -104,6 +113,7 @@ unsigned int n3ds_controls_buttons(unsigned int held,int original,int gameplay)
 {
  if(settings.xbox_buttons){held=exchange(held,NATIVE_KEY_A,NATIVE_KEY_B);held=exchange(held,NATIVE_KEY_X,NATIVE_KEY_Y);}
  if(settings.swap_xy)held=exchange(held,NATIVE_KEY_X,NATIVE_KEY_Y);
+ if(settings.swap_ab)held=exchange(held,NATIVE_KEY_A,NATIVE_KEY_B);
  if(settings.swap_shoulders && !original && gameplay){held=exchange(held,NATIVE_KEY_L,NATIVE_KEY_ZL);held=exchange(held,NATIVE_KEY_R,NATIVE_KEY_ZR);}
  return held;
 }
@@ -135,8 +145,9 @@ static void adjust(int delta)
  else if(field==3)settings.swap_shoulders^=1;
  else if(field==4)settings.high_textures^=1;
  else if(field==5)settings.swap_xy^=1;
- else if(field==6)settings.show_fps^=1;
- else if(field==7)settings.decals^=1;
+ else if(field==6)settings.swap_ab^=1;
+ else if(field==7)settings.show_fps^=1;
+ else if(field==8)settings.decals^=1;
  save_error=0;
 }
 void n3ds_controls_filter(struct native_input_sample *s)
@@ -152,14 +163,14 @@ void n3ds_controls_filter(struct native_input_sample *s)
  unsigned int nav=held&(NATIVE_KEY_DUP|NATIVE_KEY_DDOWN|NATIVE_KEY_DLEFT|NATIVE_KEY_DRIGHT);
  if(nav && !(fresh&nav)){if(++repeat_ticks>=18 && (repeat_ticks-18)%5==0)fresh|=nav;}
  else repeat_ticks=0;
- int count=n3ds_input_platform_original_model()?6:8;
+ int count=n3ds_input_platform_original_model()?7:9;
  if(fresh&NATIVE_KEY_DUP)selected=(selected+count-1)%count;
  if(fresh&NATIVE_KEY_DDOWN)selected=(selected+1)%count;
  if(fresh&NATIVE_KEY_DLEFT)adjust(-1);
  if(fresh&NATIVE_KEY_DRIGHT)adjust(1);
  if(fresh&NATIVE_KEY_TOUCH){
   unsigned int x=s->touch_x,y=s->touch_y;
-  if(y>=24 && y<184){int row=(y-24)/20;if(row<count){selected=row;if(x>=242)adjust(x<273?-1:1);}}
+  if(y>=24 && y<186){int row=(y-24)/18;if(row<count){selected=row;if(x>=242)adjust(x<273?-1:1);}}
   if(y>=202 && y<234){if(x>=16 && x<150){settings=defaults;save_error=0;}else if(x>=170 && x<304)close_settings();}
  }
  if(fresh&NATIVE_KEY_START)close_settings();
@@ -305,27 +316,29 @@ int n3ds_controls_tests(void)
 {
  n3ds_controls_initialize();
  struct native_control_settings saved=settings;int ok=1;
- settings=defaults;settings.xbox_buttons=settings.swap_shoulders=1;settings.swap_xy=0;
+ settings=defaults;settings.xbox_buttons=settings.swap_shoulders=1;settings.swap_xy=0;settings.swap_ab=0;
  for(unsigned int key=1;key<=NATIVE_KEY_TOUCH;key<<=1){
   unsigned int twice=n3ds_controls_buttons(n3ds_controls_buttons(key,0,1),0,1);if(twice!=key)ok=0;
  }
  if(n3ds_controls_buttons(NATIVE_KEY_A|NATIVE_KEY_X|NATIVE_KEY_R|NATIVE_KEY_ZL,0,1)!=(NATIVE_KEY_B|NATIVE_KEY_Y|NATIVE_KEY_ZR|NATIVE_KEY_L))ok=0;
  if(n3ds_controls_buttons(NATIVE_KEY_L|NATIVE_KEY_R,1,1)!=(NATIVE_KEY_L|NATIVE_KEY_R))ok=0;
  if(n3ds_controls_buttons(NATIVE_KEY_L|NATIVE_KEY_R,0,0)!=(NATIVE_KEY_L|NATIVE_KEY_R))ok=0;
- settings.xbox_buttons=0;settings.swap_shoulders=0;settings.swap_xy=1;
- if(n3ds_controls_buttons(NATIVE_KEY_X|NATIVE_KEY_A,0,1)!=(NATIVE_KEY_Y|NATIVE_KEY_A))ok=0;
+ settings.xbox_buttons=0;settings.swap_shoulders=0;settings.swap_xy=1;settings.swap_ab=1;
+ if(n3ds_controls_buttons(NATIVE_KEY_X|NATIVE_KEY_A,0,1)!=(NATIVE_KEY_Y|NATIVE_KEY_B))ok=0;
+ settings.swap_ab=0;
+ if(n3ds_controls_buttons(NATIVE_KEY_A,0,1)!=NATIVE_KEY_A)ok=0;
  settings.swap_xy=0;
  settings.touch=125;settings.cstick=75;
  if(fabs(n3ds_controls_sensitivity(1)-1.25f)>.0001f || fabs(n3ds_controls_sensitivity(0)-.75f)>.0001f)ok=0;
- struct settings_file f={0x3343544c,4,settings,0};f.checksum=checksum(&f);f.settings.touch^=1;
+ struct settings_file f={0x3343544c,5,settings,0};f.checksum=checksum(&f);f.settings.touch^=1;
  if(f.checksum==checksum(&f))ok=0;
  settings.touch=0;if(valid(&settings))ok=0;settings.touch=301;if(valid(&settings))ok=0;
- settings=defaults;if(!settings.decals || !n3ds_controls_decals() || !settings.swap_xy ||
-                      n3ds_controls_buttons(NATIVE_KEY_X,0,1)!=NATIVE_KEY_Y)ok=0;
+ settings=defaults;if(!settings.decals || !n3ds_controls_decals() || !settings.swap_xy || !settings.swap_ab ||
+                      n3ds_controls_buttons(NATIVE_KEY_X|NATIVE_KEY_A,0,1)!=(NATIVE_KEY_Y|NATIVE_KEY_B))ok=0;
  settings.decals=0;if(n3ds_controls_decals() || !valid(&settings))ok=0;
  settings.decals=2;if(valid(&settings))ok=0;
  settings=saved;
- if(ok)n3ds_log("PASS: controller settings ranges, checksum, decals default/on/off, Switch X/Y default, independent sensitivities, reversible Xbox face mapping, and New-only gameplay shoulder swap");
+ if(ok)n3ds_log("PASS: controller settings ranges, checksum, decals default/on/off, separate X/Y and A/B defaults, independent sensitivities, reversible Xbox face mapping, and New-only gameplay shoulder swap");
  return ok;
 }
 

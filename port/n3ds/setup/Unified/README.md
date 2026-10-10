@@ -65,12 +65,15 @@ mode can take longer to load and may affect frame rate. Xbox maps and original
 During a solo PC match, hold **SELECT** or the lower-right **SCORE** touch
 panel around the motion tracker to show the scoreboard on the top screen.
 The three other touch panels give press feedback but have no assigned action.
-Controller Settings also offers **Swap X/Y**, **Show FPS** on the bottom screen,
-and **Decals**. X/Y swap and Decals start ON for new profiles; FPS starts OFF.
-Saved profiles retain their selected values. Surface marks follow the
-lifetimes supplied by the game maps. After a local multiplayer match ends,
-tap **Return to Lobby** at the top of the bottom screen or press **B** to
-reopen the map, mode, and bot selector.
+Controller Settings also offers separate **Swap X/Y** and **Swap A/B** options,
+**Show FPS** on the bottom screen, and **Decals**. Both face-button swaps and
+Decals start ON for new profiles; FPS starts OFF. The Xbox face layout preset
+is applied before the individual swaps, so turning on the preset and a swap
+for the same pair restores that pair's Nintendo positions. Existing profiles
+keep their other choices and receive Swap A/B ON when upgraded. Surface marks
+follow the lifetimes supplied by the game maps. After a local multiplayer
+match ends, tap **Return to Lobby** at the top of the bottom screen or press
+**B** to reopen the map, mode, and bot selector.
 
 One launcher replaces the normal Xbox setup launcher only after both sources
 pass preflight. The previous 3DSX is archived under
