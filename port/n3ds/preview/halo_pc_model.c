@@ -14,6 +14,8 @@
 #define REGION_PERMUTATIONS_OFFSET 0x40u
 #define PERMUTATION_BYTES 0x58u
 #define PERMUTATION_GEOMETRIES_OFFSET 0x40u
+#define MODEL_SHADERS_OFFSET 0xDCu
+#define MODEL_SHADER_BYTES 0x20u
 
 static uint32_t u32(const uint8_t *p) {
     return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
@@ -162,6 +164,30 @@ int halo_pc_model_default_geometries(const struct halo_cache *cache,
         }
     }
     if (!*count) { indices[0] = 0; *count = 1; }
+    if (error && error_size) error[0] = '\0';
+    return 1;
+}
+
+int halo_pc_model_shader_datum(const struct halo_cache *cache,
+                               const struct halo_cache_tag *tag,
+                               uint32_t shader_index, uint32_t *datum,
+                               char *error, size_t error_size) {
+    uint32_t geometry_count, geometry_address, model_offset, index_offset, model_bytes;
+    uint32_t count, address;
+    const uint8_t *shaders;
+    if (!datum || !model_header(cache, tag, &geometry_count, &geometry_address,
+                                &model_offset, &index_offset, &model_bytes,
+                                error, error_size))
+        return fail(error, error_size, "Invalid model shader request");
+    if (tag->metadata_available < MODEL_SHADERS_OFFSET + 8u)
+        return fail(error, error_size, "Model shader header is outside metadata");
+    count = u32(tag->metadata + MODEL_SHADERS_OFFSET);
+    address = u32(tag->metadata + MODEL_SHADERS_OFFSET + 4u);
+    if (count > 1024u || shader_index >= count ||
+        !(shaders = halo_cache_resolve(cache, address,
+                                       (size_t)count * MODEL_SHADER_BYTES)))
+        return fail(error, error_size, "Model shader block is outside tags");
+    *datum = u32(shaders + (size_t)shader_index * MODEL_SHADER_BYTES + 12u);
     if (error && error_size) error[0] = '\0';
     return 1;
 }

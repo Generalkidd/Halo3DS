@@ -152,7 +152,9 @@ int n3ds_gpu_geometry_draw(const struct native_render_vertex *vertices,
 /* Selector-only material pass: opaque textured, translucent X-ray, or
  * alpha-masked wire edges with optional depth testing. */
 int n3ds_gpu_preview_material_draw(const struct native_render_vertex *vertices,
-    const unsigned short *indices,unsigned int count,int translucent,int depth_test);
+    const unsigned short *indices,unsigned int count,int translucent,int depth_test,int cull_backfaces);
+int n3ds_gpu_preview_depth_draw(const struct native_render_vertex *vertices,
+    const unsigned short *indices,unsigned int count,int cull_backfaces);
 /* Immutable linear-memory indices, validated and flushed by their BSP owner. */
 int n3ds_gpu_geometry_draw_resident(const struct native_render_vertex *vertices,
     const unsigned short *indices,unsigned int count);

@@ -24,7 +24,7 @@ enum { PREVIEW_TRIANGLES=2048, PREVIEW_VERTICES=PREVIEW_TRIANGLES*3,
        NAV_TRIANGLES=1024, PREVIEW_TEXTURE_SIZE=64, PREVIEW_TEXTURE_LIMIT=48,
        MODEL_GEOMETRIES=128,
        VIEW_LIT=0, VIEW_XRAY=1, VIEW_WIRE=2, VIEW_XRAY_WIRE=3,
-       TOUCH_NONE=0, TOUCH_DRAG=1, TOUCH_NAV=2, TOUCH_VIEW=3 };
+       TOUCH_NONE=0, TOUCH_DRAG=1, TOUCH_NAV=2, TOUCH_VIEW=3, TOUCH_BACKFACES=4 };
 struct preview_batch {uint32_t shader_datum;unsigned int first,count;void *texture;};
 static struct preview_batch batches[PREVIEW_TRIANGLES];
 static unsigned int batch_count,texture_count;
@@ -40,10 +40,11 @@ static const char *const vehicles[]={"vehicles\\warthog\\warthog","vehicles\\rwa
 static struct native_render_vertex *vertices;
 static unsigned short *indices;
 static float *material_uv;
+static float *model_normals;
 static unsigned int triangles;
 static struct native_widget_vertex *nav_vertices;
 static unsigned int nav_triangles;
-static int nav_visible=1,view_mode=VIEW_LIT,touch_held,touch_owner;
+static int nav_visible=1,backfaces_enabled=1,view_mode=VIEW_LIT,touch_held,touch_owner;
 static int selected_map=-1,selected_page=-1,selected_field=-1,selected_weapon=-1,selected_vehicle=-1;
 static int state_loaded;
 static int uv_mode;
@@ -51,7 +52,7 @@ static int model_detail;static unsigned int model_geometries;
 static float yaw=.65f,elevation=.72f,zoom=2.7f;
 static unsigned int idle_frames;
 static int dragging,last_x,last_y;
-static void *white,*xray_texture,*wire_texture;
+static void *white,*xray_texture,*wire_texture,*hologram_default;
 
 void n3ds_pc_preview_close(void)
 {
@@ -60,12 +61,14 @@ void n3ds_pc_preview_close(void)
     batch_count=texture_count=0;
     n3ds_gpu_geometry_free(vertices);n3ds_gpu_geometry_free(indices);
     free(material_uv);material_uv=NULL;
+    free(model_normals);model_normals=NULL;
     free(nav_vertices);nav_vertices=NULL;nav_triangles=0;
     vertices=NULL;indices=NULL;triangles=0;state_loaded=0;
     uv_mode=0;model_detail=-1;model_geometries=0;
     if(white){n3ds_gpu_texture_destroy(white);white=NULL;}
     if(xray_texture){n3ds_gpu_texture_destroy(xray_texture);xray_texture=NULL;}
     if(wire_texture){n3ds_gpu_texture_destroy(wire_texture);wire_texture=NULL;}
+    if(hologram_default){n3ds_gpu_texture_destroy(hologram_default);hologram_default=NULL;}
 }
 
 static int allocate_mesh(void)
@@ -91,6 +94,8 @@ static void emit_triangle(const float *a,const float *b,const float *c,int kind,
         struct native_render_vertex *v=vertices+triangles*3+j;
         for(int i=0;i<3;++i){v->position[i]=points[j][i];v->color[i]=base[kind][i]*light;}
         v->uv[0]=uv?uv[j*2]:0.f;v->uv[1]=uv?uv[j*2+1]:0.f;
+        if(kind && model_normals)for(int i=0;i<3;++i)
+            model_normals[(triangles*3+j)*3+i]=n[i]/area;
         indices[triangles*3+j]=(unsigned short)(triangles*3+j);
     }
     ++triangles;
@@ -172,23 +177,27 @@ static int find_tag(const struct halo_cache *cache,uint32_t datum,uint32_t group
      * before using it; malformed or unusual caches keep the bounded scan. */
     uint32_t slot=datum&0xffffu;
     if(slot<cache->tag_count && halo_cache_tag_at(cache,slot,out,error,sizeof(error)) &&
-       out->datum==datum && out->group==group)return 1;
+       out->datum==datum && (!group || out->group==group))return 1;
     for(uint32_t i=0;i<cache->tag_count;++i){
-        if(halo_cache_tag_at(cache,i,out,error,sizeof(error)) && out->datum==datum && out->group==group)
+        if(halo_cache_tag_at(cache,i,out,error,sizeof(error)) && out->datum==datum &&
+           (!group || out->group==group))
             return 1;
     }
     return 0;
 }
 /* A small, disposable base-map sample keeps the selector independent of the
  * live game texture cache. Read only owner-installed PC bitmap data. */
-static void *load_material_texture(struct halo_cache *cache,uint32_t shader_datum)
+static void *load_material_texture(struct halo_cache *cache,uint32_t shader_datum,int hologram)
 {
     struct halo_cache_tag shader,bitmap_tag;
     struct halo_cache_bitmap bitmap;
     char error[96];
-    if(!find_tag(cache,shader_datum,0x73656e76u,&shader) ||
-       shader.metadata_available<0x98u ||
-       !find_tag(cache,preview_u32(shader.metadata+0x94u),0x6269746du,&bitmap_tag) ||
+    if(!find_tag(cache,shader_datum,0,&shader))return NULL;
+    unsigned int offset=shader.group==0x73656e76u?0x94u:
+        shader.group==0x736f736fu?0xB0u:
+        shader.group==0x73636869u?0xE4u:0xffffffffu;
+    if(offset==0xffffffffu || shader.metadata_available<offset+4u ||
+       !find_tag(cache,preview_u32(shader.metadata+offset),0x6269746du,&bitmap_tag) ||
        !halo_cache_bitmap_at(cache,&bitmap_tag,0,&bitmap,error,sizeof(error)))return NULL;
     unsigned char *compressed=malloc(bitmap.first_mip_bytes);
     if(!compressed)return NULL;
@@ -224,7 +233,14 @@ static void *load_material_texture(struct halo_cache *cache,uint32_t shader_datu
             unsigned int native_y=PREVIEW_TEXTURE_SIZE-1u-y;
             unsigned int tile=((native_y/8u)*(PREVIEW_TEXTURE_SIZE/8u)+x/8u)*64u+
                 spread[x&7u]+2u*spread[native_y&7u];
-            pixels[tile]=(uint32_t)rgba[0]<<24|(uint32_t)rgba[1]<<16|(uint32_t)rgba[2]<<8|255u;
+            unsigned int r=rgba[0],g=rgba[1],b=rgba[2];
+            if(hologram){
+                unsigned int luma=(54u*r+183u*g+19u*b)>>8;
+                r=24u+luma*45u/255u;
+                g=64u+luma*148u/255u;
+                b=112u+luma*143u/255u;
+            }
+            pixels[tile]=(uint32_t)r<<24|(uint32_t)g<<16|(uint32_t)b<<8|255u;
         }
     void *result=ok?n3ds_gpu_texture_create(pixels,PREVIEW_TEXTURE_SIZE,PREVIEW_TEXTURE_SIZE):NULL;
     free(decoded);free(pixels);free(compressed);return result;
@@ -277,7 +293,7 @@ static int load_bsp(struct halo_cache *cache)
     }
     for(unsigned int i=0;i<batch_count && texture_count<PREVIEW_TEXTURE_LIMIT;++i){
         if(!batches[i].count)continue;
-        batches[i].texture=load_material_texture(cache,batches[i].shader_datum);
+        batches[i].texture=load_material_texture(cache,batches[i].shader_datum,0);
         if(batches[i].texture)++texture_count;
     }
     load_nav(&bsp);
@@ -320,6 +336,7 @@ static int load_model(struct halo_cache *cache,const char *wanted,int kind)
     }
     if(chosen_detail<0)return 0;
     model_detail=chosen_detail;model_geometries=chosen_count;
+    model_normals=malloc(PREVIEW_VERTICES*3u*sizeof(*model_normals));
     unsigned int step=chosen_total>PREVIEW_TRIANGLES?
         (unsigned int)(chosen_total/PREVIEW_TRIANGLES+1u):1u,global=0;
     for(uint32_t g=0;g<chosen_count && triangles<PREVIEW_TRIANGLES;++g){
@@ -329,19 +346,37 @@ static int load_model(struct halo_cache *cache,const char *wanted,int kind)
             struct halo_pc_model_part part;
             if(!halo_pc_model_part_at(cache,&tag,chosen[g],p,&part,error,sizeof(error)) ||
                !part.vertex_count || part.vertex_count>65535)continue;
-            float *positions=malloc((size_t)part.vertex_count*3*sizeof(float));
+            float *positions=malloc((size_t)part.vertex_count*5*sizeof(float));
             unsigned short *strip=malloc(((size_t)part.strip_triangle_count+2u)*sizeof(short));
-            if(positions && strip && halo_pc_model_read_part(cache,&part,positions,
-                (size_t)part.vertex_count*3,strip,part.strip_triangle_count+2u,error,sizeof(error))){
+            uint32_t shader_datum=0xffffffffu;
+            halo_pc_model_shader_datum(cache,&tag,part.shader_index,&shader_datum,
+                error,sizeof(error));
+            if(positions && strip && halo_pc_model_read_part_uv(cache,&part,positions,
+                (size_t)part.vertex_count*5,strip,part.strip_triangle_count+2u,error,sizeof(error))){
+                if(batch_count>=PREVIEW_TRIANGLES){free(positions);free(strip);break;}
+                struct preview_batch *batch=batches+batch_count++;
+                *batch=(struct preview_batch){shader_datum,triangles*3u,0,NULL};
                 for(unsigned int t=0;t<part.strip_triangle_count && triangles<PREVIEW_TRIANGLES;++t,++global){
                     if(global%step)continue;
                     unsigned short a=strip[t],b=strip[t+1],c=strip[t+2];
                     if(a==b || b==c || c==a)continue;
-                    emit_triangle(positions+(t&1?b:a)*3,positions+(t&1?a:b)*3,positions+c*3,kind,NULL);
+                    const float *v[3]={positions+(t&1?b:a)*5,
+                        positions+(t&1?a:b)*5,positions+c*5};
+                    float uv[6]={v[0][3],v[0][4],v[1][3],v[1][4],v[2][3],v[2][4]};
+                    for(int channel=0;channel<6;++channel)
+                        if(!isfinite(uv[channel]) || fabsf(uv[channel])>100000.f)uv[channel]=0.f;
+                    unsigned int before=triangles;
+                    emit_triangle(v[0],v[1],v[2],kind,uv);
+                    batch->count+=(triangles-before)*3u;
                 }
             }else global+=part.strip_triangle_count;
             free(positions);free(strip);
         }
+    }
+    for(unsigned int i=0;i<batch_count && texture_count<PREVIEW_TEXTURE_LIMIT;++i){
+        if(!batches[i].count)continue;
+        batches[i].texture=load_material_texture(cache,batches[i].shader_datum,1);
+        if(batches[i].texture)++texture_count;
     }
     return triangles>0;
 }
@@ -408,6 +443,8 @@ void n3ds_pc_preview_input(const struct native_input_sample *sample)
         if(selected_page==0 && sample->touch_y>=26 && sample->touch_y<51){
             if(sample->touch_x>=12 && sample->touch_x<145){
                 touch_owner=TOUCH_VIEW;view_mode=(view_mode+1)&3;idle_frames=0;
+            }else if(sample->touch_x>=152 && sample->touch_x<241){
+                touch_owner=TOUCH_BACKFACES;backfaces_enabled=!backfaces_enabled;idle_frames=0;
             }else if(sample->touch_x>=249 && sample->touch_x<310){
                 touch_owner=TOUCH_NAV;nav_visible=!nav_visible;idle_frames=0;
             }
@@ -428,12 +465,15 @@ void n3ds_pc_preview_input(const struct native_input_sample *sample)
 }
 int n3ds_pc_preview_nav_enabled(void){return nav_visible;}
 int n3ds_pc_preview_view_mode(void){return view_mode;}
+int n3ds_pc_preview_backfaces_enabled(void){return backfaces_enabled;}
 static void preview_aux_textures(void)
 {
     if(!white){unsigned int pixels[64];for(int i=0;i<64;++i)pixels[i]=0xffffffffu;
         white=n3ds_gpu_texture_create(pixels,8,8);}
     if(!xray_texture){unsigned int pixels[64];for(int i=0;i<64;++i)pixels[i]=0x54b8ff32u;
         xray_texture=n3ds_gpu_texture_create(pixels,8,8);}
+    if(!hologram_default){unsigned int pixels[64];for(int i=0;i<64;++i)pixels[i]=0x4eafe0ffu;
+        hologram_default=n3ds_gpu_texture_create(pixels,8,8);}
     if(!wire_texture){
         unsigned int *pixels=malloc(PREVIEW_TEXTURE_SIZE*PREVIEW_TEXTURE_SIZE*sizeof(*pixels));
         if(pixels){
@@ -450,6 +490,30 @@ static void preview_aux_textures(void)
             free(pixels);
         }
     }
+}
+static float studio_dot(const float *normal,const float *light)
+{return fmaxf(0.f,normal[0]*light[0]+normal[1]*light[1]+normal[2]*light[2]);}
+static void studio_relight(float view_yaw,float view_elevation)
+{
+    if(!model_normals)return;
+    float cy=cosf(view_yaw),sy=sinf(view_yaw),ce=cosf(view_elevation),se=sinf(view_elevation);
+    float front[3]={cy*ce,sy*ce,se};
+    float right[3]={-sy,cy,0.f};
+    float up[3]={-cy*se,-sy*se,ce};
+    float key[3],fill[3],rim[3];
+    for(int axis=0;axis<3;++axis){
+        key[axis]=.73f*front[axis]-.38f*right[axis]+.56f*up[axis];
+        fill[axis]=.50f*front[axis]+.82f*right[axis]+.28f*up[axis];
+        rim[axis]=-.83f*front[axis]+.19f*right[axis]+.52f*up[axis];
+    }
+    for(unsigned int i=0;i<triangles*3u;++i){
+        const float *normal=model_normals+i*3u;
+        float level=.30f+.78f*studio_dot(normal,key)+
+            .29f*studio_dot(normal,fill)+.55f*studio_dot(normal,rim);
+        level=fminf(1.25f,level);
+        for(int axis=0;axis<3;++axis)vertices[i].color[axis]=level;
+    }
+    n3ds_gpu_geometry_flush(vertices,triangles*3u*sizeof(*vertices));
 }
 static void preview_set_wire_uv(int wire)
 {
@@ -483,29 +547,32 @@ void n3ds_pc_preview_draw(int map,int page,int field,int weapon_set,int vehicle_
     for(int i=0;i<3;++i){camera.position[i]=eye[i];camera.forward[i]=forward[i]/length;}
     camera.up[2]=1.f;camera.vertical_fov=.72f;camera.near_clip=.1f;camera.far_clip=20.f;
     camera.clear_color=0xff171c28u;
+    if(page)studio_relight(yaw,elevation);
     n3ds_gpu_hud_screen(1);n3ds_gpu_window_begin(&camera);
     if(page){
-        n3ds_gpu_texture_bind(0,white);
-        n3ds_gpu_geometry_draw(vertices,indices,triangles*3u);
+        for(unsigned int i=0;i<batch_count;++i)if(batches[i].count){
+            n3ds_gpu_texture_bind(0,batches[i].texture?batches[i].texture:hologram_default);
+            n3ds_gpu_preview_material_draw(vertices,indices+batches[i].first,batches[i].count,0,1,0);
+        }
     }else if(view_mode==VIEW_LIT){
         preview_set_wire_uv(0);
         if(!batch_count){n3ds_gpu_texture_bind(0,white);
-            n3ds_gpu_preview_material_draw(vertices,indices,triangles*3u,0,1);}
+            n3ds_gpu_preview_material_draw(vertices,indices,triangles*3u,0,1,!backfaces_enabled);}
         for(unsigned int i=0;i<batch_count;++i)if(batches[i].count){
             n3ds_gpu_texture_bind(0,batches[i].texture?batches[i].texture:white);
-            n3ds_gpu_preview_material_draw(vertices,indices+batches[i].first,batches[i].count,0,1);
+            n3ds_gpu_preview_material_draw(vertices,indices+batches[i].first,batches[i].count,0,1,!backfaces_enabled);
         }
     }else{
         int wire=view_mode==VIEW_WIRE || view_mode==VIEW_XRAY_WIRE;
         if(wire)preview_set_wire_uv(1);
-        if(view_mode==VIEW_WIRE)n3ds_gpu_model_depth_draw(vertices,indices,triangles*3u);
+        if(view_mode==VIEW_WIRE)n3ds_gpu_preview_depth_draw(vertices,indices,triangles*3u,!backfaces_enabled);
         if((view_mode==VIEW_XRAY || view_mode==VIEW_XRAY_WIRE) && xray_texture){
             n3ds_gpu_texture_bind(0,xray_texture);
-            n3ds_gpu_preview_material_draw(vertices,indices,triangles*3u,1,0);
+            n3ds_gpu_preview_material_draw(vertices,indices,triangles*3u,1,0,!backfaces_enabled);
         }
         if(wire && wire_texture){
             n3ds_gpu_texture_bind(0,wire_texture);
-            n3ds_gpu_preview_material_draw(vertices,indices,triangles*3u,1,view_mode==VIEW_WIRE);
+            n3ds_gpu_preview_material_draw(vertices,indices,triangles*3u,1,view_mode==VIEW_WIRE,!backfaces_enabled);
         }
     }
     if(!page && nav_visible && nav_triangles){

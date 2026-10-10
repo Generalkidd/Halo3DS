@@ -53,10 +53,12 @@ The lower screen previews the selected map's geometry. Tap **VIEW** to cycle
 **Textured Lit**, **X-ray**, **Wireframe**, and **X-ray + Wireframe**. X-ray
 shows interiors through ceilings and walls; the combined view adds their
 edges. Textured Lit reads base textures from the installed PC maps. Tap
-**NAV ON/OFF** to show or hide the blue walkable-surface overlay. The gear page
-previews the selected weapon or vehicle using models available in that PC map.
+**BACKS ON/OFF** to include or cull rear facing map surfaces, and **NAV ON/OFF**
+to show or hide the blue walkable-surface overlay. The gear page previews the
+selected weapon or vehicle as a textured blue hologram from that PC map, with
+three-point studio lighting that follows the turntable camera.
 Drag a preview to turn it, use **L/R** to zoom, or leave it idle for a slow
-turntable. VIEW and NAV respond when a touch begins on their buttons.
+turntable. VIEW, BACKS, and NAV respond when a touch begins on their buttons.
 
 `-BotCount`
 sets a default from 0 to 15. On the campaign difficulty screen, the bottom

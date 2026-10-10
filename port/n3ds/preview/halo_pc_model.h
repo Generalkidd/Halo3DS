@@ -43,6 +43,12 @@ int halo_pc_model_default_geometries(const struct halo_cache *cache,
                                       size_t capacity, uint32_t *count,
                                       char *error, size_t error_size);
 
+/* Resolve a part's shader slot to the owner map's shader tag datum. */
+int halo_pc_model_shader_datum(const struct halo_cache *cache,
+                               const struct halo_cache_tag *tag,
+                               uint32_t shader_index, uint32_t *datum,
+                               char *error, size_t error_size);
+
 /* Read positions and strip indices for a part. The caller owns the buffers.
    Positions are xyz float triplets; indices are the source triangle strip. */
 int halo_pc_model_read_part(const struct halo_cache *cache, const struct halo_pc_model_part *part,
