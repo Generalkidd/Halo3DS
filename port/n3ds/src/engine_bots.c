@@ -290,7 +290,8 @@ static boolean combat_bot_local_detour(struct combat_bot_state *state, short que
 }
 
 /* Halo's walkable collision surfaces provide a short route. Refresh in
-   batches so a 128-player lobby does not run 127 searches in one tick. */
+   batches so a full 16-player local match does not run every bot's search
+   in the same tick. */
 /* Kevin Boggs: combat_bot_route_point - New3DS integration. */
 static boolean combat_bot_route_point(struct combat_bot_state *state, short queue_index,
 	long tick, long unit_index, long goal_index, real_point3d const *position,

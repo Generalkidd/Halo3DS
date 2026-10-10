@@ -1201,7 +1201,11 @@ int halo_engine_boot(void)
 #ifdef HALO_N3DS_EXPERIMENTAL_PC_FIRE
         if(frame+1>=260 && frame+1<290 && game_in_progress() &&
             !main_menu_is_active() && player_input_enabled()) {
-            sample.held|=original_model?NATIVE_KEY_L:NATIVE_KEY_ZR;
+            struct native_control_settings fire_settings;
+            n3ds_controls_get(&fire_settings);
+            /* Use the physical button selected by this profile's shoulder mapping. */
+            sample.held|=original_model?NATIVE_KEY_L:
+                fire_settings.swap_shoulders?NATIVE_KEY_R:NATIVE_KEY_ZR;
             if(frame+1==260) n3ds_log("EXPERIMENTAL PC FIRE: holding original primary trigger for 30 frames");
         }
 #endif
@@ -1516,6 +1520,7 @@ int halo_engine_boot(void)
                 weapon?weapon->weapon.game_time_last_fired:NONE,
                 weapon?weapon->weapon.magazines[0].rounds_loaded:NONE);
             n3ds_log(message);
+            if(frame+1==320) CHECK(weapon && weapon->weapon.game_time_last_fired>0);
         }
 #endif
 #ifdef HALO_N3DS_EXPERIMENTAL_PC_MAP_NAME

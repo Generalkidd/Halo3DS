@@ -90,6 +90,32 @@ layered shader requested a texture at the 8 MiB cache limit. The current code
 reuses its base texture for that layer when allocation fails; that visual
 fallback still needs a physical replay of the same match and tank firing.
 
+The 16-player limit also had a focused emulator stress pass. A diagnostic
+build replayed the PC Local menu on Death Island, selected CTF, raised the bot
+count to 15, and selected all PC vehicles. The engine registered all 15 bots
+beside the local player, created both CTF flags, and reached frame 1,800
+(1,040 gameplay ticks) without a fatal error. The gameplay capture showed the
+world and HUD. The CTF variant enables teams and the local player plus bots
+are assigned to alternating teams in source, yielding eight players per side.
+The game reported 16 active bipeds and 46 vehicle objects during this run.
+After gameplay tick 800, the emulator's sampled frame time had a 37.6 ms
+median, above the 33.3 ms target for steady 30 FPS; one sample reached
+56.5 ms. These are emulator timings, not New 3DS XL measurements. A longer
+physical match with moving players, combat, vehicles, and flag captures is
+still needed before calling full-roster performance or stability proven.
+
+A second emulator pass started the same Death Island CTF roster with high PC
+textures and ran past frame 2,400, or about 77 seconds of gameplay. It
+confirmed 16 players, bot pathing, weapon pickups, hits, grenades, melee,
+vehicle entries, and a player death and respawn, with no fatal error. Its
+sampled frame time after tick 800 had a 30.6 ms median and a 65.2 ms 95th
+percentile as combat intensified. These varied emulator timings reinforce the
+need for a measured New 3DS XL run before promising steady frame rate. The
+player-fire diagnostic originally missed the saved shoulder-button swap;
+the fixture now follows that setting and requires an actual shot to pass. A
+follow-up replay passed: the assault rifle's loaded rounds fell from 60 to
+45, and the engine recorded a nonzero firing time without a fatal error.
+
 For a reproducible review, run `python port/n3ds/tools/check_attribution.py`
 and `python tools/check_repository_contents.py --working-tree`,
 build with the command in [developer notes](DEVELOPMENT.md), and run the
