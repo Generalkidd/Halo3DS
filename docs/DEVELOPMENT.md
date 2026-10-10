@@ -663,7 +663,12 @@ caches. The native runtime checks ground slope, nearby terrain, player starts
 and existing vehicles before placing them. The isolated Azahar menu fixture
 spawned both Banshees on all three maps without a fatal error. A Timberland
 driver-entry check succeeded and a later capture showed the player seated in
-the vehicle. Physical New 3DS XL vehicle handling still needs testing.
+the vehicle. A further scripted Timberland run stayed seated and moved about
+26 m, briefly rising about 4 m. Danger Canyon moved more than 13 m and rose
+about 4 m in its first 120 frames. Straight-ahead replay then met terrain;
+the Ice Fields first placement met nearby scenery. These emulator checks show
+the original driver and motion paths advance, but do not establish open-air
+steering or physical New 3DS XL handling.
 
 The native flamethrower renderer now draws the PC map's own flame sprite at
 simulated projectile positions and keeps a short history of world-space muzzle
@@ -673,6 +678,12 @@ and additive particles apply vertex alpha to their light contribution so
 explosions fade. The isolated Azahar arsenal fixture fired all 11 weapons;
 captured turn and Fuel Rod frames showed the flame lag and blast decay. The
 physical display and sustained frame rate still need checking.
+
+An isolated Blood Gulch sniper fixture used a map-authored 136.84 m clear
+sightline. At the shot's visible contrail sample, the original trail held 36
+points whose first and last positions were 136.28 m apart. A six-frame contact
+sheet also showed the long shot over the open field. This measures emulator
+geometry and visuals; the device display still needs a distant-range check.
 
 A moving six-bot Sidewinder Race fixture reached an authored transparent
 effect that combines a screen-anchored secondary bitmap with premultiplied
