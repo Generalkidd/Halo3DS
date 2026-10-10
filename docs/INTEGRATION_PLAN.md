@@ -115,6 +115,8 @@ player-fire diagnostic originally missed the saved shoulder-button swap;
 the fixture now follows that setting and requires an actual shot to pass. A
 follow-up replay passed: the assault rifle's loaded rounds fell from 60 to
 45, and the engine recorded a nonzero firing time without a fatal error.
+A separate 15-bot CTF postgame replay ended the match, used the lower-screen
+Return to Lobby control, and reopened the PC map menu without a fatal error.
 
 For a reproducible review, run `python port/n3ds/tools/check_attribution.py`
 and `python tools/check_repository_contents.py --working-tree`,
