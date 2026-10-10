@@ -670,6 +670,12 @@ the Ice Fields first placement met nearby scenery. These emulator checks show
 the original driver and motion paths advance, but do not establish open-air
 steering or physical New 3DS XL handling.
 
+In a separate Danger Canyon driver-seat replay, the Banshee's authored
+`mp_banshee gun` had two triggers. The primary trigger advanced its original
+last-fired time from 0 to 299. After its cooldown, the secondary trigger
+advanced that time to 379 and referenced a valid projectile tag. Both were
+driven through the native controller and original player/vehicle weapon code.
+
 The native flamethrower renderer now draws the PC map's own flame sprite at
 simulated projectile positions and keeps a short history of world-space muzzle
 emissions. A turn leaves the older flame behind instead of rotating the entire
