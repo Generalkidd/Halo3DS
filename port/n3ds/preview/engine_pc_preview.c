@@ -52,7 +52,7 @@ static int model_detail;static unsigned int model_geometries;
 static float yaw=.65f,elevation=.72f,zoom=2.7f;
 static unsigned int idle_frames;
 static int dragging,last_x,last_y;
-static void *white,*xray_texture,*wire_texture,*hologram_default;
+static void *white,*xray_texture,*xray_culled_texture,*wire_texture,*hologram_default;
 
 void n3ds_pc_preview_close(void)
 {
@@ -67,6 +67,7 @@ void n3ds_pc_preview_close(void)
     uv_mode=0;model_detail=-1;model_geometries=0;
     if(white){n3ds_gpu_texture_destroy(white);white=NULL;}
     if(xray_texture){n3ds_gpu_texture_destroy(xray_texture);xray_texture=NULL;}
+    if(xray_culled_texture){n3ds_gpu_texture_destroy(xray_culled_texture);xray_culled_texture=NULL;}
     if(wire_texture){n3ds_gpu_texture_destroy(wire_texture);wire_texture=NULL;}
     if(hologram_default){n3ds_gpu_texture_destroy(hologram_default);hologram_default=NULL;}
 }
@@ -478,6 +479,8 @@ static void preview_aux_textures(void)
         white=n3ds_gpu_texture_create(pixels,8,8);}
     if(!xray_texture){unsigned int pixels[64];for(int i=0;i<64;++i)pixels[i]=0x54b8ff32u;
         xray_texture=n3ds_gpu_texture_create(pixels,8,8);}
+    if(!xray_culled_texture){unsigned int pixels[64];for(int i=0;i<64;++i)pixels[i]=0x54b8ff70u;
+        xray_culled_texture=n3ds_gpu_texture_create(pixels,8,8);}
     if(!hologram_default){unsigned int pixels[64];for(int i=0;i<64;++i)pixels[i]=0x4eafe0ffu;
         hologram_default=n3ds_gpu_texture_create(pixels,8,8);}
     if(!wire_texture){
@@ -572,8 +575,9 @@ void n3ds_pc_preview_draw(int map,int page,int field,int weapon_set,int vehicle_
         int wire=view_mode==VIEW_WIRE || view_mode==VIEW_XRAY_WIRE;
         if(wire)preview_set_wire_uv(1);
         if(view_mode==VIEW_WIRE)n3ds_gpu_preview_depth_draw(vertices,indices,triangles*3u,!backfaces_enabled);
-        if((view_mode==VIEW_XRAY || view_mode==VIEW_XRAY_WIRE) && xray_texture){
-            n3ds_gpu_texture_bind(0,xray_texture);
+        void *xray=backfaces_enabled?xray_texture:xray_culled_texture;
+        if((view_mode==VIEW_XRAY || view_mode==VIEW_XRAY_WIRE) && xray){
+            n3ds_gpu_texture_bind(0,xray);
             n3ds_gpu_preview_material_draw(vertices,indices,triangles*3u,1,0,!backfaces_enabled);
         }
         if(wire && wire_texture){
