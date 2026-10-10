@@ -673,3 +673,10 @@ and additive particles apply vertex alpha to their light contribution so
 explosions fade. The isolated Azahar arsenal fixture fired all 11 weapons;
 captured turn and Fuel Rod frames showed the flame lag and blast decay. The
 physical display and sustained frame rate still need checking.
+
+A moving six-bot Sidewinder Race fixture reached an authored transparent
+effect that combines a screen-anchored secondary bitmap with premultiplied
+alpha. The native two-map effect renderer now carries both texture alphas into
+the framebuffer blend. The replay completed 241 captured frames without a
+fatal error. GPU readback checks compare 50 secondary-effect cases, including
+the premultiplied mode, against independently calculated pixels.

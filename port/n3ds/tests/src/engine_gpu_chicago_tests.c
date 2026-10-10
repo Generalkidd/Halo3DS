@@ -175,7 +175,7 @@ done:
 
 static int effect_layer_gpu_tests(void)
 {
-    unsigned int *pixels=linearAlloc(240*400*4),texels[64],rows[40][4];
+    unsigned int *pixels=linearAlloc(240*400*4),texels[64],rows[50][4];
     void *textures[2]={0};int result=1,active=0;char message[192];
     const unsigned int palette[4]={0x4080c080,0xc0307050,0x20c060a0,0x907020e0};
     const int order[6]={0,1,2,0,2,3};const float xy[4][2]={{-10,-10},{10,-10},{10,10},{-10,10}};
@@ -189,9 +189,11 @@ static int effect_layer_gpu_tests(void)
         texels[morton]=palette[(x>=4)+2*(y>=4)];
     }
     textures[1]=n3ds_gpu_texture_create(texels,8,8);CHECK(textures[1]);
-    for(int test=0;test<40;++test) {
-        int sample_case=test%10,blend=test<10?NATIVE_BLEND_ADD:test<20?NATIVE_BLEND_SUBTRACT:NATIVE_BLEND_MAX;
-        unsigned int count=test>=30?18:6;float tint=test>=30?.75f:.5f;
+    for(int test=0;test<50;++test) {
+        int sample_case=test%10,blend=test<10?NATIVE_BLEND_ADD:test<20?NATIVE_BLEND_SUBTRACT:
+            test<40?NATIVE_BLEND_MAX:NATIVE_BLEND_PREMULTIPLIED_ALPHA;
+        unsigned int count=test>=30 && test<40?18:6;
+        float tint=test>=30 && test<40?.75f:.5f;
         /* MAX must keep destination red while visibly replacing green/blue. */
         unsigned int sample=palette[sample_case%4],dest=test<20?0x101820ff:0x600408ff,expected=255;
         float u=sample_case%2?.8125f:.1875f,v=(sample_case%4)/2?.8125f:.1875f;
@@ -218,8 +220,13 @@ static int effect_layer_gpu_tests(void)
             int shift=24-8*c;
             float color=((0x20406080u>>shift)&255)/255.f*tint*((sample>>shift)&255)/255.f*(sample&255)/255.f;
             if(sample_case<4) color*=128.f/255.f;
+            if(blend==NATIVE_BLEND_ADD) color*=.75f;
             float destination=((dest>>shift)&255),source=color*255.f;
-            float combined=blend==NATIVE_BLEND_ADD?fminf(255.f,source+destination):blend==NATIVE_BLEND_SUBTRACT?fmaxf(0.f,destination-source):fmaxf(destination,source);
+            float source_alpha=.75f*(sample&255)/255.f*(sample_case<4?128.f/255.f:1.f);
+            float combined=blend==NATIVE_BLEND_ADD?fminf(255.f,source+destination):
+                blend==NATIVE_BLEND_SUBTRACT?fmaxf(0.f,destination-source):
+                blend==NATIVE_BLEND_PREMULTIPLIED_ALPHA?fminf(255.f,source+destination*(1.f-source_alpha)):
+                fmaxf(destination,source);
             expected|=(unsigned int)floorf(combined+.5f)<<shift;
         }
         if(sample_case==8) expected=dest; /* Near prepass hides the effect and writes no RGB. */
@@ -233,7 +240,7 @@ static int effect_layer_gpu_tests(void)
     }
     FILE *proof=fopen("sdmc:/halo-native-effect-layer.bin","wb");CHECK(proof);
     int written=fwrite(rows,sizeof(rows),1,proof)==1,closed=fclose(proof)==0;CHECK(written && closed);
-    n3ds_log("PASS: effect secondary layer: 40 add/subtract/max/projective/depth/overlapping-particle GPU vectors, 40960 pixels");result=0;
+    n3ds_log("PASS: effect secondary layer: 50 add/subtract/max/premultiplied/projective/depth GPU vectors, 51200 pixels");result=0;
 done:
     if(active) n3ds_gpu_present();
     if(!n3ds_gpu_texture_barrier()) abort();
@@ -821,6 +828,9 @@ static int effect_gpu_tests(void)
                 if(blend==1 || blend==5) source+=1-mask;
                 if(blend==2) source+=(1-mask)*.5f;
             }
+            /* Additive framebuffer factors ignore alpha. The native effect
+             * combiner applies the authored vertex fade to RGB directly. */
+            if(blend==NATIVE_BLEND_ADD) source*=128/255.f;
             float d=((destination>>(24-c*8))&255)/255.f,out=0;
             switch(blend) {
             case 0:out=source*a+d*(1-a);break;case 1:out=source*d;break;case 2:out=2*source*d;break;

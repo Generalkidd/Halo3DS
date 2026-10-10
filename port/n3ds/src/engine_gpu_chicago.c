@@ -272,7 +272,8 @@ int n3ds_gpu_effect_layer_draw(struct native_chicago_vertex *vertices,unsigned i
     void *original[2]={n3ds_gpu_texture_bound(0),n3ds_gpu_texture_bound(1)};
     unsigned short indices[384];
     if(!ready || !vertices || !count || count>384 || count%3 || !original[0] || !original[1] ||
-       (blend!=NATIVE_BLEND_ADD && blend!=NATIVE_BLEND_SUBTRACT && blend!=NATIVE_BLEND_MAX) ||
+       (blend!=NATIVE_BLEND_ADD && blend!=NATIVE_BLEND_SUBTRACT &&
+        blend!=NATIVE_BLEND_MAX && blend!=NATIVE_BLEND_PREMULTIPLIED_ALPHA) ||
        (primary_sampler&~7u) || (secondary_sampler&~7u) || (geometry_flags&(1u<<7)) ||
        vertices<stream || vertices+count>stream+used || !n3ds_gpu_world_projection((float *)&projection)) return 0;
     /* Only texture unit0 supports projective sampling. Swap the two physical
@@ -295,9 +296,16 @@ int n3ds_gpu_effect_layer_draw(struct native_chicago_vertex *vertices,unsigned i
     C3D_TexEnv *env=C3D_GetTexEnv(0);
     C3D_TexEnvSrc(env,C3D_RGB,GPU_TEXTURE1,GPU_PRIMARY_COLOR,GPU_CONSTANT);
     C3D_TexEnvFunc(env,C3D_RGB,GPU_MODULATE);
+    /* Unit 1 is the authored primary map after the projective sampler swap.
+     * Premultiplied framebuffer blending needs the combined particle alpha
+     * for its ONE_MINUS_SRC_ALPHA destination factor. */
+    C3D_TexEnvSrc(env,C3D_Alpha,GPU_PRIMARY_COLOR,GPU_TEXTURE1,GPU_CONSTANT);
+    C3D_TexEnvFunc(env,C3D_Alpha,(geometry_flags&(1u<<2))?GPU_REPLACE:GPU_MODULATE);
     env=C3D_GetTexEnv(1);
     C3D_TexEnvSrc(env,C3D_RGB,GPU_PREVIOUS,GPU_TEXTURE0,GPU_CONSTANT);
     C3D_TexEnvFunc(env,C3D_RGB,GPU_MODULATE);
+    C3D_TexEnvSrc(env,C3D_Alpha,GPU_PREVIOUS,GPU_TEXTURE0,GPU_CONSTANT);
+    C3D_TexEnvFunc(env,C3D_Alpha,GPU_MODULATE);
     if(!(geometry_flags&(1u<<2))) {
         env=C3D_GetTexEnv(2);
         C3D_TexEnvSrc(env,C3D_RGB,GPU_PREVIOUS,GPU_TEXTURE1,GPU_CONSTANT);
@@ -319,8 +327,8 @@ int n3ds_gpu_effect_layer_draw(struct native_chicago_vertex *vertices,unsigned i
     C3D_DepthTest(!(geometry_flags&(1u<<3)),GPU_GEQUAL,GPU_WRITE_COLOR&~GPU_WRITE_ALPHA);
     C3D_StencilTest(true,GPU_EQUAL,0,1,0);
     C3D_StencilOp(GPU_STENCIL_KEEP,GPU_STENCIL_KEEP,GPU_STENCIL_KEEP);
-    /* Original Xbox uses the same source-color combiner for these three
-     * blend modes; only the framebuffer equation differs. No extra pass. */
+    /* These modes share the source-color combiner. The framebuffer equation
+     * and alpha factors decide whether they add or cover earlier pixels. */
     n3ds_gpu_framebuffer_blend(blend);
     for(unsigned int i=0;i<count;++i) indices[i]=i;
     int result=n3ds_gpu_indexed_draw(vertices,indices,count,sizeof(*vertices),5,0x43210);

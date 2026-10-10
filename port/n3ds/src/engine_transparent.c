@@ -283,7 +283,9 @@ static void effect_draw(const struct transparent_geometry_group *group)
         (!rasterizer_debug_options.zsprites || (group->geometry_flags&(1u<<7)));
     boolean secondary=shader->secondary_map.index!=NONE && !inactive_depth_map;
     boolean supported_secondary_blend=shader->framebuffer_blend_function==NATIVE_BLEND_ADD ||
-        shader->framebuffer_blend_function==NATIVE_BLEND_SUBTRACT || shader->framebuffer_blend_function==NATIVE_BLEND_MAX;
+        shader->framebuffer_blend_function==NATIVE_BLEND_SUBTRACT ||
+        shader->framebuffer_blend_function==NATIVE_BLEND_MAX ||
+        shader->framebuffer_blend_function==NATIVE_BLEND_PREMULTIPLIED_ALPHA;
     if(secondary && (shader->secondary_map_anchor<0 || shader->secondary_map_anchor>1 || !supported_secondary_blend || (shader->flags&2))) {
         char message[192];snprintf(message,sizeof(message),"NATIVE EFFECT SECONDARY: bitmap=%08lx anchor=%d sampler=%04x blend=%d shader_flags=%04x geometry=%08lx",
             shader->secondary_map.index,shader->secondary_map_anchor,shader->secondary_map_flags,shader->framebuffer_blend_function,shader->flags,group->geometry_flags);n3ds_log(message);
