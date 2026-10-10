@@ -28,6 +28,7 @@
 #include "cache/texture_cache.h"
 #include "cache_file_format.h"
 #include "effects/particles.h"
+#include "bitmaps/bitmap_group.h"
 #include "objects/objects.h"
 #include "game/players.h"
 #include "game/game.h"
@@ -75,13 +76,22 @@ static unsigned int batch_visible,batch_culled;
 static struct native_widget_vertex flame_vertices[64*6];
 static unsigned int flame_tag_generation;
 static long flame_bitmap=NONE;
+struct flame_sprite {short image;real_rectangle2d uv;};
+static struct flame_sprite flame_sprites[4];
+static unsigned int flame_sprite_count;
+/* Kevin Boggs: flame_stream_flush - New3DS integration. */
+static void flame_stream_flush(unsigned int count,short image)
+{
+    if(count && rasterizer_set_texture_direct(0,flame_bitmap,image))
+        n3ds_gpu_effect_draw(flame_vertices,count,NATIVE_BLEND_ADD,0,6,0);
+}
 /* Kevin Boggs: resolve the owner's map bitmap after each tag generation change. */
 /* Kevin Boggs: flame_stream_lookup - New3DS integration. */
 static void flame_stream_lookup(void)
 {
     unsigned int generation=n3ds_engine_tag_generation();
     if(flame_tag_generation==generation) return;
-    flame_tag_generation=generation;flame_bitmap=NONE;
+    flame_tag_generation=generation;flame_bitmap=NONE;flame_sprite_count=0;
     const struct n3ds_cache_view *view=n3ds_engine_cache_view(0);
     if(!view || !view->tag_header || !view->instances) return;
     for(long i=0;i<view->tag_header->tag_count;++i) {
@@ -89,7 +99,28 @@ static void flame_stream_lookup(void)
         if(tag->group_tag!=PARTICLE_TAG || !tag->name ||
            strcmp(tag->name,"weapons\\flamethrower\\effects\\flash h flame")) continue;
         const struct particle_definition *particle=particle_definition_get(tag->tag_index);
-        if(particle) flame_bitmap=particle->bitmap.index;
+        if(particle) {
+            flame_bitmap=particle->bitmap.index;
+            const struct bitmap_group *group=bitmap_group_get(flame_bitmap);
+            if(group && particle->first_sequence_index>=0 &&
+               particle->initial_sequence_count>0) {
+                for(int sequence=particle->first_sequence_index;
+                    sequence<particle->first_sequence_index+particle->initial_sequence_count &&
+                    sequence<group->sequences.count && flame_sprite_count<NUMBEROF(flame_sprites);
+                    ++sequence) {
+                    const struct bitmap_group_sequence *entry=TAG_BLOCK_GET_ELEMENT(
+                        &group->sequences,sequence,struct bitmap_group_sequence);
+                    if(!entry || entry->sprites.count<=0) continue;
+                    const struct bitmap_group_sprite *sprite=TAG_BLOCK_GET_ELEMENT(
+                        &entry->sprites,0,struct bitmap_group_sprite);
+                    if(!sprite || sprite->bitmap_index<0 ||
+                       sprite->bitmap_index>=group->bitmaps.count) continue;
+                    flame_sprites[flame_sprite_count].image=sprite->bitmap_index;
+                    flame_sprites[flame_sprite_count].uv=sprite->bounds;
+                    ++flame_sprite_count;
+                }
+            }
+        }
         break;
     }
 }
@@ -98,13 +129,14 @@ static void flame_stream_lookup(void)
 static void flame_stream_draw(void)
 {
     flame_stream_lookup();
-    if(flame_bitmap==NONE) return;
+    if(flame_bitmap==NONE || !flame_sprite_count) return;
     real_vector3d right;
     cross_product3d(&render.camera.forward,&render.camera.up,&right);
     if(normalize3d(&right)<=0) return;
     struct object_iterator iterator;
     object_iterator_new(&iterator,_object_mask_projectile,0);
     unsigned int used=0;
+    short image=NONE;
     unsigned int flame_count=0;
     float local_depth=0.f;
     int local_near=0,local_firing=0;
@@ -139,6 +171,12 @@ static void flame_stream_draw(void)
          * distance per simulation tick; short samples behind it make its
          * travel readable at 240p. */
         for(unsigned int segment=0;segment<2;++segment) {
+            const struct flame_sprite *sprite=&flame_sprites[
+                ((unsigned int)iterator.index+segment)%flame_sprite_count];
+            if(used && (image!=sprite->image || used+6>NUMBEROF(flame_vertices))) {
+                flame_stream_flush(used,image);used=0;
+            }
+            image=sprite->image;
             real_point3d center=projectile->object.position;
             for(int axis=0;axis<3;++axis)
                 center.n[axis]-=projectile->object.translational_velocity.n[axis]*(.55f*segment);
@@ -155,19 +193,13 @@ static void flame_stream_draw(void)
                     v->position[axis]=center.n[axis]+right.n[axis]*x+render.camera.up.n[axis]*y;
                 v->color[0]=1.f;v->color[1]=.5f;v->color[2]=.1f;
                 v->color[3]=.11f-.03f*segment;
-                v->uv[0]=(index==0 || index==3)?0.f:1.f;
-                v->uv[1]=(index<2)?1.f:0.f;
+                v->uv[0]=(index==0 || index==3)?sprite->uv.x0:sprite->uv.x1;
+                v->uv[1]=(index<2)?sprite->uv.y1:sprite->uv.y0;
             }
             used+=6;
-            if(used==NUMBEROF(flame_vertices)) {
-                if(rasterizer_set_texture_direct(0,flame_bitmap,0))
-                    n3ds_gpu_effect_draw(flame_vertices,used,NATIVE_BLEND_ADD,0,6,0);
-                used=0;
-            }
         }
     }
-    if(used && rasterizer_set_texture_direct(0,flame_bitmap,0))
-        n3ds_gpu_effect_draw(flame_vertices,used,NATIVE_BLEND_ADD,0,6,0);
+    flame_stream_flush(used,image);
 #ifdef HALO_N3DS_EXPERIMENTAL_PC_ARSENAL
     if(flame_count && render.frame_index%15==0) {
         char message[128];
@@ -183,6 +215,11 @@ static void flame_stream_draw(void)
         if(local_depth>4.5f)local_depth=4.5f;
         unsigned int count=0;
         for(float depth=1.05f;depth<local_depth && count+6<=NUMBEROF(flame_vertices);depth+=.22f) {
+            const struct flame_sprite *sprite=&flame_sprites[(count/6)%flame_sprite_count];
+            if(count && image!=sprite->image) {
+                flame_stream_flush(count,image);count=0;
+            }
+            image=sprite->image;
             float fraction=depth/local_depth;
             float radius=.13f+.08f*fraction;
             float horizontal=.48f*(1.f-fraction);
@@ -201,13 +238,12 @@ static void flame_stream_draw(void)
                     v->position[axis]=center.n[axis]+right.n[axis]*x+render.camera.up.n[axis]*y;
                 v->color[0]=1.f;v->color[1]=.42f;v->color[2]=.055f;
                 v->color[3]=.36f-.10f*fraction;
-                v->uv[0]=(index==0 || index==3)?0.f:1.f;
-                v->uv[1]=(index<2)?1.f:0.f;
+                v->uv[0]=(index==0 || index==3)?sprite->uv.x0:sprite->uv.x1;
+                v->uv[1]=(index<2)?sprite->uv.y1:sprite->uv.y0;
             }
             count+=6;
         }
-        if(count && rasterizer_set_texture_direct(0,flame_bitmap,0))
-            n3ds_gpu_effect_draw(flame_vertices,count,NATIVE_BLEND_ADD,0,6,0);
+        flame_stream_flush(count,image);
     }
 }
 /* A box is outside only when its nearest point is beyond one side plane.
