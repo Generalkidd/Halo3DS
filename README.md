@@ -77,7 +77,8 @@ For the setup tools, start with the [Visual Studio solution instructions](docs/D
 Based on [bnunu/halo-1](https://github.com/bnunu/halo-1), revision
 `8d0c1ff46ef92511e4809fff422bacd94c3b7c67`.
 
-See [LICENSE.md](LICENSE.md), the [setup component notices](port/n3ds/setup/THIRD-PARTY.md),
+See the [license scope and credits](LICENSING.md), [upstream CC0 notice](LICENSE.md),
+the [Kevin Boggs MIT notice](LICENSE-KEVIN-MIT.md), and the [setup component notices](port/n3ds/setup/THIRD-PARTY.md),
 and the licenses for [LZ4](port/n3ds/vendor/lz4/LICENSE) and the
 [allocator](port/n3ds/vendor/libctru-allocator/LICENSE.txt).
 Original game assets, SDK files and Nintendo DSP firmware are not included.

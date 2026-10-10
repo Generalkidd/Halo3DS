@@ -37,7 +37,9 @@ files and their original placements are never changed.
 The [developer notes](DEVELOPMENT.md) contain build commands and test details;
 the [modding guide](../port/n3ds/MODDING.md) points to code for common edits.
 The repository's `AGENTS.md` records attribution requirements for the New 3DS
-integration. Existing third party and upstream license notices remain intact.
+integration. [License scope and credits](../LICENSING.md) identifies Kevin
+Boggs's original MIT-covered additions separately from the original CC0
+project and the GPLv3 setup component. Existing third-party notices remain intact.
 
 ## Review and merge recommendation
 

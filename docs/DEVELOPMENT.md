@@ -1,7 +1,7 @@
 # Developer notes
 
-Build instructions, testing and maintenance notes for contributors, including
-coding agents. Player instructions are in the [main README](../README.md).
+Build instructions, testing and maintenance notes for contributors. Player
+instructions are in the [main README](../README.md).
 Commands below run from the repository root unless stated otherwise.
 
 - [Building the game](#building-the-game)

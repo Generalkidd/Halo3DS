@@ -124,5 +124,8 @@ problem.
 
 `Halo3DS-Source.zip` contains the tracked source tree used for the launcher;
 `Xbox-Setup-Source.zip` contains the separate Xbox installer source.
-`LICENSE.md`, `THIRD-PARTY.md`, and `GPL-3.0.txt` are included for review.
+`LICENSING.md`, `LICENSE.md`, `LICENSE-KEVIN-MIT.md`, `THIRD-PARTY.md`, and
+`GPL-3.0.txt` explain the mixed-license package. The original project's CC0
+notice, Kevin Boggs's MIT notice for his original additions, and the GPLv3
+notice and corresponding source for the setup component remain separate.
 These notices do not grant rights to game assets.

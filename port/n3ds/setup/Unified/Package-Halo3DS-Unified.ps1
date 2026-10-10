@@ -73,6 +73,8 @@ $inputs = @(
     @{ Source=(Join-Path $repo 'port/n3ds/vendor/stb_vorbis.c'); Name='stb_vorbis.c' },
     @{ Source=(Join-Path $repo 'port/n3ds/vendor/README.md'); Name='stb-vorbis-README.md' },
     @{ Source=(Join-Path $repo 'LICENSE.md'); Name='LICENSE.md' },
+    @{ Source=(Join-Path $repo 'LICENSE-KEVIN-MIT.md'); Name='LICENSE-KEVIN-MIT.md' },
+    @{ Source=(Join-Path $repo 'LICENSING.md'); Name='LICENSING.md' },
     @{ Source=(Join-Path $setup 'THIRD-PARTY.md'); Name='THIRD-PARTY.md' },
     @{ Source=(Join-Path $setup 'Licenses/GPL-3.0.txt'); Name='GPL-3.0.txt' }
 )
