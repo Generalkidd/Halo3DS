@@ -9,6 +9,11 @@
 #define GEOMETRY_PARTS_OFFSET 0x24u
 #define PART_BYTES 0x84u
 #define PC_VERTEX_BYTES 0x44u
+#define MODEL_REGIONS_OFFSET 0xC4u
+#define REGION_BYTES 0x4Cu
+#define REGION_PERMUTATIONS_OFFSET 0x40u
+#define PERMUTATION_BYTES 0x58u
+#define PERMUTATION_GEOMETRIES_OFFSET 0x40u
 
 static uint32_t u32(const uint8_t *p) {
     return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
@@ -110,6 +115,55 @@ int halo_pc_model_part_count(const struct halo_cache *cache, const struct halo_c
         return fail(error, error_size, "Model geometry index is out of range");
     return geometry_parts(cache, address, geometry_index, count, &parts,
                           error, error_size);
+}
+
+int halo_pc_model_default_geometries(const struct halo_cache *cache,
+                                      const struct halo_cache_tag *tag,
+                                      uint32_t detail, uint16_t *indices,
+                                      size_t capacity, uint32_t *count,
+                                      char *error, size_t error_size) {
+    uint32_t geometry_count, geometry_address, model_offset, index_offset, model_bytes;
+    uint32_t regions, region_address, region;
+    const uint8_t *region_block;
+    if (!indices || !count || !capacity || detail >= 5u ||
+        !model_header(cache, tag, &geometry_count, &geometry_address, &model_offset,
+                      &index_offset, &model_bytes, error, error_size))
+        return fail(error, error_size, "Invalid default model geometry request");
+    *count = 0;
+    regions = u32(tag->metadata + MODEL_REGIONS_OFFSET);
+    region_address = u32(tag->metadata + MODEL_REGIONS_OFFSET + 4u);
+    if (regions > 128u) return fail(error, error_size, "Model region count is out of range");
+    region_block = regions ? halo_cache_resolve(cache, region_address,
+                                               (size_t)regions * REGION_BYTES) : NULL;
+    if (regions && !region_block) return fail(error, error_size, "Model regions are outside tags");
+    for (region = 0; region < regions; ++region) {
+        const uint8_t *entry = region_block + (size_t)region * REGION_BYTES;
+        uint32_t permutations = u32(entry + REGION_PERMUTATIONS_OFFSET);
+        uint32_t address = u32(entry + REGION_PERMUTATIONS_OFFSET + 4u);
+        const uint8_t *permutation;
+        uint16_t geometry;
+        uint32_t i;
+        if (!permutations) continue;
+        if (permutations > 256u)
+            return fail(error, error_size, "Model permutation count is out of range");
+        permutation = halo_cache_resolve(cache, address,
+                                         (size_t)permutations * PERMUTATION_BYTES);
+        if (!permutation) return fail(error, error_size, "Model permutations are outside tags");
+        geometry = (uint16_t)(permutation[PERMUTATION_GEOMETRIES_OFFSET + detail * 2u] |
+                  (uint16_t)permutation[PERMUTATION_GEOMETRIES_OFFSET + detail * 2u + 1u] << 8);
+        if (geometry == 0xffffu) continue;
+        if (geometry >= geometry_count)
+            return fail(error, error_size, "Model permutation geometry is out of range");
+        for (i = 0; i < *count && indices[i] != geometry; ++i) {}
+        if (i == *count) {
+            if (*count >= capacity)
+                return fail(error, error_size, "Too many default model geometries");
+            indices[(*count)++] = geometry;
+        }
+    }
+    if (!*count) { indices[0] = 0; *count = 1; }
+    if (error && error_size) error[0] = '\0';
+    return 1;
 }
 
 int halo_pc_model_inspect(const struct halo_cache *cache, const struct halo_cache_tag *tag,

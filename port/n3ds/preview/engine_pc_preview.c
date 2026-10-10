@@ -22,6 +22,7 @@ long long n3ds_engine_ticks(void);
 long long n3ds_engine_tick_frequency(void);
 enum { PREVIEW_TRIANGLES=2048, PREVIEW_VERTICES=PREVIEW_TRIANGLES*3,
        NAV_TRIANGLES=1024, PREVIEW_TEXTURE_SIZE=64, PREVIEW_TEXTURE_LIMIT=48,
+       MODEL_GEOMETRIES=128,
        VIEW_LIT=0, VIEW_XRAY=1, VIEW_WIRE=2, VIEW_XRAY_WIRE=3,
        TOUCH_NONE=0, TOUCH_DRAG=1, TOUCH_NAV=2, TOUCH_VIEW=3 };
 struct preview_batch {uint32_t shader_datum;unsigned int first,count;void *texture;};
@@ -46,6 +47,7 @@ static int nav_visible=1,view_mode=VIEW_LIT,touch_held,touch_owner;
 static int selected_map=-1,selected_page=-1,selected_field=-1,selected_weapon=-1,selected_vehicle=-1;
 static int state_loaded;
 static int uv_mode;
+static int model_detail;static unsigned int model_geometries;
 static float yaw=.65f,elevation=.72f,zoom=2.7f;
 static unsigned int idle_frames;
 static int dragging,last_x,last_y;
@@ -60,7 +62,7 @@ void n3ds_pc_preview_close(void)
     free(material_uv);material_uv=NULL;
     free(nav_vertices);nav_vertices=NULL;nav_triangles=0;
     vertices=NULL;indices=NULL;triangles=0;state_loaded=0;
-    uv_mode=0;
+    uv_mode=0;model_detail=-1;model_geometries=0;
     if(white){n3ds_gpu_texture_destroy(white);white=NULL;}
     if(xray_texture){n3ds_gpu_texture_destroy(xray_texture);xray_texture=NULL;}
     if(wire_texture){n3ds_gpu_texture_destroy(wire_texture);wire_texture=NULL;}
@@ -81,8 +83,9 @@ static void emit_triangle(const float *a,const float *b,const float *c,int kind,
     n[2]=e0[0]*e1[1]-e0[1]*e1[0];
     float area=sqrtf(n[0]*n[0]+n[1]*n[1]+n[2]*n[2]);
     if(!isfinite(area) || area<.00001f)return;
-    float light=.46f+.43f*fmaxf(0.f,(n[0]*.38f+n[1]*.22f+n[2]*.90f)/area);
-    const float base[3][3]={{1.f,1.f,1.f},{.77f,.61f,.38f},{.58f,.72f,.87f}};
+    float facing=fmaxf(0.f,(n[0]*.38f+n[1]*.22f+n[2]*.90f)/area);
+    float light=kind ? .70f+.25f*facing : .46f+.43f*facing;
+    const float base[3][3]={{1.f,1.f,1.f},{.95f,.83f,.63f},{.75f,.83f,.93f}};
     const float *points[3]={a,b,c};
     for(int j=0;j<3;++j){
         struct native_render_vertex *v=vertices+triangles*3+j;
@@ -288,28 +291,57 @@ static int load_model(struct halo_cache *cache,const char *wanted,int kind)
             tag.group==0x6d6f6432u && !strcmp(tag.name,wanted)){found=1;break;}
     }
     if(!found)return 0;
-    uint32_t parts=0,total=0;
-    if(!halo_pc_model_part_count(cache,&tag,0,&parts,error,sizeof(error)))return 0;
-    for(unsigned int p=0;p<parts;++p){struct halo_pc_model_part part;
-        if(halo_pc_model_part_at(cache,&tag,0,p,&part,error,sizeof(error)))total+=part.strip_triangle_count;
-    }
-    unsigned int step=total/PREVIEW_TRIANGLES+1,global=0;
-    for(unsigned int p=0;p<parts && triangles<PREVIEW_TRIANGLES;++p){
-        struct halo_pc_model_part part;
-        if(!halo_pc_model_part_at(cache,&tag,0,p,&part,error,sizeof(error)) ||
-           !part.vertex_count || part.vertex_count>65535)continue;
-        float *positions=malloc((size_t)part.vertex_count*3*sizeof(float));
-        unsigned short *strip=malloc(((size_t)part.strip_triangle_count+2)*sizeof(short));
-        if(positions && strip && halo_pc_model_read_part(cache,&part,positions,
-            (size_t)part.vertex_count*3,strip,part.strip_triangle_count+2,error,sizeof(error))){
-            for(unsigned int t=0;t<part.strip_triangle_count && triangles<PREVIEW_TRIANGLES;++t,++global){
-                if(global%step)continue;
-                unsigned short a=strip[t],b=strip[t+1],c=strip[t+2];
-                if(a==b || b==c || c==a)continue;
-                emit_triangle(positions+(t&1?b:a)*3,positions+(t&1?a:b)*3,positions+c*3,kind,NULL);
+    uint16_t chosen[MODEL_GEOMETRIES],candidate[MODEL_GEOMETRIES];
+    uint32_t chosen_count=0;unsigned long long chosen_total=~0ull;
+    int chosen_detail=-1;
+    /* Halo model regions select separate body, wheel and weapon geometries.
+     * Pick the most detailed complete default permutation that fits; never
+     * discard every Nth triangle of a valid low-detail vehicle. */
+    for(int detail=4;detail>=0;--detail){
+        uint32_t count=0;unsigned long long total=0;
+        if(!halo_pc_model_default_geometries(cache,&tag,(uint32_t)detail,candidate,
+            MODEL_GEOMETRIES,&count,error,sizeof(error)))continue;
+        for(uint32_t g=0;g<count;++g){
+            uint32_t parts=0;
+            if(!halo_pc_model_part_count(cache,&tag,candidate[g],&parts,error,sizeof(error)))continue;
+            for(uint32_t p=0;p<parts;++p){struct halo_pc_model_part part;
+                if(halo_pc_model_part_at(cache,&tag,candidate[g],p,&part,error,sizeof(error)))
+                    total+=part.strip_triangle_count;
             }
-        }else global+=part.strip_triangle_count;
-        free(positions);free(strip);
+        }
+        if(total && total<chosen_total){
+            chosen_total=total;chosen_count=count;chosen_detail=detail;
+            memcpy(chosen,candidate,count*sizeof(*chosen));
+        }
+        if(total && total<=PREVIEW_TRIANGLES){
+            chosen_total=total;chosen_count=count;chosen_detail=detail;
+            memcpy(chosen,candidate,count*sizeof(*chosen));break;
+        }
+    }
+    if(chosen_detail<0)return 0;
+    model_detail=chosen_detail;model_geometries=chosen_count;
+    unsigned int step=chosen_total>PREVIEW_TRIANGLES?
+        (unsigned int)(chosen_total/PREVIEW_TRIANGLES+1u):1u,global=0;
+    for(uint32_t g=0;g<chosen_count && triangles<PREVIEW_TRIANGLES;++g){
+        uint32_t parts=0;
+        if(!halo_pc_model_part_count(cache,&tag,chosen[g],&parts,error,sizeof(error)))continue;
+        for(uint32_t p=0;p<parts && triangles<PREVIEW_TRIANGLES;++p){
+            struct halo_pc_model_part part;
+            if(!halo_pc_model_part_at(cache,&tag,chosen[g],p,&part,error,sizeof(error)) ||
+               !part.vertex_count || part.vertex_count>65535)continue;
+            float *positions=malloc((size_t)part.vertex_count*3*sizeof(float));
+            unsigned short *strip=malloc(((size_t)part.strip_triangle_count+2u)*sizeof(short));
+            if(positions && strip && halo_pc_model_read_part(cache,&part,positions,
+                (size_t)part.vertex_count*3,strip,part.strip_triangle_count+2u,error,sizeof(error))){
+                for(unsigned int t=0;t<part.strip_triangle_count && triangles<PREVIEW_TRIANGLES;++t,++global){
+                    if(global%step)continue;
+                    unsigned short a=strip[t],b=strip[t+1],c=strip[t+2];
+                    if(a==b || b==c || c==a)continue;
+                    emit_triangle(positions+(t&1?b:a)*3,positions+(t&1?a:b)*3,positions+c*3,kind,NULL);
+                }
+            }else global+=part.strip_triangle_count;
+            free(positions);free(strip);
+        }
     }
     return triangles>0;
 }
@@ -360,8 +392,9 @@ static void load_selection(int map,int page,int field,int weapon_set,int vehicle
     halo_cache_close(&cache);
     if(!ok){triangles=0;snprintf(message,sizeof(message),"PC PREVIEW: no mesh for %s kind=%d",map_files[map],kind);n3ds_log(message);return;}
     normalize_mesh();snprintf(message,sizeof(message),
-        "PC PREVIEW: %s kind=%d triangles=%u nav=%u batches=%u textures=%u load_ms=%.1f",
+        "PC PREVIEW: %s kind=%d triangles=%u nav=%u batches=%u textures=%u lod=%d geometries=%u load_ms=%.1f",
         map_files[map],kind,triangles,nav_triangles,batch_count,texture_count,
+        model_detail,model_geometries,
         1000.0*(n3ds_engine_ticks()-begun)/n3ds_engine_tick_frequency());n3ds_log(message);
 }
 void n3ds_pc_preview_input(const struct native_input_sample *sample)

@@ -35,6 +35,14 @@ int halo_pc_model_part_count(const struct halo_cache *cache, const struct halo_c
                              uint32_t geometry_index, uint32_t *count,
                              char *error, size_t error_size);
 
+/* One default permutation per region at the selected detail level. The
+ * returned geometry indices are unique and validated against the model. */
+int halo_pc_model_default_geometries(const struct halo_cache *cache,
+                                      const struct halo_cache_tag *tag,
+                                      uint32_t detail, uint16_t *indices,
+                                      size_t capacity, uint32_t *count,
+                                      char *error, size_t error_size);
+
 /* Read positions and strip indices for a part. The caller owns the buffers.
    Positions are xyz float triplets; indices are the source triangle strip. */
 int halo_pc_model_read_part(const struct halo_cache *cache, const struct halo_pc_model_part *part,
