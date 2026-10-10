@@ -196,6 +196,7 @@ void n3ds_gpu_pc_local_menu(int map,int mode,int bots,int difficulty,int weapon_
  static const char *const difficulties[]={"Easy","Normal","Hard"};
  static const char *const weapons[]={"Normal (PC map)","Pistols","Rifles","Plasma","Snipers","No sniping","Rockets","Shotguns","Short range","Human","None","Flamethrowers","Fuel Rods"};
  static const char *const vehicles[]={"Mode default","All PC vehicles","None","Warthog + Rocket","Ghost","Scorpion"};
+ static const char *const views[]={"VIEW: TEX+LIT","VIEW: X-RAY","VIEW: WIRE","VIEW: X+WIRE"};
  char line[48];void *saved=n3ds_gpu_texture_bound(0);
  n3ds_pc_preview_draw(map,page,field,weapon_set,vehicle_choice);
  n3ds_gpu_hud_layout(0);n3ds_gpu_hud_screen(0);
@@ -203,13 +204,17 @@ void n3ds_gpu_pc_local_menu(int map,int mode,int bots,int difficulty,int weapon_
  controls_text_center(400,45,page?"MATCH EQUIPMENT":"LOCAL MULTIPLAYER",0xffffffff,1);
  controls_text_center(400,84,page?"Pick map weapon and vehicle rules.":"Choose a PC retail map and original game mode.",0xffe9d6aa,1);
  controls_text_center(400,116,page?"Normal keeps PC map weapon pickups.":"The match runs on this 3DS with bots.",0xffe9d6aa,1);
- controls_text_center(400,157,"Drag model to turn  L/R: zoom",0xffffffff,1);
+ controls_text_center(400,157,"Drag to turn  L/R: zoom",0xffffffff,1);
+ if(!page)controls_text_center(400,138,"VIEW: Textured Lit / X-ray / Wire / X+Wire",0xffe9d6aa,1);
  controls_text_center(400,179,page?"X: match setup  B: back":"X: equipment  B: back",0xffffffff,1);
  n3ds_gpu_hud_screen(1);
  controls_quad(0,0,320,23,0xff24150c,0);
  controls_quad(0,22,320,1,0xffbd8142,0);
  controls_text_center(320,8,page?"MATCH EQUIPMENT":"LOCAL MULTIPLAYER",0xffffffff,0);
  if(!page){
+  controls_quad(12,26,133,25,0xffbd8142,0);
+  controls_quad(14,28,129,21,0xff694420,0);
+  controls_text(21,35,views[n3ds_pc_preview_view_mode()],0xfffbd29b,0);
   controls_quad(248,26,63,25,0xffbd8142,0);
   controls_quad(250,28,59,21,n3ds_pc_preview_nav_enabled()?0xff694420:0xff302016,0);
   controls_text(255,35,n3ds_pc_preview_nav_enabled()?"NAV ON":"NAV OFF",0xfffbd29b,0);

@@ -1071,6 +1071,23 @@ void n3ds_gpu_world_state_restore(void)
 }
 int n3ds_gpu_geometry_draw(const struct native_render_vertex *vertices, const unsigned short *indices, unsigned int count)
 { return n3ds_gpu_indexed_draw(vertices,indices,count,sizeof(*vertices),3,0x210); }
+int n3ds_gpu_preview_material_draw(const struct native_render_vertex *vertices,
+    const unsigned short *indices,unsigned int count,int translucent,int depth_test)
+{
+    if(!frame_active || !n3ds_gpu_texture_bound(0))return 0;
+    n3ds_gpu_world_state_restore();
+    C3D_CullFace(GPU_CULL_NONE);
+    C3D_DepthTest(depth_test,GPU_GEQUAL,translucent?GPU_WRITE_COLOR & ~GPU_WRITE_ALPHA:GPU_WRITE_ALL);
+    if(translucent){
+        C3D_TexEnv *env=C3D_GetTexEnv(0);
+        C3D_TexEnvSrc(env,C3D_Alpha,GPU_TEXTURE0,GPU_PRIMARY_COLOR,GPU_PRIMARY_COLOR);
+        C3D_TexEnvFunc(env,C3D_Alpha,GPU_REPLACE);
+        n3ds_gpu_framebuffer_blend(NATIVE_BLEND_ALPHA);
+    }
+    int result=n3ds_gpu_geometry_draw(vertices,indices,count);
+    n3ds_gpu_world_state_restore();
+    return result;
+}
 static int model_transform_draw(const void *vertices,const unsigned short *indices,unsigned int count,
     const float *rows,unsigned int nodes,const float uv[2],int sky,int decal,int two_sided,int skinned,
     const struct native_model_material *material)

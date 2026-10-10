@@ -140,7 +140,8 @@ static int menu_keys_load(void)
         {"TRY_B30_EXTRA",0x00800000u},
         {"OPEN_SETTINGS",0x00400000u},{"TAP_HIGH_TEXTURES",0x00200000u},
         {"TAP_SAVE_SETTINGS",0x00080000u},{"TAP_PC_TEXTURES",0x00040000u},
-        {"KILL_PLAYER",0x00020000u},{"TAP_NAV",0x00010000u}
+        {"KILL_PLAYER",0x00020000u},{"TAP_NAV",0x00010000u},
+        {"TAP_VIEW",0x00001000u}
     };
     FILE *file=fopen("sdmc:/halo-source/menu-keys.txt","rb");
     char line[64],name[32],extra;
@@ -191,6 +192,8 @@ static void menu_keys_sample(long frame,struct native_input_sample *sample)
             n3ds_controls_open(0);
         } else if(mask==0x00010000u) {
             sample->held|=NATIVE_KEY_TOUCH;sample->touch_x=280;sample->touch_y=36;
+        } else if(mask==0x00001000u) {
+            sample->held|=NATIVE_KEY_TOUCH;sample->touch_x=72;sample->touch_y=36;
         } else if(mask==0x00200000u || mask==0x00080000u || mask==0x00040000u) {
             sample->held|=NATIVE_KEY_TOUCH;
             sample->touch_x=mask==0x00040000u?150:280;

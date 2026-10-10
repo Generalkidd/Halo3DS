@@ -49,10 +49,14 @@ vehicles** enables every vehicle type that the map places, including Rocket
 Warthog and Banshee where present. It also places two Banshees at clear sites
 on opposing sides of Danger Canyon, Ice Fields, and Timberland; their PC caches contain
 the Banshee asset. Other vehicle choices retain the original placements.
-The lower screen previews the selected map's geometry. Tap **NAV ON/OFF** to
-show or hide its blue walkable-surface overlay. The gear page previews the
-selected weapon or vehicle using models available in that PC map. Drag a
-preview to turn it, use **L/R** to zoom, or leave it idle for a slow turntable.
+The lower screen previews the selected map's geometry. Tap **VIEW** to cycle
+**Textured Lit**, **X-ray**, **Wireframe**, and **X-ray + Wireframe**. X-ray
+shows interiors through ceilings and walls; the combined view adds their
+edges. Textured Lit reads base textures from the installed PC maps. Tap
+**NAV ON/OFF** to show or hide the blue walkable-surface overlay. The gear page
+previews the selected weapon or vehicle using models available in that PC map.
+Drag a preview to turn it, use **L/R** to zoom, or leave it idle for a slow
+turntable. VIEW and NAV respond when a touch begins on their buttons.
 
 `-BotCount`
 sets a default from 0 to 15. On the campaign difficulty screen, the bottom
