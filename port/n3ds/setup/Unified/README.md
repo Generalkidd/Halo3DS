@@ -36,7 +36,10 @@ PC Local Multiplayer, then choose a PC map, mode, bot count, difficulty, and on 
 tap **PC textures** to switch between standard 64-pixel textures and the
 experimental 128-pixel texture with mip. This choice saves immediately and
 applies when the map loads. Difficulty changes ordinary bot accuracy and firing
-rate; Easy also makes the occasional named bot less frequent. Press **X** or tap
+rate. ChaoticSPARTAN1 and KodeBreaker16 each have an independent 50% chance
+per match when at least two bot slots are available; both can appear together.
+KodeBreaker16 has a 10% chance of 60 seconds of active camouflage on each
+spawn. Press **X** or tap
 **X: Gear** to choose a weapon set and vehicle set before the match. **Normal
 (PC map)** keeps each PC map's original pickups, including Flamethrower and
 Fuel Rod placements where the map has them. The extra **Flamethrowers** and
@@ -62,8 +65,11 @@ During a solo PC match, hold **SELECT** or the lower-right **SCORE** touch
 panel around the motion tracker to show the scoreboard on the top screen.
 The three other touch panels give press feedback but have no assigned action.
 Controller Settings also offers **Swap X/Y**, **Show FPS** on the bottom screen,
-and **Decals**. X/Y swap and FPS start OFF; Decals starts ON and can be changed
-before a match. Surface marks follow the lifetimes supplied by the game maps.
+and **Decals**. X/Y swap and Decals start ON for new profiles; FPS starts OFF.
+Saved profiles retain their selected values. Surface marks follow the
+lifetimes supplied by the game maps. After a local multiplayer match ends,
+tap **Return to Lobby** at the top of the bottom screen or press **B** to
+reopen the map, mode, and bot selector.
 
 One launcher replaces the normal Xbox setup launcher only after both sources
 pass preflight. The previous 3DSX is archived under
@@ -72,9 +78,13 @@ are preserved. A failed install can be rerun after correcting its input. Keep
 the card connected until the script reports completion.
 
 The unified menu and optional campaign spawns were exercised in Azahar 2126.2.
-Physical New 3DS XL performance and longer campaign and multiplayer sessions
-still require device testing. Keep a known good SD backup while testing and
-retain `halo-source-engine.log` when reporting a problem.
+A six-bot Timberland match reached its postgame state on a New 3DS XL. The
+latest postgame, bot, and visual changes still need a device retest. Busy
+combat scenes have not established a smooth 30 FPS. Keep a known good SD
+backup while testing and retain `halo-source-engine.log` when reporting a
+problem.
 
-`Xbox-Setup-Source.zip`, `LICENSE.md`, `THIRD-PARTY.md`, and `GPL-3.0.txt` are
-included for review. These notices do not grant rights to game assets.
+`Halo3DS-Source.zip` contains the tracked source tree used for the launcher;
+`Xbox-Setup-Source.zip` contains the separate Xbox installer source.
+`LICENSE.md`, `THIRD-PARTY.md`, and `GPL-3.0.txt` are included for review.
+These notices do not grant rights to game assets.

@@ -4,6 +4,7 @@
 param(
     [Parameter(Mandatory = $true)][string]$XboxInstallerPath,
     [Parameter(Mandatory = $true)][string]$XboxSourceZip,
+    [Parameter(Mandatory = $true)][string]$SourceSnapshotZip,
     [Parameter(Mandatory = $true)][string]$UnifiedLauncherPath,
     [Parameter(Mandatory = $true)][string]$RuntimeManifest,
     [Parameter(Mandatory = $true)][string]$OutputZip
@@ -15,6 +16,7 @@ $setup = Split-Path $PSScriptRoot -Parent
 $repo = [IO.Path]::GetFullPath((Join-Path $setup '../../..'))
 $xbox = (Resolve-Path -LiteralPath $XboxInstallerPath).Path
 $source = (Resolve-Path -LiteralPath $XboxSourceZip).Path
+$snapshot = (Resolve-Path -LiteralPath $SourceSnapshotZip).Path
 $pc = (Resolve-Path -LiteralPath $UnifiedLauncherPath).Path
 $manifestPath = (Resolve-Path -LiteralPath $RuntimeManifest).Path
 $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
@@ -44,6 +46,19 @@ try {
         if ($required -notin $names) { throw "Xbox installer source archive is missing $required" }
     }
 } finally { $sourceArchive.Dispose() }
+$snapshotArchive = [IO.Compression.ZipFile]::OpenRead($snapshot)
+try {
+    $names = @($snapshotArchive.Entries | ForEach-Object FullName)
+    foreach ($required in @('port/n3ds/build.py','port/n3ds/src/engine_frontend_boot.c','source/game/game_engine.c','LICENSE.md')) {
+        if ($required -notin $names) { throw "Source snapshot is missing $required" }
+    }
+    foreach ($name in $names) {
+        if ($name -match '(^/|^[A-Za-z]:|(^|/)\.\.(/|$)|\\)' -or
+            $name -match '(?i)\.(map|iso|xbe|cia|3ds|sav)$') {
+            throw "Source snapshot contains an unexpected path: $name"
+        }
+    }
+} finally { $snapshotArchive.Dispose() }
 
 $inputs = @(
     @{ Source=(Join-Path $PSScriptRoot 'Install-Halo3DS-Unified.ps1'); Name='Install-Halo3DS-Unified.ps1' },
@@ -52,6 +67,7 @@ $inputs = @(
     @{ Source=(Join-Path $PSScriptRoot 'README.md'); Name='README.md' },
     @{ Source=$xbox; Name='Halo3DS-Xbox-Install.exe' },
     @{ Source=$source; Name='Xbox-Setup-Source.zip' },
+    @{ Source=$snapshot; Name='Halo3DS-Source.zip' },
     @{ Source=$pc; Name='Halo3DS.3dsx' },
     @{ Source=$manifestPath; Name='unified-runtime.json' },
     @{ Source=(Join-Path $repo 'port/n3ds/vendor/stb_vorbis.c'); Name='stb_vorbis.c' },
