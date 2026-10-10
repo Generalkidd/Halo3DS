@@ -110,6 +110,8 @@ struct combat_bot_state
 	long vehicle_target;
 	boolean vehicle_target_gunner;
 	long last_scan_tick;
+	long combat_target;
+	long last_perception_tick;
 	long last_action_tick;
 	long last_grenade_tick;
 	long last_melee_tick;
@@ -761,6 +763,8 @@ void n3ds_bots_fill_action(short queue_index, short identifier,
 		state->equipment_target = NONE;
 		state->vehicle_target = NONE;
 		state->last_scan_tick = -1000;
+		state->combat_target = NONE;
+		state->last_perception_tick = -1000;
 		state->last_action_tick = -1000;
 		state->last_grenade_tick = -1000;
 		state->last_melee_tick = -1000;
@@ -781,6 +785,8 @@ void n3ds_bots_fill_action(short queue_index, short identifier,
 		/* A new datum marks a new spawn, including the first one. Use the
 		 * game's normal timed powerup so death, firing, and expiry still apply. */
 		state->last_unit_index = bot->unit_index;
+		state->combat_target = NONE;
+		state->last_perception_tick = -1000;
 		if (combat_bot_is_kode(queue_index) || combat_bot_is_star(queue_index))
 		{
 			unsigned long camo_seed = (unsigned long)bot->unit_index ^
@@ -862,28 +868,100 @@ void n3ds_bots_fill_action(short queue_index, short identifier,
 		}
 		state->last_grenade_count = (char)grenades;
 	}
-	data_iterator_new(&iterator, player_data);
-	while ((candidate = (struct player_datum *)data_iterator_next(&iterator)) != NULL)
+	/* Retain an engaged enemy only while the original collision ray can see
+	 * them. Search other players every 12 ticks to bound LOS work in 16-player
+	 * matches; a vanished target triggers an immediate replacement scan. */
+	if (state->combat_target != NONE)
 	{
-		struct object_datum *candidate_unit;
-		real dx, dy, dz, distance2;
-		if (candidate == bot || candidate->unit_index == NONE ||
-			(game_engine_has_teams() && candidate->team_index == bot->team_index))
-			continue;
-		candidate_unit = object_try_and_get(candidate->unit_index);
-		if (!candidate_unit || TEST_FLAG(candidate_unit->object.damage_flags, _object_dead_bit))
-			continue;
-		candidate_unit = object_get(combat_bot_world_object_index(candidate->unit_index));
-		dx = candidate_unit->object.position.x - bot_position.x;
-		dy = candidate_unit->object.position.y - bot_position.y;
-		dz = candidate_unit->object.position.z - bot_position.z;
-		distance2 = dx * dx + dy * dy + dz * dz;
-		if (distance2 < best_distance2)
+		candidate = player_try_and_get(state->combat_target);
+		if (candidate && candidate != bot && candidate->unit_index != NONE &&
+			(!game_engine_has_teams() || candidate->team_index != bot->team_index))
 		{
-			best_distance2 = distance2;
+			struct object_datum *candidate_unit = object_try_and_get(candidate->unit_index);
+			if (candidate_unit && !TEST_FLAG(candidate_unit->object.damage_flags, _object_dead_bit))
+			{
+				long world_index = combat_bot_world_object_index(candidate->unit_index);
+				candidate_unit = object_get(world_index);
+				if (combat_bot_can_see_object(bot->unit_index, &bot_position,
+					world_index, &candidate_unit->object.position))
+				{
+					target = candidate;
+					target_visible = TRUE;
+					enemy_position = candidate_unit->object.position;
+					best_distance2 = combat_bot_distance_squared(&bot_position, &enemy_position);
+				}
+			}
+		}
+		if (!target)
+		{
+			state->combat_target = NONE;
+			state->last_perception_tick = -1000;
+		}
+	}
+	if (!target && tick - state->last_perception_tick >= 12)
+	{
+		data_iterator_new(&iterator, player_data);
+		while ((candidate = (struct player_datum *)data_iterator_next(&iterator)) != NULL)
+		{
+			struct object_datum *candidate_unit;
+			real distance2;
+			long world_index;
+			if (candidate == bot || candidate->unit_index == NONE ||
+				(game_engine_has_teams() && candidate->team_index == bot->team_index))
+				continue;
+			candidate_unit = object_try_and_get(candidate->unit_index);
+			if (!candidate_unit || TEST_FLAG(candidate_unit->object.damage_flags, _object_dead_bit))
+				continue;
+			world_index = combat_bot_world_object_index(candidate->unit_index);
+			candidate_unit = object_get(world_index);
+			distance2 = combat_bot_distance_squared(&bot_position,
+				&candidate_unit->object.position);
+			if (distance2 < best_distance2 && combat_bot_can_see_object(
+				bot->unit_index, &bot_position, world_index,
+				&candidate_unit->object.position))
+			{
+				best_distance2 = distance2;
+				target = candidate;
+				target_visible = TRUE;
+				enemy_position = candidate_unit->object.position;
+				state->combat_target = iterator.datum_index;
+			}
+		}
+		state->last_perception_tick = tick;
+	}
+	if (!target)
+	{
+		/* A fresh hit reveals its source for a brief counter turn. This is
+		 * the game's recorded damage owner, not an omniscient nearest enemy.
+		 * Weapon fire remains gated by the live LOS ray below. */
+		unsigned long latest = 0;
+		for (short attacker_index = 0; attacker_index < MAXIMUM_ATTACKERS_PER_UNIT;
+			attacker_index++)
+		{
+			struct unit_attacker const *attacker = &unit->unit.attackers[attacker_index];
+			struct object_datum *candidate_unit;
+			unsigned long stamp = attacker->game_time_stamp;
+			if (attacker->player_index == NONE || attacker->damage_inflicted <= 0.f ||
+				stamp == (unsigned long)NONE ||
+				stamp > (unsigned long)tick || (unsigned long)tick - stamp > 60u ||
+				stamp < latest)
+				continue;
+			candidate = player_try_and_get(attacker->player_index);
+			if (!candidate || candidate == bot || candidate->unit_index == NONE ||
+				(game_engine_has_teams() && candidate->team_index == bot->team_index))
+				continue;
+			candidate_unit = object_try_and_get(candidate->unit_index);
+			if (!candidate_unit || TEST_FLAG(candidate_unit->object.damage_flags, _object_dead_bit))
+				continue;
+			candidate_unit = object_get(combat_bot_world_object_index(candidate->unit_index));
+			latest = stamp;
 			target = candidate;
 			enemy_position = candidate_unit->object.position;
+			best_distance2 = combat_bot_distance_squared(&bot_position, &enemy_position);
 		}
+		if (target && queue_index < 5 && tick % 60 == queue_index % 60)
+			platform_log("combat bot retaliation: player %d recent attacker unit=%08lx visible=0",
+				queue_index, target->unit_index);
 	}
 	if (tick - state->last_scan_tick >= 30 && vehicle_parent == NONE)
 	{
@@ -971,9 +1049,7 @@ void n3ds_bots_fill_action(short queue_index, short identifier,
 			platform_log("combat bot: player %d seeking mode %d", queue_index, mode);
 		state->last_mode = mode;
 	}
-	if (target)
-		target_visible = combat_bot_can_see_object(bot->unit_index,
-			&bot_position, combat_bot_world_object_index(target->unit_index), &enemy_position);
+	/* Objective selection below stays authoritative even after a fresh hit. */
 	if (mode == 0 && target)
 	{
 		objective = enemy_position;
@@ -1136,7 +1212,7 @@ void n3ds_bots_fill_action(short queue_index, short identifier,
 		{
 			{
 				real fire_range=combat_bot_fire_range(unit);
-				action->primary_trigger = best_distance2 < fire_range * fire_range ? 1.f : 0.f;
+				action->primary_trigger = target_visible && best_distance2 < fire_range * fire_range ? 1.f : 0.f;
 			}
 			if (vehicle && vehicle->unit.gunner_object_index == bot->unit_index &&
 				queue_index < 8 && tick % 300 == 0)
@@ -1160,7 +1236,7 @@ void n3ds_bots_fill_action(short queue_index, short identifier,
 		action->throttle.j = ((tick / 90 + queue_index) & 1) ? 0.55f : -0.55f;
 		{
 			real fire_range=combat_bot_fire_range(unit);
-			action->primary_trigger = best_distance2 < fire_range * fire_range ? 1.f : 0.f;
+			action->primary_trigger = target_visible && best_distance2 < fire_range * fire_range ? 1.f : 0.f;
 		}
 	}
 	else
@@ -1219,7 +1295,8 @@ void n3ds_bots_fill_action(short queue_index, short identifier,
 		}
 		if (best_slot != NONE)
 			action->desired_weapon_index = best_slot;
-		if (best_distance2 < 2.f * 2.f && tick - state->last_melee_tick > 45)
+		if (target_visible && best_distance2 < 2.f * 2.f &&
+			tick - state->last_melee_tick > 45)
 		{
 			action->control_flags |= FLAG(_unit_control_use_equipment_bit);
 			action->control_flags &= ~FLAG(_unit_control_weapon_primary_trigger_bit);

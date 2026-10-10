@@ -221,8 +221,10 @@ static void flame_stream_draw(void)
                 v->position[axis]=projectile->object.position.n[axis]+right.n[axis]*x+render.camera.up.n[axis]*y;
             v->color[0]=1.f;v->color[1]=.70f;v->color[2]=.08f;
             v->color[3]=owner_index==local_unit?.25f:.14f;
-            v->uv[0]=(index==0 || index==3)?sprite->uv.x0:sprite->uv.x1;
-            v->uv[1]=(index<2)?sprite->uv.y1:sprite->uv.y0;
+            /* Rotate the authored flame sprite counterclockwise in texture
+             * space: its round ignition edge is on the atlas's left. */
+            v->uv[0]=index<2?sprite->uv.x0:sprite->uv.x1;
+            v->uv[1]=(index==0 || index==3)?sprite->uv.y0:sprite->uv.y1;
         }
         used+=6;
     }
@@ -305,8 +307,8 @@ static void flame_stream_draw(void)
             for(int axis=0;axis<3;++axis)
                 v->position[axis]=center.n[axis]+right.n[axis]*x+render.camera.up.n[axis]*y;
             v->color[0]=1.f;v->color[1]=.70f;v->color[2]=.08f;v->color[3]=opacity;
-            v->uv[0]=(index==0 || index==3)?sprite->uv.x0:sprite->uv.x1;
-            v->uv[1]=(index<2)?sprite->uv.y1:sprite->uv.y0;
+            v->uv[0]=index<2?sprite->uv.x0:sprite->uv.x1;
+            v->uv[1]=(index==0 || index==3)?sprite->uv.y0:sprite->uv.y1;
         }
         used+=6;
     }

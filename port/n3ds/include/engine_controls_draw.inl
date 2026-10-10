@@ -117,13 +117,18 @@ void n3ds_gpu_match_touch_overlay(int fps,int show_fps,int show_score,int presse
 /* Kevin Boggs: n3ds_gpu_match_scoreboard - New3DS integration. */
 void n3ds_gpu_match_scoreboard(const struct native_score_row *rows,int count)
 {
+ /* Only the touch button calls this; SELECT uses the original upper-screen
+  * scoreboard. Leave the lower touch controls visible during either path. */
  void *saved=n3ds_gpu_texture_bound(0);n3ds_gpu_hud_screen(0);n3ds_gpu_hud_layout(0);
  controls_quad(24,24,352,192,0xffb97535,1);controls_quad(26,26,348,188,0xff221a12,1);
  controls_text(40,34,"MULTIPLAYER SCORE",0xfff6dcaa,1);
- controls_text(40,49,"PLAYER            SCORE   K   D",0xffa8d8ec,1);
+ controls_text(40,49,"PLAYER          SCORE  K  D  K/D MED",0xffa8d8ec,1);
  for(int i=0;i<count && i<16;++i){
-  char line[48];snprintf(line,sizeof(line),"%-15.15s  %5ld  %2d  %2d",
-   rows[i].name,rows[i].score,rows[i].kills,rows[i].deaths);
+  int ratio=(int)rows[i].kills*10/(rows[i].deaths>0?rows[i].deaths:1);
+  if(ratio>999)ratio=999;
+  char line[64];snprintf(line,sizeof(line),"%-14.14s %5ld %2d %2d %2d.%1d %3d",
+   rows[i].name,rows[i].score,rows[i].kills,rows[i].deaths,
+   ratio/10,ratio%10,rows[i].medals);
   controls_text(40,63+i*9,line,rows[i].local?0xff6de5ff:0xffe8e4d5,1);
  }
  n3ds_gpu_hud_screen(0);n3ds_gpu_texture_bind(0,saved);n3ds_gpu_world_state_restore();

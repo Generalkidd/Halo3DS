@@ -23,7 +23,7 @@ long long n3ds_engine_tick_frequency(void);
 /* 21,840 triangles fit 16-bit indices (65,520 vertices). The largest PC
  * multiplayer BSP has 21,304 faces; preserving them avoids preview holes. */
 enum { PREVIEW_TRIANGLES=21840, PREVIEW_VERTICES=PREVIEW_TRIANGLES*3,
-       NAV_TRIANGLES=1024, PREVIEW_TEXTURE_SIZE=64, PREVIEW_TEXTURE_LIMIT=48,
+       NAV_TRIANGLES=9600, PREVIEW_TEXTURE_SIZE=64, PREVIEW_TEXTURE_LIMIT=48,
        MODEL_GEOMETRIES=128,
        VIEW_LIT=0, VIEW_XRAY=1, VIEW_WIRE=2, VIEW_XRAY_WIRE=3,
        TOUCH_NONE=0, TOUCH_DRAG=1, TOUCH_NAV=2, TOUCH_VIEW=3, TOUCH_BACKFACES=4 };
@@ -144,13 +144,14 @@ static void face_keep(struct preview_face *heap,unsigned int *count,unsigned int
             face_swap(heap+index,heap+child);index=child;}
     }
 }
-static void load_nav(const struct halo_pc_bsp *bsp)
+static void load_nav(const struct halo_pc_bsp *bsp,const uint8_t *main_component)
 {
     if(!bsp->nav_surface_count)return;
     struct preview_face *heap=malloc(NAV_TRIANGLES*sizeof(*heap));
     if(!heap)return;
     unsigned int kept=0;
     for(uint32_t surface=0;surface<bsp->nav_surface_count;++surface){
+        if(main_component && !main_component[surface])continue;
         float points[8][3];
         int count=halo_pc_bsp_nav_polygon(bsp,surface,points);
         if(count && selected_map==7 && focus_bounds_valid){
@@ -267,8 +268,20 @@ static int load_bsp(struct halo_cache *cache)
 {
     struct halo_pc_bsp bsp={0};char error[128];
     if(!halo_pc_bsp_open(&bsp,cache,0,error,sizeof(error)))return 0;
+    uint8_t *main_component=NULL;
+    if((selected_map==8 || selected_map==11) && bsp.nav_surface_count){
+        main_component=malloc(bsp.nav_surface_count);
+        if(main_component){
+            uint32_t main_count=halo_pc_bsp_nav_main_component(&bsp,main_component,
+                bsp.nav_surface_count);
+            if(!main_count){free(main_component);main_component=NULL;}
+            else {char message[112];snprintf(message,sizeof(message),
+                "PC PREVIEW NAV: %s main walkable component=%lu surfaces",
+                map_files[selected_map],(unsigned long)main_count);n3ds_log(message);}
+        }
+    }
     struct preview_face *heap=malloc(PREVIEW_TRIANGLES*sizeof(*heap));
-    if(!heap){halo_pc_bsp_close(&bsp);return 0;}
+    if(!heap){free(main_component);halo_pc_bsp_close(&bsp);return 0;}
     unsigned int kept=0;
     for(unsigned int lm=0;lm<bsp.lightmap_count;++lm){
         uint32_t material_count=0;
@@ -310,6 +323,27 @@ static int load_bsp(struct halo_cache *cache)
             if(x<focus_lo[axis])focus_lo[axis]=x;
             if(x>focus_hi[axis])focus_hi[axis]=x;
         }
+    if(selected_map==8 && main_component){
+        /* Gephyrophobia's largest connected walkable surface is the central
+         * bridge. Frame its middle span, not the deep pit or outer cliffs. */
+        float playable_lo[3]={FLT_MAX,FLT_MAX,FLT_MAX};
+        float playable_hi[3]={-FLT_MAX,-FLT_MAX,-FLT_MAX};
+        for(uint32_t surface=0;surface<bsp.nav_surface_count;++surface){
+            if(!main_component[surface])continue;
+            float points[8][3];int count=halo_pc_bsp_nav_polygon(&bsp,surface,points);
+            for(int corner=0;corner<count;++corner)for(int axis=0;axis<3;++axis){
+                if(points[corner][axis]<playable_lo[axis])playable_lo[axis]=points[corner][axis];
+                if(points[corner][axis]>playable_hi[axis])playable_hi[axis]=points[corner][axis];
+            }
+        }
+        if(playable_lo[0]<playable_hi[0] && playable_lo[1]<playable_hi[1]){
+            float center=(playable_lo[1]+playable_hi[1])*.5f;
+            float half=(playable_hi[1]-playable_lo[1])*.35f;
+            playable_lo[1]=center-half;playable_hi[1]=center+half;
+            memcpy(focus_lo,playable_lo,sizeof(focus_lo));
+            memcpy(focus_hi,playable_hi,sizeof(focus_hi));
+        }
+    }
     focus_bounds_valid=focus_lo[0]<focus_hi[0] && focus_lo[1]<focus_hi[1];
     if(focus_bounds_valid && !strcmp(map_files[selected_map],"deathisland"))
         for(unsigned int i=0;i<kept;++i)if(heap[i].water)
@@ -320,6 +354,16 @@ static int load_bsp(struct halo_cache *cache)
             }
     qsort(heap,kept,sizeof(*heap),face_material_compare);
     for(unsigned int i=0;i<kept;++i){
+        if(selected_map==8){
+            float center_x=(heap[i].points[0]+heap[i].points[3]+heap[i].points[6])/3.f;
+            float center_y=(heap[i].points[1]+heap[i].points[4]+heap[i].points[7])/3.f;
+            float center_z=(heap[i].points[2]+heap[i].points[5]+heap[i].points[8])/3.f;
+            /* The bridge is beneath a snowy overhang and above a long pit.
+             * Keep the preview around its playable walkable component. */
+            if(center_z>5.f || center_z<-45.f ||
+               center_x<focus_lo[0]-8.f || center_x>focus_hi[0]+8.f ||
+               center_y<focus_lo[1]-8.f || center_y>focus_hi[1]+8.f)continue;
+        }
         if(!batch_count || batches[batch_count-1].shader_datum!=heap[i].shader_datum){
             struct preview_batch *batch=batches+batch_count++;
             *batch=(struct preview_batch){heap[i].shader_datum,triangles*3u,0,NULL};
@@ -342,8 +386,8 @@ static int load_bsp(struct halo_cache *cache)
         batches[i].texture=load_material_texture(cache,batches[i].shader_datum,0);
         if(batches[i].texture)++texture_count;
     }
-    load_nav(&bsp);
-    free(heap);halo_pc_bsp_close(&bsp);return triangles>0;
+    load_nav(&bsp,main_component);
+    free(main_component);free(heap);halo_pc_bsp_close(&bsp);return triangles>0;
 }
 static int load_model(struct halo_cache *cache,const char *wanted,int kind)
 {
@@ -450,6 +494,7 @@ static void load_selection(int map,int page,int field,int weapon_set,int vehicle
 {
     long long begun=n3ds_engine_ticks();
     n3ds_pc_preview_close();state_loaded=1;
+    if(map==8 && !page){yaw=1.57f;elevation=1.28f;zoom=2.65f;}
     selected_map=map;selected_page=page;selected_field=field;
     selected_weapon=weapon_set;selected_vehicle=vehicle_choice;
     if(map<0 || map>=19 || (page && ((field==0 && weapon_set==10) ||
@@ -628,7 +673,14 @@ void n3ds_pc_preview_draw(int map,int page,int field,int weapon_set,int vehicle_
     }
     if(!page && nav_visible && nav_triangles){
         n3ds_gpu_texture_bind(0,white);
-        n3ds_gpu_effect_draw(nav_vertices,nav_triangles*3,NATIVE_BLEND_ALPHA,0,6,0);
+        /* The largest PC map has 9,091 walkable triangles. Submit every
+         * authored polygon in bounded batches so none disappear from the
+         * overlay and each draw fits the widget stream. */
+        for(unsigned int first=0;first<nav_triangles;first+=1024){
+            unsigned int count=nav_triangles-first;
+            if(count>1024)count=1024;
+            n3ds_gpu_effect_draw(nav_vertices+first*3,count*3,NATIVE_BLEND_ALPHA,0,6,0);
+        }
     }
     n3ds_gpu_world_state_restore();
 }

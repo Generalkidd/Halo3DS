@@ -72,6 +72,7 @@ source/game/game_engine_oddball.c
 source/game/game_engine_race.c
 source/game/game_engine_race.h
 source/game/game_engine_slayer.c
+source/game/game_statistics.c
 source/game/player_queues_new.c
 source/game/players.h
 source/interface/hud_weapon.c

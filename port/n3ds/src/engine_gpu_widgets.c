@@ -10,7 +10,9 @@
 #include "engine_textures.h"
 #include "engine_widget_shader.h"
 #include "engine_effect_packed_shader.h"
-enum { WIDGET_VERTICES=6144, WIDGET_BLOCKS=4 };
+/* The optional PC nav preview can stream 9,091 walkable triangles over
+ * several bounded draws. Extra blocks allocate lazily only when it is shown. */
+enum { WIDGET_VERTICES=6144, WIDGET_BLOCKS=8 };
 static DVLB_s *shader;
 static shaderProgram_s program;
 static int ready,matrix_location;

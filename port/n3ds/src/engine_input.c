@@ -181,6 +181,8 @@ int n3ds_input_touch_panel_pressed(void)
     if(touch_stub==NATIVE_TOUCH_STUB_4)return 4;
     return 0;
 }
+/* Kevin Boggs: n3ds_input_touch_scoreboard_active - New3DS integration. */
+int n3ds_input_touch_scoreboard_active(void) { return touch_scoreboard; }
 boolean input_initialize(void)
 {
     assert(!initialized);

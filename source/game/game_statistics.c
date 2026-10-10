@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /*
 GAME_STATISTICS.C
 
@@ -24,6 +25,9 @@ symbols in this file:
 #include "game/players.h"
 #include "memory/data.h"
 #include "units/units.h"
+#ifdef HALO_N3DS
+#include "engine_hud.h"
+#endif
 
 /* ---------- constants */
 
@@ -43,6 +47,9 @@ void game_statistics_start(
 	void)
 {
 	game_statistics_active = TRUE;
+#ifdef HALO_N3DS
+	n3ds_hud_medals_reset();
+#endif
 
 	return;
 }
@@ -187,6 +194,11 @@ void game_statistics_record_kill(
 					else
 						credited_player->statistics.multiple_kills = 1;
 					credited_player->statistics.last_kill_time = (short)game_time_get();
+#ifdef HALO_N3DS
+					n3ds_hud_medal_record(credited_player_index,
+						credited_player->statistics.multiple_kills,
+						credited_player->statistics.kills_in_a_row);
+#endif
 				}
 				else
 				{

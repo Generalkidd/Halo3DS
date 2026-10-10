@@ -32,6 +32,7 @@ enum { NATIVE_TOUCH_GRENADE=1, NATIVE_TOUCH_FLASHLIGHT=2, NATIVE_TOUCH_AIM=4,
  * an aim gesture; button actions are queried only on a fresh press. */
 void n3ds_input_touch_handler(unsigned int (*handler)(unsigned int,unsigned int));
 int n3ds_input_touch_panel_pressed(void);
+int n3ds_input_touch_scoreboard_active(void);
 int halo_engine_input_tests(void);
 int halo_engine_touch_aim_tests(void);
 int halo_engine_model_controls_tests(void);

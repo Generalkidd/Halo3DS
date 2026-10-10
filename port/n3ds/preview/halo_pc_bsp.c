@@ -238,6 +238,49 @@ int halo_pc_bsp_nav_polygon(const struct halo_pc_bsp *bsp,uint32_t surface_index
     return 0;
 }
 
+/* Kevin Boggs: halo_pc_bsp_nav_main_component - New3DS preview integration. */
+uint32_t halo_pc_bsp_nav_main_component(const struct halo_pc_bsp *bsp,
+                                        uint8_t *included,size_t capacity) {
+    if(!bsp || !bsp->bytes || !included || !bsp->nav_surface_count ||
+       capacity<bsp->nav_surface_count)return 0;
+    uint32_t count=bsp->nav_surface_count;
+    uint32_t *labels=malloc((size_t)count*sizeof(*labels));
+    uint32_t *queue=malloc((size_t)count*sizeof(*queue));
+    if(!labels || !queue){free(labels);free(queue);return 0;}
+    memset(included,0,count);
+    uint32_t best_size=0,best_id=0,id=0;
+    for(uint32_t seed=0;seed<count;++seed){
+        if(included[seed] || !(bsp->bytes[bsp->nav_flags_offset+seed]&0x40u))continue;
+        uint32_t head=0,tail=0;
+        queue[tail++]=seed;included[seed]=1;
+        while(head<tail){
+            uint32_t surface_index=queue[head++];labels[surface_index]=id;
+            const uint8_t *surface=bsp->bytes+bsp->nav_surfaces_offset+surface_index*0x0cu;
+            uint32_t first=u32(surface+4u),edge_index=first;
+            if(first>=bsp->nav_edges_count)continue;
+            for(unsigned int step=0;step<8;++step){
+                if(edge_index>=bsp->nav_edges_count)break;
+                const uint8_t *edge=bsp->bytes+bsp->nav_edges_offset+edge_index*0x18u;
+                uint32_t left=u32(edge+16u),right=u32(edge+20u),neighbor,next;
+                if(left==surface_index){neighbor=right;next=u32(edge+8u);}
+                else if(right==surface_index){neighbor=left;next=u32(edge+12u);}
+                else break;
+                if(neighbor<count && !included[neighbor] &&
+                   (bsp->bytes[bsp->nav_flags_offset+neighbor]&0x40u)){
+                    included[neighbor]=1;queue[tail++]=neighbor;
+                }
+                edge_index=next;
+                if(edge_index==first)break;
+            }
+        }
+        if(tail>best_size){best_size=tail;best_id=id;}
+        ++id;
+    }
+    for(uint32_t surface=0;surface<count;++surface)
+        included[surface]=included[surface] && labels[surface]==best_id;
+    free(labels);free(queue);return best_size;
+}
+
 int halo_pc_bsp_read_material(const struct halo_pc_bsp *bsp,
                               const struct halo_pc_bsp_material *material,
                               float *positions, size_t position_floats,

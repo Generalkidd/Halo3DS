@@ -83,12 +83,24 @@ multiplayer maps; the previous 2,048-triangle limit left visible gaps. Death
 Island scales its oversized decorative water only for the preview and uses dry
 terrain to set the initial zoom. The lower screen gives the map most of its
 space, with mode, bots, difficulty, and texture preference on the top screen.
+Gephyrophobia now frames the central bridge. Infinity's blue NAV preview
+shows its connected playable component and omits the disconnected upper rim;
+the 15-bot CTF emulator replay followed routes toward both flags and recorded
+combat hits without a fatal error. Bot combat acquisition now requires an
+unblocked game collision ray. A recently hit bot can turn toward its recorded
+attacker while objective routes keep priority and hidden targets cannot be
+fired on.
 Emulator replays checked map selection, gear/back navigation, option changes,
 Death Island, and the optional NAV overlay without a fatal error. A New 3DS XL
 Death Island match with seven bots crashed in an earlier launcher while a
 layered shader requested a texture at the 8 MiB cache limit. The current code
-reuses its base texture for that layer when allocation fails; that visual
-fallback still needs a physical replay of the same match and tank firing.
+reuses its base texture for that layer when allocation fails. The user reported
+no crash on Death Island with the newer launcher; the exact tank-firing path
+has not yet been confirmed. A later isolated arsenal replay verified that
+SELECT leaves the original top scoreboard visible. Holding the touch SCORE
+button instead drew the expanded top roster with K/D and match medal counts,
+and left the lower controls unobstructed. The flamethrower sprite UVs were
+rotated to put the atlas's rounded ignition edge at the bottom of each sprite.
 
 The 16-player limit also had a focused emulator stress pass. A diagnostic
 build replayed the PC Local menu on Death Island, selected CTF, raised the bot

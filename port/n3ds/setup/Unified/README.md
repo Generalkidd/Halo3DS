@@ -65,7 +65,9 @@ edges. Textured Lit reads base textures from the installed PC maps. Tap
 **BACKS ON/OFF** to include or cull rear facing map surfaces, and **NAV ON/OFF**
 to show or hide the blue walkable-surface overlay. NAV starts off so the map
 textures remain visible. Death Island's water is shrunk in this menu preview;
-only its playable terrain sets the camera scale. The gear page previews the
+only its playable terrain sets the camera scale. Gephyrophobia opens on its
+central bridge. Infinity's NAV view excludes disconnected upper rim surfaces
+and follows the main walkable area. The gear page previews the
 selected weapon or vehicle as a textured blue hologram from that PC map, with
 three-point studio lighting that follows the turntable camera.
 Drag a preview to turn it, use **L/R** to zoom, or leave it idle for a slow
@@ -87,8 +89,11 @@ textures. Save the setting, then reload the PC map. It starts OFF; the high
 mode can take longer to load and may affect frame rate. Xbox maps and original
 3DS use their standard texture profile.
 
-During a solo PC match, hold **SELECT** or the lower-right **SCORE** touch
-panel around the motion tracker to show the scoreboard on the top screen.
+During a solo PC match, hold **SELECT** for the game's original top-screen
+scoreboard. Hold the lower-right **SCORE** touch panel around the motion
+tracker for the expanded top-screen roster with score, kills, deaths, K/D,
+and earned multi-kill or streak medals. Both keep the lower touch controls
+visible. K/D treats zero deaths as one for display.
 The three other touch panels give press feedback but have no assigned action.
 Magazine weapons show loaded rounds and reserve ammo above their meters on
 the lower screen; energy weapons keep their original charge and heat meters.
@@ -109,8 +114,10 @@ are preserved. A failed install can be rerun after correcting its input. Keep
 the card connected until the script reports completion.
 
 The unified menu and optional campaign spawns were exercised in Azahar 2126.2.
-A six-bot Timberland match reached its postgame state on a New 3DS XL. The
-latest postgame, bot, and visual changes still need a device retest. Busy
+A six-bot Timberland match reached its postgame state on a New 3DS XL. A user
+reported that the newer Death Island build no longer crashed in a local match;
+the exact Scorpion firing sequence and latest previews still need a device
+retest. Busy
 combat scenes have not established a smooth 30 FPS. Keep a known good SD
 backup while testing and retain `halo-source-engine.log` when reporting a
 problem.

@@ -177,9 +177,13 @@ port/n3ds/src/engine_gpu_text.c|n3ds_gpu_text_draw_many
 port/n3ds/src/engine_gpu_textures.c|mip_texel
 port/n3ds/src/engine_gpu_textures.c|n3ds_gpu_texture_set_lod_bias
 port/n3ds/src/engine_hud.c|halo_touch_zone
+port/n3ds/src/engine_hud.c|n3ds_hud_medal_count
+port/n3ds/src/engine_hud.c|n3ds_hud_medal_record
+port/n3ds/src/engine_hud.c|n3ds_hud_medals_reset
 port/n3ds/src/engine_hud.c|n3ds_hud_record_weapon_meter
 port/n3ds/src/engine_hud.c|n3ds_postgame_return_to_lobby
 port/n3ds/src/engine_input.c|n3ds_input_touch_panel_pressed
+port/n3ds/src/engine_input.c|n3ds_input_touch_scoreboard_active
 port/n3ds/src/engine_mission_render.c|flame_owner_fire_age
 port/n3ds/src/engine_mission_render.c|flame_stream_draw
 port/n3ds/src/engine_mission_render.c|flame_stream_flush

@@ -36,6 +36,33 @@ void n3ds_log(const char *);
 boolean rasterizer_set_texture_bitmap_data(short,const struct bitmap_data *);
 struct bitmap_data *bitmap_group_try_and_get_bitmap(long,short);
 static int hud_active,sensor_active,split_hud,hud_visible;
+struct native_medal_tally { long player_index; unsigned short count; };
+static struct native_medal_tally medal_tallies[16];
+/* Kevin Boggs: n3ds_hud_medals_reset - New3DS integration. */
+void n3ds_hud_medals_reset(void)
+{
+    for(int i=0;i<16;++i){medal_tallies[i].player_index=NONE;medal_tallies[i].count=0;}
+}
+/* Kevin Boggs: n3ds_hud_medal_record - New3DS integration. */
+void n3ds_hud_medal_record(long player_index,short multiple_kills,short kills_in_a_row)
+{
+    /* Count the original announcer's multi-kill and five-kill-streak events.
+     * The extra roster reads this per-match sidecar without changing ABI. */
+    if(multiple_kills<2 && (kills_in_a_row<5 || kills_in_a_row%5))return;
+    for(int i=0;i<16;++i)if(medal_tallies[i].player_index==player_index ||
+       medal_tallies[i].player_index==NONE){
+        medal_tallies[i].player_index=player_index;
+        if(medal_tallies[i].count<999)++medal_tallies[i].count;
+        return;
+    }
+}
+/* Kevin Boggs: n3ds_hud_medal_count - New3DS integration. */
+int n3ds_hud_medal_count(long player_index)
+{
+    for(int i=0;i<16;++i)if(medal_tallies[i].player_index==player_index)
+        return medal_tallies[i].count;
+    return 0;
+}
 static long control_unit=NONE;
 static unsigned int control_generation;
 static unsigned int panel_pixels[512*64],panel_revision;
@@ -310,7 +337,8 @@ void n3ds_hud_draw_screen(void)
     }
     if(hud_visible && !cinematic_in_progress() && n3ds_main_is_solo_multiplayer()) {
         const struct gamepad_state *pad=input_get_gamepad_state(0);
-        if(pad && pad->buttons[_gamepad_binary_button_back]) {
+        if(pad && pad->buttons[_gamepad_binary_button_back] &&
+           n3ds_input_touch_scoreboard_active()) {
             struct native_score_row rows[16];int count=0;
             struct data_iterator iterator;struct player_datum *entry;
             data_iterator_new(&iterator,player_data);
@@ -325,6 +353,7 @@ void n3ds_hud_draw_screen(void)
                     game_engine->get_player_score(iterator.datum_index,_get_score_individual):0;
                 for(int k=0;k<4;++k)row.kills+=entry->statistics.kills[k];
                 row.deaths=entry->statistics.deaths;
+                row.medals=n3ds_hud_medal_count(iterator.datum_index);
                 row.local=iterator.datum_index==player;
                 int at=count++;
                 while(at>0 && row.score>rows[at-1].score){rows[at]=rows[at-1];--at;}

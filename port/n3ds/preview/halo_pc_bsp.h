@@ -61,5 +61,9 @@ int halo_pc_bsp_count(const struct halo_cache *cache, uint32_t *count,
    Output contains up to eight xyz points; zero means invalid or nonwalkable. */
 int halo_pc_bsp_nav_polygon(const struct halo_pc_bsp *bsp,uint32_t surface_index,
                             float points[8][3]);
+/* Marks the largest edge-connected group of authored walkable surfaces.
+   The output has nav_surface_count bytes. Zero means no usable component. */
+uint32_t halo_pc_bsp_nav_main_component(const struct halo_pc_bsp *bsp,
+                                        uint8_t *included,size_t capacity);
 
 #endif
