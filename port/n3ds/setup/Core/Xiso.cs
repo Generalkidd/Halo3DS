@@ -27,7 +27,7 @@ public sealed class Xiso
             ReadDirectory(f, Data.U32(header, 20), Data.U32(header, 24), "", 0);
             return;
         }
-        throw new SetupException("This is not a supported Xbox XISO. Choose an extracted maps folder instead. ZIP/7z files and split images must be extracted or joined first.");
+        throw new SetupException("This is not a supported Xbox XISO. Use an original Xbox dump or its extracted maps folder; PC/MCC discs are unsupported. ZIP/7z files and split images must be extracted or joined first.");
     }
     void ReadDirectory(FileStream f, uint sector, uint size, string prefix, int depth)
     {

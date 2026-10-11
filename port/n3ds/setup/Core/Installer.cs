@@ -35,18 +35,21 @@ public static class Installer
     public static string SafePath(string root, string relative)
     {
         root = Path.TrimEndingDirectorySeparator(NormalizeDestination(root));
+        // Unix paths may differ only in case. Case-insensitive containment there
+        // could accept ../CARD/file as a child of /media/card.
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
         string result = Path.GetFullPath(Path.Combine(root, relative));
         // TrimEndingDirectorySeparator deliberately preserves drive roots (H:\).
         string prefix = Path.EndsInDirectorySeparator(root) ? root : root + Path.DirectorySeparatorChar;
         Data.Require(!Path.IsPathRooted(relative) &&
-            !result.Equals(root, StringComparison.OrdinalIgnoreCase) &&
-            result.StartsWith(prefix, StringComparison.OrdinalIgnoreCase),
+            !result.Equals(root, comparison) &&
+            result.StartsWith(prefix, comparison),
             "Invalid destination path.");
         // The user explicitly chose this root. Its own mapping and ancestors
         // may legitimately be links (Wine drives, redirected home folders).
         // Only descendants can redirect an installer-owned path elsewhere.
         for (string? current = result; current != null &&
-            !current.Equals(root, StringComparison.OrdinalIgnoreCase); current = Path.GetDirectoryName(current))
+            !current.Equals(root, comparison); current = Path.GetDirectoryName(current))
         {
             try
             {
@@ -156,6 +159,7 @@ public static class Installer
 
     public static SetupResult Run(SetupOptions options, IProgress<SetupProgress>? progress = null, CancellationToken ct = default)
     {
+        ct.ThrowIfCancellationRequested();
         void Report(string message, double value) => progress?.Report(new(message, value));
         string destination = NormalizeDestination(options.Destination);
         Data.Require(Directory.Exists(destination), "Choose an existing SD card root or output folder.");
@@ -168,7 +172,7 @@ public static class Installer
             Data.Require(drive.DriveFormat.Equals("FAT32", StringComparison.OrdinalIgnoreCase),
                 "The 3DS needs a FAT32 SD card. This tool does not format or erase cards. You can also prepare a normal output folder and copy it to a FAT32 card later.");
         }
-        Data.Require(File.Exists(options.Executable), "Keep Halo3DS.3dsx beside the setup app, or select it under Additional options → Game build.");
+        Data.Require(File.Exists(options.Executable), "Select an existing Halo3DS.3dsx game build. Download it from the Halo3DS release or use your own build.");
         var exeInfo = new FileInfo(options.Executable);
         Data.Require(exeInfo.Length is > 32 and < 32 * Data.Chunk, "The selected game build has an invalid size.");
         byte[] executable = File.ReadAllBytes(options.Executable);
@@ -223,7 +227,10 @@ public static class Installer
         var texturePending = names.Where(n => pending.Contains(n) || !Textures.Current(
             SafePath(game, n + ".map"), SafePath(game, n + ".ntx"), ct)).ToList();
         required += texturePending.Count * 64 * (long)Data.Chunk;
-        Data.Require(new DriveInfo(Path.GetPathRoot(destination)!).AvailableFreeSpace >= required,
+        // On Unix, stat the destination filesystem, including a mounted SD card,
+        // rather than the filesystem containing '/'. Windows uses the drive root.
+        string spacePath = OperatingSystem.IsWindows() ? Path.GetPathRoot(destination)! : destination;
+        Data.Require(new DriveInfo(spacePath).AvailableFreeSpace >= required,
             $"Please free at least {required / 1073741824.0:F1} GB on the destination and try again. Existing maps stay in place until replacements are verified.");
         for (int index = 0; index < pending.Count; index++)
         {

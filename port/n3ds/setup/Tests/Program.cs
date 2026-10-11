@@ -121,6 +121,8 @@ try
     Installer.RetireLegacyLauncher(root);
     passed++; Console.WriteLine("PASS legacy launcher backup, unrelated files preserved, repeat migration");
     ExpectFailure("sibling prefix escape", () => Installer.SafePath(root, "../" + Path.GetFileName(root) + "-other/file"));
+    if (!OperatingSystem.IsWindows())
+        ExpectFailure("case-different sibling escape", () => Installer.SafePath(root, "../" + Path.GetFileName(root).ToUpperInvariant() + "/file"));
     ExpectFailure("absolute destination child", () => Installer.SafePath(root, Path.Combine(root, "absolute")));
     ExpectFailure("empty destination", () => Installer.NormalizeDestination(" "));
     foreach (string folder in new[] { root, root + Path.DirectorySeparatorChar })

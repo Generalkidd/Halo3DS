@@ -12,6 +12,11 @@ maps are not supported.
 
 ## Setup
 
+For command-line setup on **Linux, macOS or Windows**, see the
+[cross-platform CLI guide](docs/SETUP-CLI.md). The CLI can be built from source
+with .NET SDK 10; its packaged builds include the runtime. The Windows graphical
+setup instructions follow.
+
 1. Download the setup tool for **Windows 10/11** or **Windows 7** from the
    [releases page](https://github.com/Generalkidd/Halo3DS/releases). Both include the game executable. The Windows 7 version is
    also compatible with Wine on Linux and Mac OS. 

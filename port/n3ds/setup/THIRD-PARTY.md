@@ -15,14 +15,16 @@ and complete corresponding setup source are included with the release.
 
 ## Microsoft runtimes
 
-The Windows release includes unmodified Microsoft .NET, Windows App SDK and
+Self-contained CLI packages include unmodified Microsoft .NET runtime components.
+The Windows graphical release additionally includes Windows App SDK and
 Visual C++ runtime components under their respective Microsoft distribution
 terms. Their notices are included in `Licenses`. They are separate from the
 game conversion data and remain under their original terms.
 
 ## Halo port executable
 
-`Halo3DS.3dsx` is the project build embedded by release packaging.
+`Halo3DS.3dsx` is the project build embedded by Windows graphical release
+packaging. CLI packages require users to supply it separately.
 Its source is maintained separately from the setup utility under `source/`
 and `port/n3ds/`. This utility does not supply the original Xbox game or any rights
 to its assets. The setup utility's source/license notices do not relicense the
