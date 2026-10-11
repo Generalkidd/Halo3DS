@@ -40,6 +40,8 @@ jobs:
         run: dotnet run --project port/n3ds/setup/Cli.Tests -c Release
       - name: Check repository contents
         run: python tools/check_repository_contents.py --working-tree
+      - name: Test archive permissions and launchers
+        run: python port/n3ds/setup/tools/test-package-cli.py
       - name: Publish native self-contained package
         run: python port/n3ds/setup/tools/package-cli.py --runtime ${{ matrix.runtime }}
       - name: Test packaged executable
