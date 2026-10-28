@@ -11,6 +11,7 @@ Commands below run from the repository root unless stated otherwise.
 - [Rendering rules](#rendering-rules)
 - [Stability and timing rules](#stability-and-timing-rules)
 - [Verification](#verification)
+- [Experimental frame-indexed input replay](#experimental-frame-indexed-input-replay)
 - [Setup and repository maintenance](#setup-and-repository-maintenance)
 
 ## Building the game
@@ -356,6 +357,82 @@ the exact executable hash, whether the issue repeats, and a photo if no dump exi
 When changing native code, keep a known-good build, record the new executable
 hash, retain its ELF/map privately, and test both model families. Build outputs,
 SDK headers, maps, saves and tester logs belong outside Git.
+
+### Experimental frame-indexed input replay
+
+The opt-in replay feeds one recorded input sample to each frontend iteration.
+It is for private developer comparisons, not player builds or a guarantee of
+deterministic game state. Keep fixtures, logs, saves and game data out of Git.
+Use isolated copies of the initial state: gameplay can modify saves and
+checkpoints, and checkpoints can depend on the source/build identity.
+
+Convert a finished engine log to a **new** file, without overwriting an
+existing fixture:
+
+```powershell
+python port\n3ds\tools\input_replay.py create C:\private\capture.log C:\private\frame-input.replay --frames 4783
+```
+
+Omit `--frames` to use the whole capture, or select a shorter prefix. The
+converter requires the frontend lifecycle, successful result, final log-queue
+footer without reported loss or I/O errors, and the periodic input records.
+It expands unchanged samples between records; the footer cannot detect loss
+that the logger itself did not report. Each sample retains held HID bits,
+both analog sticks and touch coordinates. An active touch outside 320x240
+and a recorded Start+Select stop chord are rejected.
+
+For a bounded replay, use the same source, frame limit and memory settings
+for every build being compared:
+
+```powershell
+python port\n3ds\build.py --input-replay --test-frames 4783 --original-memory --output build\n3ds-input-replay
+```
+
+Use the dependency options from the build instructions above if the paths are
+not already set in the environment. The limit must match the fixture exactly
+and be between 1 and 12,000 frames. A bounded build also enables existing
+startup and visibility checks, so use the same flags in both runs. Put the
+fixture at `halo-source\state\title\frame-input.replay` on the isolated SD
+image, restore and hash-verify the same initial state before each run, and
+record the fixture and binary SHA-256 hashes. Do not copy the replay onto
+an unverified physical drive.
+
+Version 1 uses a 24-byte little-endian header and 16 bytes per frame, with an
+FNV-1a checksum covering the first 20 header bytes and the payload. This is
+not a cryptographic identity; retain the fixture SHA-256 separately. The
+largest fixture is 192,024 bytes; decoding temporarily uses about 375 KiB
+for the payload and samples. The loader validates the whole file before the
+loop and performs no per-frame fixture I/O. It resets the local random stream
+before game initialization to the header's seed, default `0x48414c4f`;
+`create --seed` accepts another unsigned 32-bit value. This does not control
+every clock, thread, game-state value or random source.
+
+Physical Start+Select is checked before replay input and still stops a run.
+The log identifies the fixture checksum, seed and frame count and ends with
+`INPUT REPLAY END` status `complete`, `user-stop`, or `interrupted`. Check
+each finished capture against the same fixture:
+
+```powershell
+python port\n3ds\tools\input_replay.py check C:\private\frame-input.replay C:\private\replay.log
+```
+
+The checker returns 0 only for a complete replay whose reconstructed input
+matches every fixture frame; malformed, incomplete or loss-reported captures
+return 2. This does **not** compare camera, simulation, rendering or game
+state. Compare those traces separately and treat any divergence as a blocker
+to an exact differential benchmark. It also does not establish displayed
+frames or physical 30 FPS.
+
+Run the portable replay regressions with:
+
+```powershell
+python -m unittest discover -s port\n3ds\tests\host -p test_input_replay.py -v
+New-Item -ItemType Directory -Force build\host-tests | Out-Null
+gcc -std=c11 -O2 -Wall -Wextra -Werror -I port\n3ds\include `
+  port\n3ds\tests\host\engine_input_replay_tests.c `
+  -o build\host-tests\input-replay-tests.exe
+if ($LASTEXITCODE -eq 0) { & .\build\host-tests\input-replay-tests.exe }
+```
 
 ## Setup and repository maintenance
 

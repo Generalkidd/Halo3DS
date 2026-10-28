@@ -107,12 +107,22 @@ void n3ds_frontend_trace(const char *stage)
 #ifdef HALO_N3DS_CHECKPOINT_TEST
 #include "engine_checkpoint_test.inl"
 #endif
+#ifdef HALO_N3DS_INPUT_REPLAY
+#include "engine_input_replay.inl"
+#if HALO_N3DS_MISSION_TICKS < 1 || HALO_N3DS_MISSION_TICKS > N3DS_INPUT_REPLAY_MAX_FRAMES
+#error Input replay requires a supported positive frame limit
+#endif
+#endif
 #include "engine_frame_pacing.inl"
 int halo_engine_boot(void)
 {
     char message[256];long frame;struct native_input_sample prior={0};
     extern long long n3ds_engine_tick_frequency(void);
     long long loop_profile[5]={0};unsigned int loop_frames=0;
+    #ifdef HALO_N3DS_INPUT_REPLAY
+    struct n3ds_input_replay replay={0};
+    int replay_user_stop=0;
+    #endif
     n3ds_log("FRONTEND: original menu lifecycle startup");
     n3ds_log("STARTUP: errors initialize");errors_initialize();
     n3ds_log("STARTUP: math initialize");real_math_initialize();
@@ -205,6 +215,10 @@ int halo_engine_boot(void)
     n3ds_log("STARTUP: sound cache open");sound_cache_open();
     n3ds_log("STARTUP: game initialize");
     if(n3ds_frontend_fixture_seed) n3ds_frontend_fixture_seed();
+    #ifdef HALO_N3DS_INPUT_REPLAY
+    CHECK(n3ds_input_replay_load(&replay,HALO_N3DS_MISSION_TICKS));
+    *get_global_local_random_seed_address()=replay.seed;
+    #endif
     game_initialize();
     n3ds_log("FRONTEND: game initialized; loading original main menu");
     n3ds_log("STARTUP: main menu load");
@@ -273,9 +287,15 @@ int halo_engine_boot(void)
         long long services_end=n3ds_engine_ticks();
         n3ds_frontend_trace("input");
         n3ds_input_platform_poll(&sample);
+        #ifdef HALO_N3DS_INPUT_REPLAY
+        replay_user_stop=(sample.held&(NATIVE_KEY_START|NATIVE_KEY_SELECT))==(NATIVE_KEY_START|NATIVE_KEY_SELECT);
+        #endif
         n3ds_input_gameplay_controls(game_in_progress() && !main_menu_is_active() &&
             !ui_widgets_active() && player_input_enabled() && !cinematic_in_progress());
         if((sample.held&(NATIVE_KEY_START|NATIVE_KEY_SELECT))==(NATIVE_KEY_START|NATIVE_KEY_SELECT)) break;
+        #ifdef HALO_N3DS_INPUT_REPLAY
+        sample=replay.samples[frame];
+        #endif
         n3ds_engine_input_sample(&sample);input_update();input_abstraction_update();
         if(frame%30==0 || memcmp(&sample,&prior,sizeof(sample))) {
             snprintf(message,sizeof(message),"FRONTEND INPUT: frame=%ld held=%08x circle=%d,%d look=%d,%d enabled=%d cinematic=%d skip=%d touch=%u,%u",frame+1,sample.held,sample.circle_x,sample.circle_y,sample.cstick_x,sample.cstick_y,player_input_enabled(),cinematic_in_progress(),cinematic_can_be_skipped(),sample.touch_x,sample.touch_y);n3ds_log(message);prior=sample;
@@ -458,6 +478,12 @@ int halo_engine_boot(void)
         snprintf(message,sizeof(message),"PASS: positive plasma renderer: %u map-owned draws",n3ds_plasma_test_draws());n3ds_log(message);
     }
     #endif
+    #ifdef HALO_N3DS_INPUT_REPLAY
+    snprintf(message,sizeof(message),"INPUT REPLAY END: frames=%ld expected=%u status=%s",
+        frame,replay.frames,frame==replay.frames?"complete":replay_user_stop?"user-stop":"interrupted");
+    n3ds_log(message);
+    n3ds_input_replay_dispose(&replay);
+    #endif
     snprintf(message,sizeof(message),"FRONTEND END: frames=%ld menu=%d time=%ld",frame,main_menu_is_active(),game_time_get());n3ds_log(message);
     game_time_end();game_dispose_from_old_map();game_unload();game_dispose();
     sound_dispose();
@@ -474,5 +500,8 @@ int halo_engine_boot(void)
     #endif
     console_dispose();input_dispose();rasterizer_dispose();real_math_dispose();
     n3ds_log("PASS: frontend lifecycle probe; menu selection and gameplay routes require separate verification");
+    #ifdef HALO_N3DS_INPUT_REPLAY
+    if(frame!=HALO_N3DS_MISSION_TICKS && !replay_user_stop) return 1;
+    #endif
     return 0;
 }

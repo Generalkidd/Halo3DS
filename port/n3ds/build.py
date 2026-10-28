@@ -12,6 +12,7 @@ from pathlib import Path
 import shutil
 import subprocess
 from tools.compat import prepare
+from tools.input_replay import MAX_FRAMES as INPUT_REPLAY_MAX_FRAMES
 from tools.shaders import generate, verify_linked
 
 PORT = Path(__file__).resolve().parent
@@ -49,9 +50,12 @@ def main():
     parser.add_argument('--test-frames', type=int, default=0, help='0 produces the playable release; positive values stop after that many frames')
     parser.add_argument('--diagnostics', action='store_true', help='Enable renderer checks; requires --test-frames')
     parser.add_argument('--original-memory', action='store_true', help='Constrain heap sizes for original-model emulator tests')
+    parser.add_argument('--input-replay', action='store_true', help='Replay private frame-indexed input; requires a bounded --test-frames')
     args = parser.parse_args()
     if args.test_frames<0 or (args.diagnostics and not args.test_frames):
         parser.error('diagnostics require a positive frame limit')
+    if args.input_replay and not 1<=args.test_frames<=INPUT_REPLAY_MAX_FRAMES:
+        parser.error(f'input replay requires --test-frames between 1 and {INPUT_REPLAY_MAX_FRAMES}')
     out = args.output.resolve(); out.mkdir(parents=True, exist_ok=True)
     for name in defaults:
         setattr(args, name, getattr(args, name).resolve())
@@ -80,6 +84,7 @@ def main():
     defines = [f'-DHALO_N3DS_CHECKPOINT_BUILD=0x{build_id:08x}u','-DHALO_N3DS_CHECKPOINT_FEATURE=1',f'-DHALO_N3DS_MISSION_TICKS={args.test_frames}']
     if args.diagnostics: defines.append('-DHALO_N3DS_RENDERER_TESTS=1')
     if args.original_memory: defines.append('-DHALO_N3DS_LOW_MEMORY_TEST=1')
+    if args.input_replay: defines.append('-DHALO_N3DS_INPUT_REPLAY=1')
     native = [str(gcc),*COMMON,'-D__3DS__','-I',str(args.libctru/'include'),'-I',str(args.citro3d/'include')]
     game = [args.clang,'--target=arm-none-eabi','-isystem',str(args.devkitarm/'arm-none-eabi/include'),
             *COMMON,'-std=gnu99','-D__STRICT_ANSI__','-DHALO_N3DS','-fsigned-char','-fshort-wchar',
@@ -132,7 +137,8 @@ def main():
     verify_linked(shaders,elf,[],out/'shader-verification.json')
     report={'binary':str(binary),'sha256':sha(binary),'test_frames':args.test_frames,'diagnostics':args.diagnostics,
             'checkpoint_identity':build_id,'commands':commands,'source_sha256':{e['source']:sha(ROOT/e['source']) for e in entries},
-            'linked_inputs':{str(p):sha(p) for p in [*objects,archive]}}
+            'linked_inputs':{str(p):sha(p) for p in [*objects,archive]},
+            'input_replay':args.input_replay,'original_memory':args.original_memory}
     (out/'boot-build.json').write_text(json.dumps(report,indent=2))
     print(f'Built {binary}\nSHA256 {report["sha256"]}')
 
