@@ -48,6 +48,7 @@ def main():
     parser.add_argument('--jobs', type=int, default=2, choices=range(1, 9))
     parser.add_argument('--test-frames', type=int, default=0, help='0 produces the playable release; positive values stop after that many frames')
     parser.add_argument('--diagnostics', action='store_true', help='Enable renderer checks; requires --test-frames')
+    parser.add_argument('--frame-profile', action='store_true', help='Enable experimental frame timing summaries without renderer checks')
     parser.add_argument('--original-memory', action='store_true', help='Constrain heap sizes for original-model emulator tests')
     args = parser.parse_args()
     if args.test_frames<0 or (args.diagnostics and not args.test_frames):
@@ -79,6 +80,7 @@ def main():
     build_id = int(digest.hexdigest()[:8],16)
     defines = [f'-DHALO_N3DS_CHECKPOINT_BUILD=0x{build_id:08x}u','-DHALO_N3DS_CHECKPOINT_FEATURE=1',f'-DHALO_N3DS_MISSION_TICKS={args.test_frames}']
     if args.diagnostics: defines.append('-DHALO_N3DS_RENDERER_TESTS=1')
+    if args.frame_profile: defines.append('-DHALO_N3DS_FRAME_PROFILE=1')
     if args.original_memory: defines.append('-DHALO_N3DS_LOW_MEMORY_TEST=1')
     native = [str(gcc),*COMMON,'-D__3DS__','-I',str(args.libctru/'include'),'-I',str(args.citro3d/'include')]
     game = [args.clang,'--target=arm-none-eabi','-isystem',str(args.devkitarm/'arm-none-eabi/include'),
@@ -130,7 +132,7 @@ def main():
     if any(line.split()[-1] not in allowed for line in undefined.splitlines()): raise RuntimeError('Unresolved runtime symbols:\n'+undefined)
     subprocess.run([args.packer,str(elf),str(binary)],check=True)
     verify_linked(shaders,elf,[],out/'shader-verification.json')
-    report={'binary':str(binary),'sha256':sha(binary),'test_frames':args.test_frames,'diagnostics':args.diagnostics,
+    report={'binary':str(binary),'sha256':sha(binary),'test_frames':args.test_frames,'diagnostics':args.diagnostics,'frame_profile':args.frame_profile,
             'checkpoint_identity':build_id,'commands':commands,'source_sha256':{e['source']:sha(ROOT/e['source']) for e in entries},
             'linked_inputs':{str(p):sha(p) for p in [*objects,archive]}}
     (out/'boot-build.json').write_text(json.dumps(report,indent=2))

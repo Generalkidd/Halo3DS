@@ -49,7 +49,7 @@ directory. Retain the matching ELF/map for crash diagnosis.
 
 Incremental builds track source/header content. Choose a new `--output` directory
 for clean verification. Player releases must use the default options, without
-diagnostics, a frame limit or a test heap.
+diagnostics, frame profiling, a frame limit or a test heap.
 
 ### Diagnostic builds
 
@@ -60,6 +60,90 @@ writes `RESULT: PASS` to the game log. This build exits automatically.
 `--original-memory` constrains the heap for Original-model emulator tests.
 Also select an Original model in the emulator; neither setting replaces a
 test on actual Original 3DS/2DS hardware.
+
+### Experimental frame profiling
+
+For an interactive timing build, add `--frame-profile` and
+`--output build\n3ds-frame-profile` to the dependency command above. It does
+not require `--diagnostics` or `--test-frames`; it can also be combined with a
+bounded fixture. This instrumentation is experimental and must not be used in
+player releases. Compare it with an otherwise identical unprofiled build to
+quantify its overhead before interpreting timings.
+
+The existing game log contains `FRAME PROFILE START`, window records, and
+`FRAME PROFILE END`. Windows contain at most 300 active loop iterations and
+are split on map, menu/gameplay/UI/cinematic state, model, stereo state or
+world-quality tier. State is classified at the end of the iteration. An
+iteration that submitted a loading screen is reported as a mixed
+`FRAME PROFILE EXCLUDED` record, rather than being presented as a clean
+gameplay measurement; transitions that do not submit loading screens remain
+included. Start+Select ends an interactive capture before rendering its final
+partial iteration, which is reported separately. Record the build hash,
+emulator or device settings, workload, warm-up and input replay alongside
+each capture, and keep logs and game data out of Git.
+
+Work time runs from loop start to the pacing call; wall time runs from that
+start to the next loop start, including the profiler's intervening work.
+The final wall sample ends at loop shutdown. The summaries report nearest-rank
+p50/p95/p99 and maximum, counts and longest streaks above the nominal
+1/30-second budget, mean CPU stages, intentional pacing and inter-loop gap,
+plus distributions for GPU begin wait and the **previous** completed GPU
+queue duration.
+The queue includes transfers and overlaps CPU work: do not add it to the CPU
+time. A previous-queue sample is deliberately unavailable at a context
+boundary. The window also counts engine GPU begins and submissions; neither is
+proof of display. Missing map metadata, GPU begin/submission anomalies,
+missing or invalid queue timings, invalid timestamps and buffer overflow mark
+that window incomplete. Streaks continue across 300-frame windows but not
+across contexts or invalid/dropped CPU timing samples.
+
+The Citro3D counter reports VBlank callbacks, not new displayed frames; these
+records always state `presentation=unverified`. Work/wall budget exceedances,
+including small pacing overshoots, are **not** missed-presentation counts.
+Loading-overlap exclusions do not establish the cadence of the adjacent
+active transition. A capture is incomplete if its start/end markers are
+missing, its end reports incomplete windows, errors or aborted frames, or the
+final `LOG QUEUE` record is missing or reports dropped records or I/O errors.
+An incomplete window cannot supply a complete CPU-and-GPU measurement.
+Physical Original hardware and an independently validated display-frame
+identity or capture method are required to assess a 30 FPS lock; Citra timing
+is directional only.
+
+Check a finished capture offline with the Python 3.10+ standard-library tool:
+
+```powershell
+python port\n3ds\tools\frame_profile_report.py H:\halo-source-engine.log
+python port\n3ds\tools\frame_profile_report.py H:\halo-source-engine.log --window 2
+```
+
+The checker validates version-1 records and their sample accounting, the
+start/end markers, and the final log-queue footer. Other log messages may be
+interleaved. Exit code **0** means CPU/GPU samples are complete for the
+specified scope only; **1** means the log was readable but the scope has
+incomplete samples, excluded loading-overlap iterations, aborted iterations,
+or no sampled windows; **2** means malformed/unsupported records, reported log
+loss or I/O errors, or a read failure. With `--window`, the whole log is still
+validated for loss, but the completeness result covers only that numbered
+window. The first window after a context change normally lacks its first
+previous-queue sample and is therefore incomplete. Loading exclusions and
+aborted iterations elsewhere are not assessed by a selected-window result.
+Neither a complete window nor exit code 0 proves that any frames were
+presented, that the workload covers a complete scenario, or that 30 FPS was
+achieved. The footer only reports errors known before the footer was written.
+
+The portable aggregation and session logic can be checked without the 3DS
+SDK using a host C99 compiler, for example in PowerShell:
+
+```powershell
+New-Item -ItemType Directory -Force build\host-tests | Out-Null
+gcc -std=c99 -O2 -Wall -Wextra -Werror `
+  port\n3ds\tests\host\engine_frame_profile_tests.c `
+  -o build\host-tests\frame-profile-tests.exe
+if ($LASTEXITCODE -eq 0) { & .\build\host-tests\frame-profile-tests.exe }
+python -m unittest discover -s port\n3ds\tests\host -p test_frame_profile_report.py -v
+```
+
+The fixture integration test is skipped if neither GCC nor Clang is available.
 
 ## Building the setup tools
 

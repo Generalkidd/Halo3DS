@@ -526,6 +526,20 @@ static unsigned int timing_frames;
 static double timing_gpu,timing_cpu,timing_wait;
 static float timing_gpu_max,timing_cpu_previous;
 static int timing_pending;
+#ifdef HALO_N3DS_FRAME_PROFILE
+static float profile_previous_queue;
+static int profile_previous_queue_ready;
+static unsigned long long profile_submissions;
+unsigned int n3ds_gpu_profile_vblank(void) {return C3D_FrameCounter(0);}
+int n3ds_gpu_profile_stereo(void) {return stereo_level>0;}
+unsigned long long n3ds_gpu_profile_submission_serial(void) {return profile_submissions;}
+int n3ds_gpu_profile_previous_queue(float *milliseconds)
+{
+    if(!profile_previous_queue_ready) return 0;
+    *milliseconds=profile_previous_queue;
+    return 1;
+}
+#endif
 int n3ds_gpu_diagnostic_mode(void) {return diagnostic_mode;}
 static void renderer_diagnostic_initialize(void)
 {
@@ -868,6 +882,9 @@ int n3ds_gpu_renderer_initialize(void)
 int n3ds_gpu_frame_begin(void)
 {
     frame_wait_ticks=0;
+    #ifdef HALO_N3DS_FRAME_PROFILE
+    profile_previous_queue_ready=0;
+    #endif
     if (!target || frame_active) return 0;
     if(!aptMainLoop()) {
         /* Close can arrive at this inner frame boundary as well as the loop. */
@@ -897,6 +914,9 @@ int n3ds_gpu_frame_begin(void)
      * Read CPU time saved at previous FrameEnd because FrameBegin resets it. */
     if(timing_pending) {
         float gpu=C3D_GetDrawingTime();world_scale_feedback(gpu,timing_cpu_previous);timing_gpu+=gpu;timing_cpu+=timing_cpu_previous;
+        #ifdef HALO_N3DS_FRAME_PROFILE
+        profile_previous_queue=gpu;profile_previous_queue_ready=1;
+        #endif
         if(gpu>timing_gpu_max) timing_gpu_max=gpu;
         timing_wait+=(svcGetSystemTick()-before)*(1000.0/268123480.0);
         if(++timing_frames==120) {
@@ -2371,6 +2391,9 @@ void n3ds_gpu_present(void)
     /* Other vertices and textures are flushed when written. Preserve GPU-written
      * display buffers by requesting only command-memory flushing below. */
     C3D_FrameEnd(GX_CMDLIST_FLUSH);timing_cpu_previous=C3D_GetProcessingTime();timing_pending=1; frame_active = 0;bound_vertex_valid=0;
+    #ifdef HALO_N3DS_FRAME_PROFILE
+    ++profile_submissions;
+    #endif
     float usage=C3D_GetCmdBufUsage();
     if(usage>peak_command_usage) peak_command_usage=usage;
 }

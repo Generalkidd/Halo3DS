@@ -114,6 +114,12 @@ void n3ds_gpu_overlay_other_end(void);
 /* Current command segment; Citro3D's usage statistic updates only at submit. */
 float n3ds_gpu_command_usage(void);
 long long n3ds_gpu_frame_wait_ticks(void);
+#ifdef HALO_N3DS_FRAME_PROFILE
+unsigned int n3ds_gpu_profile_vblank(void);
+int n3ds_gpu_profile_stereo(void);
+int n3ds_gpu_profile_previous_queue(float *milliseconds);
+unsigned long long n3ds_gpu_profile_submission_serial(void);
+#endif
 void n3ds_gpu_frame_sync(int enabled);
 /* Original shader framebuffer blend-function order, rasterizer_xbox.c. */
 enum { NATIVE_BLEND_ALPHA, NATIVE_BLEND_MULTIPLY, NATIVE_BLEND_DOUBLE_MULTIPLY,

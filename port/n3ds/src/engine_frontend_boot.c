@@ -65,6 +65,7 @@ int n3ds_engine_float_tests(void);
 int n3ds_animation_alignment_tests(void);
 int n3ds_hs_stack_tests(void);
 long long n3ds_engine_ticks(void);
+long long n3ds_engine_tick_frequency(void);
 void n3ds_engine_pace_frame(long long);
 int n3ds_engine_mission_render(long,long);
 #ifndef HALO_N3DS_MISSION_TICKS
@@ -108,6 +109,9 @@ void n3ds_frontend_trace(const char *stage)
 #include "engine_checkpoint_test.inl"
 #endif
 #include "engine_frame_pacing.inl"
+#ifdef HALO_N3DS_FRAME_PROFILE
+#include "engine_frame_profile.inl"
+#endif
 int halo_engine_boot(void)
 {
     char message[256];long frame;struct native_input_sample prior={0};
@@ -235,9 +239,19 @@ int halo_engine_boot(void)
     CHECK(n3ds_hs_stack_tests());
     n3ds_log("STARTUP: PASS script stack alignment, nested frames, floating-point values and re-entry");
     n3ds_log("STARTUP: main menu ready; entering frame loop");
+    #ifdef HALO_N3DS_FRAME_PROFILE
+    n3ds_frame_profile_start();
+    #endif
     for(frame=0;(!HALO_N3DS_MISSION_TICKS || frame<HALO_N3DS_MISSION_TICKS) && n3ds_engine_app_running();++frame) {
         struct native_input_sample sample;
         long long start=n3ds_engine_ticks();long local,player,unit=NONE;
+        #ifdef HALO_N3DS_FRAME_PROFILE
+        unsigned int profile_vblank=n3ds_gpu_profile_vblank();
+        n3ds_frame_profile_begin(start,profile_vblank);
+        unsigned int profile_loading=n3ds_gpu_loading_submissions();
+        unsigned long long profile_gpu_begins=n3ds_gpu_model_frame_serial();
+        unsigned long long profile_gpu_submissions=n3ds_gpu_profile_submission_serial();
+        #endif
         n3ds_frontend_trace("checkpoint-poll");n3ds_checkpoint_poll();
         current_frame=frame+1;n3ds_frontend_trace("services");
 #ifdef HALO_N3DS_CHECKPOINT_TEST
@@ -275,6 +289,10 @@ int halo_engine_boot(void)
         n3ds_input_platform_poll(&sample);
         n3ds_input_gameplay_controls(game_in_progress() && !main_menu_is_active() &&
             !ui_widgets_active() && player_input_enabled() && !cinematic_in_progress());
+        #ifdef HALO_N3DS_FRAME_PROFILE
+        if((sample.held&(NATIVE_KEY_START|NATIVE_KEY_SELECT))==(NATIVE_KEY_START|NATIVE_KEY_SELECT))
+            n3ds_frame_profile_user_stop();
+        #endif
         if((sample.held&(NATIVE_KEY_START|NATIVE_KEY_SELECT))==(NATIVE_KEY_START|NATIVE_KEY_SELECT)) break;
         n3ds_engine_input_sample(&sample);input_update();input_abstraction_update();
         if(frame%30==0 || memcmp(&sample,&prior,sizeof(sample))) {
@@ -449,8 +467,41 @@ int halo_engine_boot(void)
         const long long pacing_stages[5]={services_end,simulation_start,simulation_end,audio_end,n3ds_engine_ticks()};
         frame_pacing_observe(start,pacing_stages,!main_menu_is_active() && !cinematic_in_progress());
         n3ds_gpu_frame_work((n3ds_engine_ticks()-start)*(1000.f/n3ds_engine_tick_frequency()));
+        #ifdef HALO_N3DS_FRAME_PROFILE
+        struct n3ds_frame_profile_sample profile_sample={0};
+        struct n3ds_frame_profile_context profile_context={0};
+        profile_sample.start=start;
+        memcpy(profile_sample.stages,pacing_stages,sizeof(pacing_stages));
+        profile_sample.vblank_start=profile_vblank;
+        profile_sample.gpu_begins=n3ds_gpu_model_frame_serial()-profile_gpu_begins;
+        profile_sample.gpu_submissions=n3ds_gpu_profile_submission_serial()-profile_gpu_submissions;
+        if(profile_sample.gpu_begins==1) {
+            profile_sample.gpu_wait=n3ds_gpu_frame_wait_ticks();
+            profile_sample.previous_queue_available=n3ds_gpu_profile_previous_queue(&profile_sample.previous_queue_ms);
+        }
+        profile_context.frame=(long long)frame+1;
+        profile_context.scene=main_menu_is_active()?N3DS_PROFILE_MENU:
+            cinematic_in_progress()?N3DS_PROFILE_CINEMATIC:
+            ui_widgets_active()?N3DS_PROFILE_GAMEPLAY_UI:N3DS_PROFILE_GAMEPLAY;
+        profile_context.original=original_model;
+        profile_context.stereo=n3ds_gpu_profile_stereo();
+        profile_context.quality=n3ds_gpu_world_pressure();
+        profile_context.loading_submissions=n3ds_gpu_loading_submissions()-profile_loading;
+        const struct n3ds_cache_view *profile_view=n3ds_engine_cache_view(0);
+        if(profile_view) memcpy(profile_context.map,profile_view->header.name,sizeof(profile_view->header.name));
+        else memcpy(profile_context.map,"none",5);
+        profile_sample.pace_start=n3ds_engine_ticks();
+        #endif
         n3ds_engine_pace_frame(start);
+        #ifdef HALO_N3DS_FRAME_PROFILE
+        profile_sample.pace_end=n3ds_engine_ticks();
+        n3ds_frame_profile_end(&profile_sample,&profile_context);
+        #endif
     }
+    #ifdef HALO_N3DS_FRAME_PROFILE
+    long long profile_end=n3ds_engine_ticks();
+    n3ds_frame_profile_finish(profile_end,n3ds_gpu_profile_vblank());
+    #endif
     #ifdef HALO_N3DS_PLASMA_SHIELD_TEST
     {
         extern unsigned int n3ds_plasma_test_draws(void);
