@@ -263,6 +263,10 @@
       ]
     },
     {
+      "source": "port/n3ds/tests/src/engine_wide_tests.c",
+      "compiler": "clang"
+    },
+    {
       "source": "port/n3ds/src/engine_dynamic_geometry.c",
       "compiler": "clang"
     },

@@ -115,6 +115,12 @@ int halo_engine_boot(void)
     long long loop_profile[5]={0};unsigned int loop_frames=0;
     n3ds_log("FRONTEND: original menu lifecycle startup");
     n3ds_log("STARTUP: errors initialize");errors_initialize();
+    #ifdef HALO_N3DS_RENDERER_TESTS
+    {
+        extern int halo_engine_wide_abi_tests(void);
+        CHECK(!halo_engine_wide_abi_tests());
+    }
+    #endif
     n3ds_log("STARTUP: math initialize");real_math_initialize();
     n3ds_log("STARTUP: native floating-point checks");CHECK(n3ds_engine_float_tests());
     CHECK(n3ds_animation_alignment_tests());

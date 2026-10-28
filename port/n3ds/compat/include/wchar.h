@@ -1,14 +1,14 @@
 /*
 WCHAR.H
 
-MSVC-compatible wide character interface for the Linux build.
+MSVC-compatible wide character interface for the game build.
 
 The game is compiled with -fshort-wchar so that wchar_t is 16 bits as on the
-Xbox (tag data and saved games store UTF-16 text). glibc's wide functions
-assume a 32-bit wchar_t, so this header replaces <wchar.h> entirely and routes
-every name to the 16-bit implementations in port/n3ds/compat/src/engine_wide.c. The
-MSVC (pre-C99) signatures are kept: wcstok() takes two arguments and
-swprintf()/vswprintf() take no buffer size.
+Xbox (tag data and saved games store UTF-16 text). The native libc's wide
+functions assume a 32-bit wchar_t, so this header replaces <wchar.h> entirely
+and routes every name to the 16-bit implementations in
+port/n3ds/compat/src/engine_wide.c. The MSVC (pre-C99) signatures are kept:
+wcstok() takes two arguments and swprintf()/vswprintf() take no buffer size.
 */
 
 #ifndef __HALO_LINUX_WCHAR_H

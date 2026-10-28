@@ -51,11 +51,20 @@ Incremental builds track source/header content. Choose a new `--output` director
 for clean verification. Player releases must use the default options, without
 diagnostics, a frame limit or a test heap.
 
+The game uses 16-bit wide characters, whereas the native libc uses 32-bit wide
+characters. Game units are compiled with `-fshort-wchar` and
+`-fno-builtin-wcslen`; before linking, the build audits their undefined
+symbols and rejects native wide-character calls mapped by the compatibility
+header. See `wide-abi.log` in the output directory if the audit fails.
+The host-side audit tests can be run with
+`python -m unittest discover -s port\n3ds\tests\host -p test_wide_abi.py -v`.
+
 ### Diagnostic builds
 
 Add `--test-frames 240 --diagnostics --output build/n3ds-diagnostics` to the
 dependency command above for a bounded menu run with renderer checks. Success
-writes `RESULT: PASS` to the game log. This build exits automatically.
+writes `RESULT: PASS` to the game log. The diagnostic also checks 16-bit
+wide-string lengths and save-root conversion. This build exits automatically.
 
 `--original-memory` constrains the heap for Original-model emulator tests.
 Also select an Original model in the emulator; neither setting replaces a

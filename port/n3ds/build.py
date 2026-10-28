@@ -35,6 +35,25 @@ def run(command, out, label):
         raise RuntimeError(f'{label} failed; see {log}\n{result.stderr[-2500:]}')
 
 
+def incompatible_wide_references(output):
+    mappings=set()
+    for line in (PORT/'compat/include/wchar.h').read_text(encoding='utf-8').splitlines():
+        fields=line.split()
+        if len(fields)>=3 and fields[0]=='#define' and fields[2].startswith('msvc_'):
+            name=fields[1].split('(',1)[0]
+            if name.isidentifier(): mappings.add(name)
+    if 'wcslen' not in mappings: raise RuntimeError('Could not read the game wide-character mappings')
+    return [line for line in output.splitlines() if line.split() and line.split()[-1] in mappings]
+
+
+def verify_wide_abi(nm,objects,out):
+    # Clang may synthesize libc calls even when the source uses only 16-bit helpers.
+    run([str(nm),'-A','-u',*map(str,objects)],out,'wide-abi')
+    references=incompatible_wide_references((out/'wide-abi.log').read_text(encoding='utf-8'))
+    if references:
+        raise RuntimeError('16-bit game objects reference incompatible native wide-character functions:\n'+'\n'.join(references))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, default=ROOT/'build/n3ds')
@@ -82,7 +101,7 @@ def main():
     if args.original_memory: defines.append('-DHALO_N3DS_LOW_MEMORY_TEST=1')
     native = [str(gcc),*COMMON,'-D__3DS__','-I',str(args.libctru/'include'),'-I',str(args.citro3d/'include')]
     game = [args.clang,'--target=arm-none-eabi','-isystem',str(args.devkitarm/'arm-none-eabi/include'),
-            *COMMON,'-std=gnu99','-D__STRICT_ANSI__','-DHALO_N3DS','-fsigned-char','-fshort-wchar',
+            *COMMON,'-std=gnu99','-D__STRICT_ANSI__','-DHALO_N3DS','-fsigned-char','-fshort-wchar','-fno-builtin-wcslen',
             '-fms-extensions','-fcommon','-ffp-contract=off','-Werror=implicit-function-declaration',
             '-Werror=incompatible-pointer-types','-Wno-multichar','-Wno-pragma-pack',
             '-Wno-ignored-attributes','-Wno-duplicate-decl-specifier']
@@ -91,7 +110,7 @@ def main():
               f'-ffile-prefix-map={ROOT}=Halo3DS',f'-ffile-prefix-map={out}=build']
     cache_path=out/'compile-cache.json'
     cache=json.loads(cache_path.read_text()) if cache_path.exists() else {}
-    commands=[]; objects=[]; archived=[]
+    commands=[]; objects=[]; archived=[]; game_objects=[]
 
     def compile_entry(entry):
         source=ROOT/entry['source']; obj=out/'objects'/(entry['source']+'.o')
@@ -114,8 +133,10 @@ def main():
         for number,(entry,obj,command,record) in enumerate(workers.map(compile_entry,entries),1):
             cache[entry['source']]=record; commands.append(command)
             (archived if entry.get('archive') else objects).append(obj)
+            if entry['compiler']=='clang': game_objects.append(obj)
             if number%40==0 or number==len(entries): print(f'Compiled {number}/{len(entries)}',flush=True)
     cache_path.write_text(json.dumps(cache,indent=2))
+    verify_wide_abi(nm,game_objects,out)
     archive=out/'original-runtime.a'
     if archive.exists(): archive.unlink()  # Only this build's generated archive; no stale members.
     run([str(ar),'rcs',str(archive),*map(str,archived)],out,'archive')
