@@ -202,6 +202,10 @@ int halo_engine_boot(void)
         }
     }
     n3ds_log("STARTUP: sound initialize");sound_initialize();
+#ifdef HALO_N3DS_RENDERER_TESTS
+    extern int halo_engine_sound_failed_init_tests(void);
+    CHECK(!halo_engine_sound_failed_init_tests());
+#endif
     n3ds_log("STARTUP: sound cache open");sound_cache_open();
     n3ds_log("STARTUP: game initialize");
     if(n3ds_frontend_fixture_seed) n3ds_frontend_fixture_seed();

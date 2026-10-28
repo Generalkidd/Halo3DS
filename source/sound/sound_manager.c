@@ -3152,7 +3152,8 @@ void sound_dispose_from_old_map(
 	}
 
 	sound_stop_all();
-	if (looping_sound_data)
+	/* Platform initialization can fail after allocating an invalid pool. */
+	if (sound_manager_globals.initialized && looping_sound_data)
 	{
 		data_delete_all(looping_sound_data);
 	}

@@ -1,13 +1,36 @@
 #include "cseries.h"
 #include "cache/cache_files.h"
 #include "cache/sound_cache.h"
+#include "memory/data.h"
 #include "sound/sound_definitions.h"
+#include "sound/sound_manager.h"
 #include "tag_files/tag_groups.h"
 #include "tag_files/tag_files.h"
 #include "engine_cache.h"
 #include "cache_reader.h"
 #include "engine_sounds.h"
 void n3ds_log(const char *message);
+#ifdef HALO_N3DS_RENDERER_TESTS
+extern struct data_array *sound_data, *looping_sound_data;
+boolean sound_is_active(void);
+int halo_engine_sound_failed_init_tests(void)
+{
+    if(sound_is_active() || !sound_data || !looping_sound_data) {
+        n3ds_log("SOUND STARTUP TEST: skipped; needs failed device initialization after pool allocation");
+        return 0;
+    }
+#define CHECK_STARTUP(x) do { if (!(x)) { n3ds_log("SOUND STARTUP FAIL: " #x); return 1; } } while (0)
+    CHECK_STARTUP(!sound_data->valid && !looping_sound_data->valid);
+    sound_pause(TRUE);
+    sound_dispose_from_old_map();
+    sound_dispose_from_old_map();
+    sound_pause(FALSE);
+    CHECK_STARTUP(!sound_data->valid && !looping_sound_data->valid);
+    n3ds_log("PASS: failed sound device initialization permits repeated map disposal");
+    return 0;
+#undef CHECK_STARTUP
+}
+#endif
 static unsigned int sample_hash(const struct sound_permutation *sound)
 {
     const byte *data=(const void *)sound->unknown1;
