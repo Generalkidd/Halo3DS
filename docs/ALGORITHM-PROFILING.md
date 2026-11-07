@@ -1,5 +1,12 @@
 # Algorithm comparison groundwork
 
+The [performance roadmap](PERFORMANCE-ROADMAP.md) now governs prioritisation:
+establish the physical-device reference and dependency trace, then prioritise
+CPU/GPU overlap, retained preparation and geometry work elimination. The slice
+labels and reserved controls below describe existing groundwork, not a measured
+ranking or an instruction to implement small kernels first. The roadmap's event
+trace, replay and memory-accounting additions remain proposed, not implemented.
+
 Status: source snapshot, independent comparison controls and opt-in
 instrumentation are implemented. The initial slice was development only;
 the user subsequently authorized builds and emulator tests on 2026-11-07.
@@ -9,8 +16,8 @@ and owned-process cleanup. The full graphics diagnostic suite did not pass:
 Vulkan lacks custom texture-border colors, software rendering differs in cube
 sampling, and this installed build cannot provide OpenGL. Campaign correctness,
 hardware timing, instrumentation overhead and midpoint behavior remain unvalidated.
-No algorithm candidate is implemented or enabled. The proposed 5–15% CPU-time
-reduction is an experimental target, not a measurement or forecast.
+No algorithm candidate is implemented or enabled. No percentage improvement or
+sustained 60 FPS forecast is supported by the current evidence.
 
 Private receipts and commands are retained in
 `build/emulator-validation-20261107`, including `radar-diagnosis.json` and

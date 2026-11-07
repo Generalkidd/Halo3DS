@@ -84,6 +84,10 @@ test on actual Original 3DS/2DS hardware.
 
 ### New 2DS XL performance comparisons
 
+Follow the [performance roadmap](PERFORMANCE-ROADMAP.md) for implementation
+priority, the working-reference gate and required presentation evidence. Current
+profiling is groundwork; it does not establish a hardware bottleneck ranking.
+
 Use the same source revision, SD contents, save, and camera route for each
 comparison. Change one option at a time and keep each build in its own
 `--output` directory. Use interactive builds without `--test-frames`, which

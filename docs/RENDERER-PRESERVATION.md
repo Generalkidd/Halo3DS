@@ -21,7 +21,10 @@ freezes this WIP again, adds reference-only comparison selectors and opt-in
 bounded counters, and keeps the working-reference gate open. Algorithm
 candidates and their performance target remain unvalidated and unimplemented.
 
-The implementation order is **format-aware textures → exact offline geometry
+The [performance roadmap](PERFORMANCE-ROADMAP.md) governs overall priorities:
+reference measurement, CPU/GPU overlap, retained preparation and geometry work
+elimination before smaller kernel changes. Within the native asset workstream,
+the implementation order remains **format-aware textures → exact offline geometry
 → packed vertices**. Validate each stage independently before combining it
 with another stage. ETC compression, mipmaps and attribute quantization are
 later, separate experiments. RGBA8 is already GPU-native; the initial texture
