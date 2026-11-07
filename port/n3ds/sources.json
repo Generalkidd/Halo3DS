@@ -43,6 +43,11 @@
   ],
   "objects": [
     {
+      "source": "port/n3ds/src/engine_algorithm_profile.c",
+      "compiler": "clang",
+      "sdk": false
+    },
+    {
       "source": "source/saved games/game_state.c",
       "compiler": "clang",
       "defines": [
@@ -639,6 +644,12 @@
       "compiler": "gcc"
     },
     {
+      "source": "port/n3ds/src/engine_citro3d_frame.c",
+      "compiler": "gcc",
+      "citro3d_frame_adapter": true,
+      "defines": ["CITRO3D_BUILD"]
+    },
+    {
       "source": "port/n3ds/src/engine_gpu_programs.c",
       "compiler": "gcc"
     },
@@ -1130,6 +1141,10 @@
     },
     {
       "source": "port/n3ds/src/engine_prefetch_platform.c",
+      "compiler": "gcc"
+    },
+    {
+      "source": "port/n3ds/src/engine_texture_prefetch_platform.c",
       "compiler": "gcc"
     },
     {
