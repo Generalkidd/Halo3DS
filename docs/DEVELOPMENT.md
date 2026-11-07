@@ -25,11 +25,16 @@ RGBA8 dependencies and the remaining per-map eligibility work.
 
 [Algorithm comparison groundwork](ALGORITHM-PROFILING.md) adds independent
 reference-only selectors, opt-in owner-side counters and `--profile-frames`
-for a bounded non-readback run. Current-source builds and a bounded native-400
+for a bounded non-readback run. Pre-trace builds and a bounded native-400
 emulator frontend smoke now pass; the graphics diagnostic suite has recorded
 emulator sampling limitations. Campaign, midpoint and hardware performance
 validation remain outstanding. Candidate algorithms are unavailable and no
 performance gain is established. See the preservation contract for evidence scope.
+
+The independent [dependency trace](DEPENDENCY-TRACE.md) adds bounded event
+collection in source. It is disabled by default, unbuilt and untested. It does
+not enable midpoint rendering, texture preparation or an algorithm candidate;
+the earlier executable and emulator receipts do not validate this slice.
 
 ## Building the game
 
@@ -41,9 +46,11 @@ The build has been checked on Windows. Use native Windows toolchain paths;
 a DEVKITARM value from WSL is not a Windows toolchain. Validated dependency
 revisions are libctru `36fe1ada5b7ebe53ba4decda36d764a55f8fefb6` and citro3d
 `9f21cf7b380ce6f9e01a0420f19f0763e5443ca7`.
-For `--present-60`, point `--citro3d` at that source checkout with its matching
-built archive. The build adds a frame-discard operation to the pinned render
-queue so an abandoned optional frame can be dropped before submission.
+For either `--present-60` or `--dependency-trace`, point `--citro3d` at that
+source checkout with its matching built archive. The build verifies the pinned
+render-queue source hashes and compiles the frame adapter. `--present-60` uses
+its frame-discard operation for abandoned optional frames. Trace-only builds
+use its observations without enabling midpoint admission or changing waits.
 
 Replace the dependency paths with yours, quoting any that contain spaces:
 
@@ -103,6 +110,8 @@ triggers a screen readback during the run. The options are recorded in
 | `--texture-cache-mib 8` | Raises the New-model gameplay byte cap from 4 to 8 MiB. Slot limits are identical. The cache reclaims the extra working set under linear-memory pressure. |
 | `--texture-prefetch` | Prewarms nearby terrain at map entry and enables bounded texture preparation on New models. `--present-60` also enables worker preparation and can prioritize the bitmap that canceled a midpoint. |
 | `--performance-profile` | Records work percentiles, visibility time, texture stages by request type, eviction pressure, and worker time in `halo-source-engine.log`. |
+| `--dependency-trace` | Independently collects bounded dependency events and exports at shutdown. Default off; no profiling flag required. Rejects readback, diagnostics and Original-memory fixtures. Source-only, unbuilt and untested. |
+| `--dependency-trace-loops N` | Requires trace; accepts 1–18,000 completed frontend loops after gameplay first starts, default 120. Stops capture without ending gameplay or enlarging event storage. |
 | `--texture-storage candidate-archive` | Opts into the RGBA8 `.ntx4` archive, with `.ntx` and map-decoder fallback. Default is `legacy`. Setup must separately opt into candidate generation; this changes neither mip/resolution policy nor sampling. Source-reviewed only; parity and performance remain unvalidated. |
 
 The frame work profile reports complete windows of 300 gameplay iterations
@@ -116,6 +125,16 @@ Prewarm can lengthen the initial load. Compare both a fresh pass and a repeat
 through 343 Guilty Spark, then check a busy combat route such as the beach
 landing in The Silent Cartographer. An emulator can check behavior and
 relative work, while a physical capture is needed for console frame pacing.
+
+For the trace configuration, append `--dependency-trace --fixed-world-width 400`
+and a separate `--output` to the dependency command above. This is a future run
+configuration, not a command executed for the trace slice. It leaves
+`--present-60`, prefetch and aggregate profiling disabled unless separately
+selected. The loop capture is not a test/process timeout: later automated runs
+need an external bound and graceful shutdown to export retained events.
+Do not interpret submissions or sampled swap acknowledgements as exact LCD
+scanout times. Retain overflow, drops and missing completion records alongside
+any later analysis; see [the trace contract](DEPENDENCY-TRACE.md).
 
 ### 60 Hz presentation target
 

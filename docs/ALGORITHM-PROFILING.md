@@ -4,13 +4,14 @@ The [performance roadmap](PERFORMANCE-ROADMAP.md) now governs prioritisation:
 establish the physical-device reference and dependency trace, then prioritise
 CPU/GPU overlap, retained preparation and geometry work elimination. The slice
 labels and reserved controls below describe existing groundwork, not a measured
-ranking or an instruction to implement small kernels first. The roadmap's event
-trace, replay and memory-accounting additions remain proposed, not implemented.
+ranking or an instruction to implement small kernels first. The independent
+[dependency trace](DEPENDENCY-TRACE.md) is now implemented in source, unbuilt
+and untested. Replay and allocation-accounting additions remain proposed.
 
 Status: source snapshot, independent comparison controls and opt-in
 instrumentation are implemented. The initial slice was development only;
 the user subsequently authorized builds and emulator tests on 2026-11-07.
-Current-source diagnostic and native-400 builds now compile and link. A bounded
+The pre-trace diagnostic and native-400 builds compile and link. A bounded
 240-loop frontend smoke test passed in macOS Azahar, with a visual menu check
 and owned-process cleanup. The full graphics diagnostic suite did not pass:
 Vulkan lacks custom texture-border colors, software rendering differs in cube
@@ -96,6 +97,15 @@ Two profiling additions are available in source and disabled by default:
   Zero retains the existing unbounded interactive lifecycle. This does not
   replace an external timeout for later automated runs or hangs.
 
+The separate `--dependency-trace` option requires neither profiling flag.
+`--dependency-trace-loops N` controls its bounded capture, defaulting to 120
+completed frontend loops after gameplay first starts. It freezes collection
+without ending gameplay, then exports during shutdown. Readback and validation
+fixtures are rejected. This trace slice has only been source-reviewed; the
+earlier build and emulator receipts do not validate it. See the
+[trace contract](DEPENDENCY-TRACE.md) for fixed storage, missing observations
+and the distinction between queue completion, swap acknowledgement and scanout.
+
 A future configuration example (not executed):
 
 ```text
@@ -153,8 +163,10 @@ stops collection before teardown so cleanup cannot masquerade as gameplay.
 
 These are aggregate context ranges, not individual per-frame traces. Existing
 30/120/300-frame reports and these windows cannot be joined as if their samples
-are identical. They supply initial demand/work attribution; per-frame tail
-correlation and deterministic replay remain later work.
+are identical. They supply initial demand/work attribution. The separately
+selected dependency trace adds event identity in source, but no trace run or
+tail-correlation analysis has been performed. Deterministic replay remains
+later work.
 
 GPU completion metrics carry a copy of the actual prior submission context,
 including midpoint/regular identity. Actual submission IDs are assigned only

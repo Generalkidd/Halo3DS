@@ -1,9 +1,11 @@
 # New 2DS XL performance roadmap
 
-Status: proposed work, grounded in the published source reviewed on 2026-11-07.
-This document sets the development order; it does not implement or validate any
-of its candidates. The first milestone is a working physical-device reference
-and a bottleneck report. No percentage gain or sustained 60 FPS claim is made.
+Status: roadmap grounded in the published source reviewed on 2026-11-07.
+The [dependency-trace collection slice](DEPENDENCY-TRACE.md) is implemented in
+source, unbuilt and untested. The optimisation candidates, replay and allocation
+accounting remain proposed. The first milestone is a working physical-device
+reference and a bottleneck report. No percentage gain or sustained 60 FPS claim
+is made.
 
 Prioritise **CPU preparation overlapping GPU execution**, **preparation retained
 across presentations**, and **geometry work eliminated before submission**.
@@ -23,7 +25,7 @@ count a submission, frontend loop or repeated image as a distinct presentation.
 | Complete source tree | `82071eee12f7179c9d0511ac9454656a614f5e6b`, 1,043 files; matches local audited commit `c4005e814d0ae577c1c3e8fe6ed2732c45e8472c` |
 | Playable executable SHA-256 | `f71167bb45c2bca1ff69ce96abbe8ef0f5c7898a6851bce0037e4bab718e7e28` |
 | Installed configuration | Native 400×240, legacy textures, reference algorithm controls; midpoint and profiling disabled |
-| Build evidence | Current-source native and diagnostic builds compile/link with the recorded recovered toolchain |
+| Build evidence | The published pre-trace native and diagnostic builds compile/link with the recorded recovered toolchain |
 | Runtime evidence | Related native-400 emulator frontend smoke passed 240 loops; menu visually inspected; full graphics diagnostics have recorded emulator sampling failures |
 | Not established | Campaign correctness, reference replay repeatability, physical-device timings, midpoint coherence, instrumentation overhead and a hardware-accepted appearance |
 
@@ -33,6 +35,8 @@ receipt in `build/deployments/20261107T090946.345608Z`. Retained maps, sidecars,
 HUD data and saves are in ignored local storage. They must not be published.
 The installed binary and the smoke binary have different instrumentation and
 identities; the menu smoke is not an execution test of the installed binary.
+The dependency-trace source changes postdate these receipts. They have not
+been built, run or installed; the recorded executable remains the prior reference.
 
 Keep native 400×240 and full-resolution HUD; current texture resolution,
 filtering, LODs, foliage, particles, material/lightmap passes, transparency order,
@@ -58,11 +62,15 @@ inputs, not proof of a complete reproducible campaign baseline. Restore/build th
 reference separately, define routes and known visual captures, then establish
 reference-versus-reference repeatability before evaluating candidates.
 
-Extend the [existing aggregate profiler](ALGORITHM-PROFILING.md) with an optional,
-bounded event trace. The proposed trace is not an existing command-line option.
-Keep it separately selectable from counters, reference/candidate/verification
-modes, asset controls and capture. Include its selection and storage budget in
-the build manifest. Measure trace/counter overhead before interpreting timings.
+The optional `--dependency-trace` source implementation complements the
+[existing aggregate profiler](ALGORITHM-PROFILING.md). It is independent of
+counters, reference/candidate/verification modes, asset controls and midpoint
+presentation. `--dependency-trace-loops N` defaults to 120 completed frontend
+loops after gameplay first starts. The build manifest records its selection
+and fixed capacities. It rejects readback and validation fixtures; reaching
+the capture limit stops collection without ending the game. Export occurs
+during shutdown. See [the trace contract](DEPENDENCY-TRACE.md) for scope and
+limitations. Measure trace/counter overhead before interpreting timings.
 
 Each record needs a run ID, monotonic timestamp, event/sequence ID, loop ID,
 simulation tick plus restore epoch, render-attempt/view ID, actual submission ID
@@ -89,12 +97,11 @@ CPU preparation measurement. Existing submit-to-swap-posted timing does not
 measure the latch. The pinned Citro3D completion callback can supply a separate
 queue-completion observation after its ownership and timer order are audited.
 
-The current swap tracking is conditional on midpoint support and an eligible
-New 2DS XL outside diagnostic mode. `top_swap_visible` observes
+The trace source extends swap observation to regular-only comparisons without
+enabling midpoint admission. `top_swap_visible` observes
 `!gspIsPresentPending(GFX_TOP)` after a known posted sequence; this is a sampled
-acknowledgement, not an exact latch/scanout timestamp. Extend observation to
-regular-only comparisons without changing
-admission, adding waits or enabling midpoint presentation. A VBlank callback
+acknowledgement, not an exact latch/scanout timestamp. The observation path must
+not change admission or add waits. A VBlank callback
 alone does not identify a newly displayed image. Preserve atomic publication
 ordering; callback/worker producers must not call the owner-only collector.
 Use bounded per-producer storage, drained by the owner, or another reviewed
@@ -104,19 +111,24 @@ Allocate fixed-capacity trace storage before gameplay. Keep clocks at stage/job
 boundaries, never in inner vertex loops. Do not log synchronously per event, add
 GPU waits, read back, overwrite unread events silently or block producers when
 full. Report drops, overflow, missing pairs and pending final work; incomplete
-coverage cannot be interpreted as zero stalls. Design storage/export capacity
-for the chosen 90–120-second route; if only a shorter bounded trace fits, label
-its coverage and run whole-route timing separately. Preserve the existing exit
-timeout and cleanup rules.
+coverage cannot be interpreted as zero stalls. The implemented owner storage
+retains at most 8,192 64-byte events, plus bounded callback/VBlank rings and
+submission metadata. Its default 120-loop capture is a short dependency sample,
+not coverage of a 90–120-second route. Raising the loop limit does not enlarge
+storage. Label actual retained coverage and run whole-route timing separately.
+Preserve the existing exit timeout and cleanup rules; a trace capture limit
+alone is not a process timeout.
 
-Track ordinary-heap, linear and staging live/high-water bytes separately, plus
+Allocation accounting remains proposed. Track ordinary-heap, linear and staging
+live/high-water bytes separately, plus
 reservations, failures and GPU-retained allocations. Staging can be a subset of
 ordinary/linear storage: label it rather than adding it twice. Free-space samples
 are sampled minima, not exact allocation peaks. Account for successful
 allocation/free and realloc failure/zero-size semantics without changing budget
 decisions; report untracked allocators and fragmentation limits explicitly.
 
-Implement tick-indexed replay at the authoritative input-consumption boundary,
+Replay remains proposed. Implement tick-indexed replay at the authoritative
+input-consumption boundary,
 not by replaying frontend-loop controller polls. Audit `update_client_dequeue`
 in `source/game/player_queues_new.c`, preserving its latched-control bookkeeping.
 Record starting state/seeds and
@@ -362,10 +374,12 @@ Stop owned capture/test processes after each bounded sequential batch.
 
 1. Reconcile and freeze the working reference/asset/save receipts; record missing
    physical-device evidence without treating menu smoke as campaign acceptance.
-2. Implement independent, disabled-by-default trace identity/storage and stage
-   hooks; prove producer ownership and honest completion/presentation semantics.
-3. Add bounded export/analysis, memory accounting, tick replay and canonical-state
-   records; establish self-repeatability and instrumentation overhead.
+2. Validate the independent, disabled-by-default trace identity/storage and
+   stage hooks now implemented in source. Callback ownership and observation
+   semantics have been source-reviewed; builds and runtime validation remain open.
+3. Validate the bounded exporter/integrity reader, then extend analysis, memory
+   accounting, tick replay and canonical-state records. Establish repeatability
+   and instrumentation overhead before using their results.
 4. Collect the hardware bottleneck report and select the first exact slice.
 5. If justified, implement bounded prepared views before moving preparation
    ahead of acquisition; validate independently before retained-preparation work.
