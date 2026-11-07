@@ -1001,6 +1001,15 @@ static void crosshairs_draw(
 		struct crosshair_hud_state *crosshair = get_crosshair_state(player->local_player_index);
 		struct weapon_hud_interface_definition *root_definition = weapon_hud_interface_definition_get(hud_index);
 		short map_type_flags = global_scenario_get()->type != _scenario_type_main_menu;
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+		extern int n3ds_presentation_midpoint_active(void);
+		struct crosshair_hud_state preview;
+		if (n3ds_presentation_midpoint_active())
+		{
+			preview = *crosshair;
+			crosshair = &preview;
+		}
+#endif
 
 		SET_FLAG(map_type_flags, 1, local_player_count() == 1);
 		SET_FLAG(map_type_flags, 2, local_player_count() > 1);
@@ -1924,6 +1933,10 @@ void hud_render_weapon_interface(
 		player->unit_index,
 		unit_get(player->unit_index)->unit.current_weapon_index);
 	boolean seat_disallows_hud = FALSE;
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+	extern int n3ds_presentation_midpoint_active(void);
+	int midpoint = n3ds_presentation_midpoint_active();
+#endif
 
 	if (weapon_index == NONE)
 	{
@@ -1974,6 +1987,11 @@ void hud_render_weapon_interface(
 				weapon_index,
 				hud_index,
 				&weapon_state);
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+			/* Remaining weapon HUD and sound events belong to the keyframe. */
+			if (midpoint)
+				return;
+#endif
 			#ifdef HALO_N3DS
 			n3ds_hud_screen(1);
 			n3ds_gpu_hud_layout(1);
@@ -2006,6 +2024,10 @@ void hud_render_weapon_interface(
 			&weapon_state);
 	}
 
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+	if (midpoint)
+		return;
+#endif
 	#ifdef HALO_N3DS
 	n3ds_hud_screen(1);
 	#endif

@@ -1154,6 +1154,11 @@ void hud_draw_screen(
 {
 	long player_index = local_player_get_player_index(render.local_player_index);
 	director_perspective perspective = director_get_perspective(render.local_player_index);
+	boolean advance_hud = TRUE;
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+	extern int n3ds_presentation_midpoint_active(void);
+	advance_hud = !n3ds_presentation_midpoint_active();
+#endif
 
 	rasterizer_hud_begin();
 	if (player_index != NONE)
@@ -1166,7 +1171,7 @@ void hud_draw_screen(
 			hud_draw_players();
 		}
 
-		if (!game_time_get_paused() &&
+		if (advance_hud && !game_time_get_paused() &&
 			render.local_player_index == local_player_get_next(NONE))
 		{
 			motion_sensor_tick();
@@ -1179,26 +1184,29 @@ void hud_draw_screen(
 				player->unit_index != NONE)
 			{
 				hud_render_weapon_interface(player);
-				hud_show_action_response(player_index);
-				hud_play_unit_sounds(player, hud_scripted_globals->show_hud);
-				#ifdef HALO_N3DS
-				n3ds_hud_screen(1);
-				n3ds_gpu_hud_layout(2);
-				#endif
-				hud_render_unit_interface(player);
-				#ifdef HALO_N3DS
-				n3ds_hud_screen(0);
-				#endif
+				if (advance_hud)
+				{
+					hud_show_action_response(player_index);
+					hud_play_unit_sounds(player, hud_scripted_globals->show_hud);
+#ifdef HALO_N3DS
+					n3ds_hud_screen(1);
+					n3ds_gpu_hud_layout(2);
+#endif
+					hud_render_unit_interface(player);
+#ifdef HALO_N3DS
+					n3ds_hud_screen(0);
+#endif
+				}
 				hud_render_nav_points(render.local_player_index);
 				hud_render_damage_indicators(render.local_player_index);
 			}
-			else
+			else if (advance_hud)
 			{
 				hud_show_action_response(player_index);
 				hud_play_unit_sounds(player, hud_scripted_globals->show_hud);
 			}
 		}
-		else
+		else if (advance_hud)
 		{
 			hud_play_unit_sounds(player, FALSE);
 		}
