@@ -3,6 +3,7 @@
 #include "cseries.h"
 #include "engine_transparent.h"
 #include "engine_renderer.h"
+#include "engine_presentation.h"
 #include "engine_text.h"
 #include "engine_widgets.h"
 #include "engine_chicago.h"
@@ -25,14 +26,19 @@ boolean rasterizer_set_texture_bitmap_data(short,const struct bitmap_data *);
 void n3ds_log(const char *);
 long long n3ds_engine_ticks(void);
 long long n3ds_engine_tick_frequency(void);
+#if defined(HALO_N3DS_PERFORMANCE_PROFILE) || defined(HALO_N3DS_RENDERER_TESTS)
+#define HALO_N3DS_TRANSPARENT_PROFILE
 static long long material_ticks[12];
 static unsigned int material_calls[12], material_frames;
+#endif
 enum { EFFECT_BATCH_VERTICES=384 };
 /* Groups are consumed synchronously; the GPU copies this bounded staging area
  * into its frame-owned arena before it returns. Never reorder sorted groups. */
 static struct native_widget_vertex effect_vertices[EFFECT_BATCH_VERTICES];
 static struct native_packed_effect_vertex effect_packed[EFFECT_BATCH_VERTICES];
 static float pending_rows[12];
+static real_matrix4x3 pending_rows_source;
+static int pending_rows_valid;
 static unsigned short packed_indices[EFFECT_BATCH_VERTICES*3/2];
 static unsigned int pending_index_count,packed_vertices_saved;
 static unsigned short effect_indices[EFFECT_BATCH_VERTICES];
@@ -173,10 +179,16 @@ static unsigned int effect_merged;
 static void effect_flush(void)
 {
     if(!pending_count) return;
-    assert(rasterizer_set_texture_bitmap_data(0,pending_bitmap));
-    assert(n3ds_gpu_effect_packed_indexed_draw(effect_packed,pending_count,packed_indices,pending_index_count,pending_blend,
-        pending_shader,pending_sampler,pending_geometry,(pending_geometry&(1u<<5))?pending_rows:NULL));
-    ++effect_batches;pending_count=pending_index_count=0;primary_state_active=1;
+    if(!n3ds_presentation_midpoint_rejected()) {
+        boolean bound=rasterizer_set_texture_bitmap_data(0,pending_bitmap);
+        if(bound || !n3ds_presentation_midpoint_rejected()) {
+            assert(bound);
+            assert(n3ds_gpu_effect_packed_indexed_draw(effect_packed,pending_count,packed_indices,pending_index_count,pending_blend,
+                pending_shader,pending_sampler,pending_geometry,(pending_geometry&(1u<<5))?pending_rows:NULL));
+            ++effect_batches;primary_state_active=1;
+        }
+    }
+    pending_count=pending_index_count=0;
 }
 static void effect_close(void)
 {
@@ -219,19 +231,25 @@ static void effect_primary_append(const struct transparent_geometry_group *group
     const struct native_triangle_view *triangles=NULL;
     if(quad) {assert(!(group->triangle_count&1) && (unsigned long)group->triangle_count*2<=view->count);}
     else if(!sequential) {triangles=n3ds_dynamic_triangles_get(group->dynamic_triangle_buffer_index);assert(triangles && (unsigned long)group->triangle_count<=triangles->count);}
-    if(pending_count && !effect_primary_compatible(group)) effect_flush();
+    const real_matrix4x3 *transform=&global_window_parameters.frustum.view_to_world;
+    int rows_changed=(group->geometry_flags&(1u<<5)) &&
+        (!pending_rows_valid || memcmp(&pending_rows_source,transform,sizeof(*transform)));
+    if(pending_count && (!effect_primary_compatible(group) || rows_changed)) effect_flush();
     else if(pending_count) ++effect_merged;
     pending_bitmap=group->lightmap;pending_blend=s->framebuffer_blend_function;
     pending_shader=s->flags;pending_sampler=s->primary_map_flags;pending_geometry=group->geometry_flags;
-    if(group->geometry_flags&(1u<<5)) {
-        const real_matrix4x3 *m=&global_window_parameters.frustum.view_to_world;
+    if(rows_changed) {
+        /* Adjacent local-space groups usually share this exact view matrix.
+         * Copy its values: the window descriptor itself is reused per eye. */
+        const real_matrix4x3 *m=transform;
+        pending_rows_source=*m;pending_rows_valid=1;
         for(int r=0;r<3;++r) {
             pending_rows[r*4]=m->scale*m->forward.n[r];pending_rows[r*4+1]=m->scale*m->left.n[r];
             pending_rows[r*4+2]=m->scale*m->up.n[r];pending_rows[r*4+3]=m->position.n[r];
         }
     }
     ++effect_groups;
-    for(unsigned int triangle=0;triangle<(unsigned long)group->triangle_count;) {
+    for(unsigned int triangle=0;triangle<(unsigned long)group->triangle_count && !n3ds_presentation_midpoint_rejected();) {
         unsigned int count=quad?MIN((EFFECT_BATCH_VERTICES-pending_count)/4,
             ((unsigned long)group->triangle_count-triangle)/2)*6:
             MIN((EFFECT_BATCH_VERTICES-pending_count)/3,(unsigned long)group->triangle_count-triangle)*3;
@@ -250,10 +268,24 @@ static void effect_primary_append(const struct transparent_geometry_group *group
         } else {
             if(sequential) assert(effect_sequential_indices(group->dynamic_triangle_buffer_index,view->count,group->triangle_count,triangle,count,effect_indices));
             const unsigned short *idx=triangles?triangles->indices+triangle*3:effect_indices;
+            /* Strip corners and indexed particles often repeat vertices.
+             * Reuse only exact source indices within this chunk: another
+             * group/view can recycle the dynamic source or change uniforms.
+             * A collision simply copies again, so storage stays bounded. */
+            unsigned int tags[64]={0};
+            unsigned short remap[64];
+            n=0;
             for(unsigned int i=0;i<count;++i) {
-                assert(idx[i]<view->count);memcpy(effect_packed+pending_count+i,source+idx[i],sizeof(*effect_packed));
-                packed_indices[pending_index_count+i]=pending_count+i;
+                unsigned int index=idx[i],slot=index%NUMBEROF(tags);
+                assert(index<view->count);
+                if(tags[slot]!=index+1) {
+                    tags[slot]=index+1;remap[slot]=pending_count+n;
+                    memcpy(effect_packed+pending_count+n,source+index,sizeof(*effect_packed));
+                    ++n;
+                }
+                packed_indices[pending_index_count+i]=remap[slot];
             }
+            packed_vertices_saved+=count-n;
         }
         pending_count+=n;pending_index_count+=count;triangle+=count/3;effect_triangles+=count/3;
         if(pending_count==EFFECT_BATCH_VERTICES) effect_flush();
@@ -298,11 +330,16 @@ static void effect_draw(const struct transparent_geometry_group *group)
         effect_primary_append(group,view);return;
     }
     effect_close();
+    if(n3ds_presentation_midpoint_rejected()) return;
     assert(group->triangle_count>0 && group->triangle_count<=131072);
-    assert(rasterizer_set_texture_bitmap_data(0,group->lightmap));
+    boolean bound=rasterizer_set_texture_bitmap_data(0,group->lightmap);
+    if(!bound && n3ds_presentation_midpoint_rejected()) return;
+    assert(bound);
     real_vector4d secondary_transform[2];
     if(secondary) {
-        assert(rasterizer_set_texture_direct(1,shader->secondary_map.index,group->shader_permutation_index));
+        bound=rasterizer_set_texture_direct(1,shader->secondary_map.index,group->shader_permutation_index);
+        if(!bound && n3ds_presentation_midpoint_rejected()) return;
+        assert(bound);
         shader_texture_animation_evaluate(&shader->secondary_map_animation,group->animation,
             group->model_base_map_scale.i,group->model_base_map_scale.j,0,0,0,
             global_frame_parameters.game_time_sec,secondary_transform,secondary_transform+1);
@@ -314,18 +351,32 @@ static void effect_draw(const struct transparent_geometry_group *group)
     } else if(!sequential) assert(!(group->triangle_count&1) && (unsigned long)group->triangle_count*2<=view->count);
     const struct unlit_vertex *source=view->data;
     ++effect_groups;
-    for(unsigned int triangle=0;triangle<(unsigned long)group->triangle_count;) {
+    for(unsigned int triangle=0;triangle<(unsigned long)group->triangle_count && !n3ds_presentation_midpoint_rejected();) {
         unsigned int count=MIN(EFFECT_BATCH_VERTICES/3,(unsigned long)group->triangle_count-triangle)*3;
         if(sequential) {
             assert(effect_sequential_indices(group->dynamic_triangle_buffer_index,view->count,group->triangle_count,triangle,count,effect_indices));
             static boolean reported;
             if(!reported) {char message[128];snprintf(message,sizeof(message),"NATIVE SEQUENTIAL EFFECT: handle=%ld vertices=%u triangles=%ld",group->dynamic_triangle_buffer_index,view->count,group->triangle_count);n3ds_log(message);reported=TRUE;}
         }
-        assert(effect_convert(source,view->count,triangles?triangles->indices+triangle*3:sequential?effect_indices:NULL,triangle,count,
+        const unsigned short *indices=triangles?triangles->indices+triangle*3:sequential?effect_indices:NULL;
+        assert(effect_convert(source,view->count,indices,triangle,count,
             (group->geometry_flags&(1u<<5))?&global_window_parameters.frustum.view_to_world:NULL,output));
         if(secondary) {
             struct native_chicago_vertex *layer=n3ds_gpu_chicago_allocate(count);assert(layer);
+            /* Repeated source indices have identical converted position,
+             * color and UVs. Reuse the complete secondary-layer result too,
+             * including projective coordinates, without changing its math.
+             * The remap expires before any source, material or view changes. */
+            static const unsigned int quad[6]={0,1,2,0,2,3};
+            unsigned int layer_tags[64]={0};
+            unsigned short layer_remap[64];
             for(unsigned int i=0;i<count;++i) {
+                unsigned int index=indices?indices[i]:(triangle/2+i/6)*4+quad[i%6];
+                unsigned int slot=index%NUMBEROF(layer_tags);
+                if(layer_tags[slot]==index+1) {
+                    layer[i]=layer[layer_remap[slot]];
+                    continue;
+                }
                 float coordinates[4]={output[i].uv[0],output[i].uv[1],0,1};
                 if(shader->secondary_map_anchor==1) {
                     real_point3d world,viewpoint;memcpy(world.n,output[i].position,sizeof(world));
@@ -343,6 +394,7 @@ static void effect_draw(const struct transparent_geometry_group *group)
                     for(int c=0;c<4;++c) layer[i].uv[0][a]+=coordinates[c]*secondary_transform[a].n[c];
                 }
                 layer[i].uv[2][0]=coordinates[3];layer[i].uv[2][1]=0;
+                layer_tags[slot]=index+1;layer_remap[slot]=i;
             }
             assert(n3ds_gpu_effect_layer_draw(layer,count,shader->framebuffer_blend_function,shader->primary_map_flags,shader->secondary_map_flags,group->geometry_flags));
         } else assert(n3ds_gpu_effect_draw(output,count,shader->framebuffer_blend_function,shader->flags,shader->primary_map_flags,group->geometry_flags));
@@ -388,13 +440,16 @@ void rasterizer_transparent_geometry_groups_begin(void)
 {
     assert(initialized && !drawing && n3ds_engine_window_active());
     n3ds_gpu_world_state_restore();
+    n3ds_gpu_surface_batch_begin();
     primary_state_active=0;
+    pending_rows_valid=0;
     drawing=TRUE;
 }
 void rasterizer_transparent_geometry_groups_end(void)
 {
     assert(drawing);
     effect_flush();
+    n3ds_gpu_surface_batch_end();
     n3ds_gpu_world_state_restore();
     primary_state_active=0;
     drawing=FALSE;
@@ -404,10 +459,16 @@ void rasterizer_transparent_geometry_group_draw(struct transparent_geometry_grou
     (void)dirty; /* The native path reinstalls complete base-material state. */
     assert(drawing && group);
     if(!rasterizer_transparent_geometry_get_group_pending_status(group)) return;
+    if(n3ds_presentation_check_midpoint()) return;
+    if(!group->shader || (group->shader->base.type!=7 && group->shader->base.type!=8))
+        n3ds_gpu_surface_batch_break();
+#ifdef HALO_N3DS_TRANSPARENT_PROFILE
     unsigned int bucket=group->shader?(unsigned int)group->shader->base.type:0;
     if(bucket>=12) bucket=11;
     long long begin=n3ds_engine_ticks();
+#endif
     if(!group->shader || group->shader->base.type!=1) effect_close();
+    if(n3ds_presentation_midpoint_rejected()) return;
     if(!group->shader) {
         /* Original widget submissions intentionally have no material. Their
          * callback aliases the triangle-buffer field, with the object/widget
@@ -420,31 +481,40 @@ void rasterizer_transparent_geometry_group_draw(struct transparent_geometry_grou
         n3ds_water_bsp_draw(group);
     else n3ds_model_draw_group(group);
     rasterizer_transparent_geometry_set_group_pending_status(group,FALSE);
+#ifdef HALO_N3DS_TRANSPARENT_PROFILE
     material_ticks[bucket]+=n3ds_engine_ticks()-begin;
     ++material_calls[bucket];
+#endif
 }
 void n3ds_transparent_draw_queued(void)
 {
     struct transparent_geometry_group *group;
     long last_source=0;short last_effect=0;
+    if(n3ds_presentation_check_midpoint()) return;
     rasterizer_sort_external();
     rasterizer_transparent_geometry_groups_begin();
     group=rasterizer_transparent_geometry_first_group();
-    for(;group;group=rasterizer_transparent_geometry_next_group(group)) {
+    for(;group && !n3ds_presentation_check_midpoint();group=rasterizer_transparent_geometry_next_group(group)) {
         if(group->effect.type==2 && (last_source!=group->source_object_index || last_effect!=2)) {
             /* Original Cortana/self-occluding transparency: establish the
              * nearest posed surface of this contiguous object group first,
              * then shade its original transparent materials against that Z. */
+            n3ds_gpu_surface_batch_break();
             effect_flush();
-            for(struct transparent_geometry_group *part=group;part && part->effect.type==2 && part->source_object_index==group->source_object_index;part=rasterizer_transparent_geometry_next_group(part))
+            if(n3ds_presentation_check_midpoint()) break;
+            for(struct transparent_geometry_group *part=group;part && !n3ds_presentation_check_midpoint() &&
+                part->effect.type==2 && part->source_object_index==group->source_object_index;part=rasterizer_transparent_geometry_next_group(part))
                 if(!shader_ignores_effect(part->shader)) n3ds_model_depth_group(part);
             static int reported;if(!reported) {n3ds_log("NATIVE MODEL: original self-occluding transparent depth prepass");reported=1;}
         }
         rasterizer_transparent_geometry_group_draw(group,FALSE);
         last_source=group->source_object_index;last_effect=group->effect.type;
     }
+#ifdef HALO_N3DS_TRANSPARENT_PROFILE
     long long flush_stamp=n3ds_engine_ticks();
+#endif
     rasterizer_transparent_geometry_groups_end();
+#ifdef HALO_N3DS_TRANSPARENT_PROFILE
     material_ticks[1]+=n3ds_engine_ticks()-flush_stamp;
     if(++material_frames%30==0) {
         double scale=1000.0/(30.0*n3ds_engine_tick_frequency());
@@ -456,4 +526,5 @@ void n3ds_transparent_draw_queued(void)
         memset(material_ticks,0,sizeof(material_ticks));
         memset(material_calls,0,sizeof(material_calls));
     }
+#endif
 }

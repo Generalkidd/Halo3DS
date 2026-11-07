@@ -1,6 +1,7 @@
 /* Ordinary screen quads share the text shader; HUD mode2 meters use their
  * original combiner math and a separate native blend path. */
 #include "cseries.h"
+#include "engine_presentation.h"
 #include "rasterizer/rasterizer.h"
 #include "rasterizer/rasterizer_text.h"
 #include "rasterizer/rasterizer_debug_options.h"
@@ -37,6 +38,7 @@ static void plasma_draw(const struct rasterizer_dynamic_screen_geometry_paramete
     for(int m=0;m<3;++m) {
         if(!p->map[m]) continue;
         if(!rasterizer_set_texture_bitmap_data(m,p->map[m])) {
+            if(n3ds_presentation_midpoint_rejected()) return;
             const struct bitmap_data *b=p->map[m];char message[256];
             snprintf(message,sizeof(message),"MENU BITMAP FAIL: stage=%d tag=%08lx type=%d format=%d size=%dx%dx%d flags=%04x mips=%d offset=%ld bytes=%ld cache=%u/%u",m,b->tag_index,b->type,b->format,b->width,b->height,b->depth,b->flags,b->mipmap_count,b->pixels_offset,b->pixels_size,n3ds_engine_texture_count(),n3ds_engine_texture_bytes());n3ds_log(message);
             assert(FALSE);return;
@@ -55,13 +57,15 @@ static void plasma_draw(const struct rasterizer_dynamic_screen_geometry_paramete
         for(int c=0;c<3;++c) v[i].color[c]=((vertices[i].color>>(16-c*8))&255)/255.f;
         v[i].color[3]=(vertices[i].color>>24)/255.f;
     }
-    if(p->doing_plasma_effect) {assert(n3ds_gpu_menu_plasma(&packet,v,r->x1-r->x0,r->y1-r->y0));}
-    else {assert(n3ds_gpu_screen_multiply(&packet,v,r->x1-r->x0,r->y1-r->y0));}
+    int drawn=p->doing_plasma_effect?n3ds_gpu_menu_plasma(&packet,v,r->x1-r->x0,r->y1-r->y0):
+        n3ds_gpu_screen_multiply(&packet,v,r->x1-r->x0,r->y1-r->y0);
+    assert(drawn || n3ds_presentation_midpoint_rejected());
     n3ds_gpu_world_state_restore();
 }
 void _rasterizer_psuedo_dynamic_screen_quad_draw(struct rasterizer_dynamic_screen_geometry_parameters *parameters,
     struct dynamic_screen_vertex *vertices)
 {
+    if(n3ds_presentation_midpoint_rejected()) return;
     if(!rasterizer_debug_options.dynamic_screen_geometry || global_window_parameters.rasterizer_target!=0) return;
     assert(n3ds_engine_window_active() && !n3ds_engine_text_active());
     if(!n3ds_engine_screen_quad_supported(parameters)) {
@@ -85,8 +89,12 @@ void _rasterizer_psuedo_dynamic_screen_quad_draw(struct rasterizer_dynamic_scree
             v[i].uv[1]=t*parameters->map_texture_scale[0].j*parameters->map_scale[0].j+(parameters->map_offset[0]?parameters->map_offset[0]->y:0);
             for(int c=0;c<4;++c) v[i].color[c]=1;
         }
-        assert(rasterizer_set_texture_bitmap_data(0,parameters->map[0]));
-        assert(n3ds_gpu_hud_meter(parameters->meter_parameters,v,r->x1-r->x0,r->y1-r->y0,parameters->point_sampled,parameters->map_wrapped[0]));
+        boolean bound=rasterizer_set_texture_bitmap_data(0,parameters->map[0]);
+        if(!bound && n3ds_presentation_midpoint_rejected()) return;
+        assert(bound);
+        int drawn=n3ds_gpu_hud_meter(parameters->meter_parameters,v,r->x1-r->x0,r->y1-r->y0,
+            parameters->point_sampled,parameters->map_wrapped[0]);
+        assert(drawn || n3ds_presentation_midpoint_rejected());
         n3ds_gpu_world_state_restore();return;
     }
     rasterizer_text_begin(parameters);

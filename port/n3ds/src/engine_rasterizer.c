@@ -9,6 +9,8 @@
 #include "cache_reader.h"
 #include "engine_cache.h"
 #include "engine_renderer.h"
+#include "engine_presentation.h"
+#include "engine_algorithm_profile.h"
 #include "engine_input.h"
 #include "engine_textures.h"
 #include "engine_bitmaps.h"
@@ -36,6 +38,9 @@ enum { GEOMETRY_SLOTS=512 };
 struct native_geometry {
     const struct vertex_buffer *source;
     struct native_render_vertex *vertices;
+    struct native_render_vertex *full_vertices;
+    unsigned short *vertex_remap;
+    unsigned int vertex_count;
     const unsigned short *index_source;
     unsigned short *indices;
     unsigned int index_count;
@@ -68,8 +73,10 @@ static struct native_geometry geometry[GEOMETRY_SLOTS];
  * scanning the same BSP geometry twice for every material, every eye. */
 static unsigned short geometry_lookup[1024];
 static unsigned int geometry_count;
+static unsigned int bsp_compact_map_bytes;
 static int frame_state, diffuse_active;
 #include "engine_bsp_index_visibility.inl"
+#include "engine_bsp_batch.inl"
 long long n3ds_engine_ticks(void);
 static long long frame_service_ticks[3];
 void n3ds_engine_frame_service_ticks(long long result[3]) { memcpy(result,frame_service_ticks,sizeof(frame_service_ticks)); }
@@ -90,10 +97,12 @@ int n3ds_engine_window_active(void) { return frame_state==3 && !diffuse_active &
 void n3ds_engine_geometry_flush(void)
 {
     unsigned int i;
-    /* Water retains CPU-only immutable decode data, never queued GPU memory. */
-    extern void n3ds_water_bsp_release(void);n3ds_water_bsp_release();
+    /* A water-only BSP can own GPU allocations even with no opaque geometry. */
+    if (geometry_count || n3ds_water_bsp_has_resident())
+        assert(frame_state == 0 && n3ds_gpu_texture_barrier());
+    n3ds_water_bsp_release();
+    bsp_batch_release();
     if (!geometry_count) return;
-    assert(frame_state == 0 && n3ds_gpu_texture_barrier());
     {
         extern void n3ds_log(const char *message);
         char message[160];snprintf(message,sizeof(message),"NATIVE ENVIRONMENT: lightmap_draws=%u detail_draws=%u base_fallback_draws=%u light_uv_bytes=%u",bsp_lightmap_draws,bsp_detail_draws,bsp_base_draws,bsp_light_uv_bytes);n3ds_log(message);
@@ -107,7 +116,10 @@ void n3ds_engine_geometry_flush(void)
         bsp_bump_draws=bsp_bump_bytes=bsp_bump_fallbacks=0;
     }
     for (i=0; i<geometry_count; ++i) {
+        if(geometry[i].full_vertices!=geometry[i].vertices)
+            n3ds_gpu_geometry_free(geometry[i].full_vertices);
         n3ds_gpu_geometry_free(geometry[i].vertices);
+        free(geometry[i].vertex_remap);
         n3ds_gpu_geometry_free(geometry[i].indices);
         for(int eye=0;eye<2;++eye)n3ds_gpu_geometry_free(geometry[i].filtered[eye]);
         n3ds_gpu_geometry_free(geometry[i].light_uv);
@@ -119,6 +131,7 @@ void n3ds_engine_geometry_flush(void)
     snprintf(message,sizeof(message),"BSP TRIANGLE FILTER: saved=%u rebuilds=%u reused=%u bytes=%u",bsp_filter_saved,bsp_filter_builds,bsp_filter_hits,bsp_filter_bytes);n3ds_log(message);
     bsp_filter_bytes=bsp_filter_builds=bsp_filter_hits=bsp_filter_saved=0;
     bsp_index_bytes=bsp_index_hits=bsp_index_misses=0;
+    bsp_compact_map_bytes=0;
     memset(geometry, 0, sizeof(geometry));memset(geometry_lookup,0,sizeof(geometry_lookup));geometry_count=0;
 }
 boolean _rasterizer_initialize(void)
@@ -159,10 +172,19 @@ void _rasterizer_frame_begin(const struct rasterizer_frame_begin_parameters *par
 {
     assert(rasterizer_globals.initialized && !frame_state && parameters);
     long long stamp=n3ds_engine_ticks(),next;
-    n3ds_threads_collect();
-    next=n3ds_engine_ticks();frame_service_ticks[0]=next-stamp;stamp=next;
-    texture_cache_idle();
-    next=n3ds_engine_ticks();frame_service_ticks[1]=next-stamp;stamp=next;
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+    /* The optional view has already reserved the GPU frame. Run map/texture
+     * services once per keyframe, before its native frame begins. */
+    if(n3ds_gpu_midpoint_active()) {
+        frame_service_ticks[0]=frame_service_ticks[1]=0;
+    } else
+#endif
+    {
+        n3ds_threads_collect();
+        next=n3ds_engine_ticks();frame_service_ticks[0]=next-stamp;stamp=next;
+        texture_cache_idle();
+        next=n3ds_engine_ticks();frame_service_ticks[1]=next-stamp;stamp=next;
+    }
     global_frame_parameters=*parameters;
     assert(n3ds_gpu_frame_begin()); frame_state=1;++bsp_filter_frame;
     frame_service_ticks[2]=n3ds_engine_ticks()-stamp;
@@ -198,7 +220,13 @@ void _rasterizer_frame_end(void) { assert(frame_state==4); frame_state=5; }
 void _rasterizer_present(struct bitmap_data *screenshot_bitmap, const point2d *screenshot_index)
 {
     assert(frame_state==5 && !screenshot_bitmap && !screenshot_index);
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+    const int midpoint = n3ds_gpu_midpoint_active();
+#endif
     n3ds_gpu_present(); frame_state=0;
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+    if (midpoint) return;
+#endif
     ++rasterizer_globals.frame_index; ++rasterizer_globals.d3d_flip_count;
 }
 void _rasterizer_dispose(void)
@@ -213,46 +241,77 @@ void _rasterizer_dispose(void)
     n3ds_gpu_renderer_dispose(); rasterizer_globals.initialized=FALSE;
 }
 
-static struct native_geometry *get_geometry(const struct vertex_buffer *source)
+static void geometry_decode(const struct vertex_buffer *source,struct native_render_vertex *vertices,
+    const unsigned short *remap)
 {
-    unsigned int i;
+    /* The base stream uses position, normal and UV only. Tangent/binormal
+     * remain in the immutable source for bump preparation; expanding them
+     * here would discard two packed-vector decodes per compressed vertex. */
+    unsigned int stride=source->type==_rasterizer_vertex_type_environment_compressed?32:56;
+    for(unsigned int i=0;i<(unsigned int)source->count;++i) {
+        const byte *p=(const byte *)source->base_address+i*stride;
+        real position[3],uv[2];real_vector3d normal;
+        memcpy(position,p,sizeof(position));memcpy(uv,p+(stride==32?24:48),sizeof(uv));
+        /* Preserve whole-source validation even for compacted-out vertices. */
+        assert(isfinite(position[0]) && isfinite(position[1]) && isfinite(position[2]) && isfinite(uv[0]) && isfinite(uv[1]));
+        unsigned int out=remap?remap[i]:i;
+        if(out==65535)continue;
+        if(stride==32) {
+            unsigned int packed;memcpy(&packed,p+12,sizeof(packed));
+            normal=uncompress_int32_to_real_vector3d(packed);
+        } else memcpy(normal.n,p+12,sizeof(normal));
+        memcpy(vertices[out].position,position,sizeof(position));memcpy(vertices[out].uv,uv,sizeof(uv));
+        real light=.3f+.7f*fabsf(normal.i*.3f+normal.j*.4f+normal.k*.8660254f);
+        vertices[out].color[0]=light*.72f;vertices[out].color[1]=light*.82f;vertices[out].color[2]=light*.9f;
+    }
+}
+static struct native_geometry *get_geometry(const struct vertex_buffer *source,
+    const unsigned short *indices,unsigned int count)
+{
     const struct n3ds_cache_view *bsp=n3ds_engine_cache_view(1);
-    real *decoded;
-    struct native_render_vertex *vertices;
-    assert(source && n3ds_cache_resolve(bsp, source, sizeof(*source))==source);
+    assert(source && n3ds_cache_resolve(bsp,source,sizeof(*source))==source);
     unsigned int slot=((unsigned int)(uintptr_t)source>>4)*2654435761u;slot>>=22;
     while(geometry_lookup[slot]) {
         struct native_geometry *entry=geometry+geometry_lookup[slot]-1;
-        if(entry->source==source) return entry;
+        if(entry->source==source)return entry;
         slot=(slot+1)&1023;
     }
     assert(geometry_count<GEOMETRY_SLOTS && source->count>0 && source->count<=65535);
     assert(source->type==_rasterizer_vertex_type_environment_compressed || source->type==_rasterizer_vertex_type_environment_uncompressed);
-    i=source->type==_rasterizer_vertex_type_environment_compressed ? 32 : 56;
-    assert(source->base_address && n3ds_cache_resolve(bsp, source->base_address, source->count*i)==source->base_address);
-    /* Decode in a small stack window. A full temporary uncompressed mesh can
-     * require hundreds of KiB in a fragmented original-model CPU heap, even
-     * though its final GPU vertices fit comfortably in linear memory. */
-    unsigned int stride=i;
-    real scratch[64*14];
-    vertices=n3ds_gpu_geometry_allocate(source->count*sizeof(*vertices)); assert(vertices);
-    for(unsigned int base=0;base<(unsigned long)source->count;base+=64) {
-        unsigned int chunk=MIN(64,(unsigned long)source->count-base);
-        if(stride==32) {
-            rasterizer_geometry_uncompress_vertices(source->type,chunk,scratch,chunk*56,(byte *)source->base_address+base*32,chunk*32);
-            decoded=scratch;
-        } else decoded=(real *)source->base_address+base*14;
-        for(unsigned int j=0;j<chunk;++j) {
-            real *v=decoded+j*14;real light;i=base+j;
-            assert(isfinite(v[0]) && isfinite(v[1]) && isfinite(v[2]) && isfinite(v[12]) && isfinite(v[13]));
-            memcpy(vertices[i].position,v,12);memcpy(vertices[i].uv,v+12,8);
-            light=.3f+.7f*fabsf(v[3]*.3f+v[4]*.4f+v[5]*.8660254f);
-            vertices[i].color[0]=light*.72f;vertices[i].color[1]=light*.82f;vertices[i].color[2]=light*.9f;
+    unsigned int stride=source->type==_rasterizer_vertex_type_environment_compressed?32:56;
+    assert(source->base_address && n3ds_cache_resolve(bsp,source->base_address,source->count*stride)==source->base_address);
+    unsigned int used=source->count,map_bytes=source->count*sizeof(unsigned short);
+    unsigned int map_budget=n3ds_input_platform_original_model()?16*1024:64*1024;
+    unsigned short *remap=NULL;
+    struct native_render_vertex *vertices=NULL;
+    /* Only a static material's first admission can compact its vertex space.
+     * Keep one owner/hash slot per source and never replace queued storage. */
+    int allow_compact=indices && count && map_bytes<=map_budget && bsp_compact_map_bytes<=map_budget-map_bytes;
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+    if(n3ds_presentation_midpoint_active())allow_compact=0;
+#endif
+    if(allow_compact) {
+        assert(n3ds_cache_resolve(bsp,indices,count*sizeof(*indices))==indices);
+        remap=(malloc)(map_bytes);
+        if(remap) {
+            memset(remap,255,map_bytes);
+            for(unsigned int i=0;i<count;++i) {assert(indices[i]<source->count);remap[indices[i]]=0;}
+            used=0;
+            for(unsigned int i=0;i<(unsigned int)source->count;++i)if(remap[i]!=65535)remap[i]=used++;
+            /* Account for the CPU map and require a net page of savings. */
+            if(((unsigned int)source->count-used)*sizeof(*vertices)>=map_bytes+4096)
+                vertices=n3ds_gpu_geometry_optional_allocate(used*sizeof(*vertices));
+            if(!vertices) {free(remap);remap=NULL;used=source->count;}
         }
     }
-    n3ds_gpu_geometry_flush(vertices, source->count*sizeof(*vertices));
+    if(!vertices) {vertices=n3ds_gpu_geometry_allocate(used*sizeof(*vertices));assert(vertices);}
+    geometry_decode(source,vertices,remap);
+    n3ds_gpu_geometry_flush(vertices,used*sizeof(*vertices));
     struct native_geometry *entry=geometry+geometry_count;
-    entry->source=source;entry->vertices=vertices;geometry_lookup[slot]=++geometry_count;
+    entry->source=source;entry->vertices=vertices;entry->vertex_count=used;entry->vertex_remap=remap;
+    entry->full_vertices=remap?NULL:vertices;
+    if(remap)bsp_compact_map_bytes+=map_bytes;
+    geometry_lookup[slot]=++geometry_count;
     return entry;
 }
 /* Native implementation of the original indexed-draw entrypoint. The caller
@@ -268,13 +327,21 @@ void rasterizer_draw_dynamic_triangles_static_vertices(long handle, long first,
     assert(first>=0 && count>=0 && (unsigned long)first<=triangles->count &&
         (unsigned long)count<=triangles->count-first);
     if (!count) return;
-    vertices=get_geometry(source)->vertices;
+    struct native_geometry *entry=get_geometry(source,NULL,0);
+    /* Generic dynamic triangles keep their original index space. A source
+     * first seen as a compact static material can still serve any later list. */
+    if(!entry->full_vertices) {
+        entry->full_vertices=n3ds_gpu_geometry_allocate(source->count*sizeof(*vertices));assert(entry->full_vertices);
+        geometry_decode(source,entry->full_vertices,NULL);
+        n3ds_gpu_geometry_flush(entry->full_vertices,source->count*sizeof(*vertices));
+    }
+    vertices=entry->full_vertices;
     for (i=0;i<(unsigned long)count*3;++i)
         assert(triangles->indices[first*3+i]<source->count);
     assert(n3ds_gpu_geometry_draw(vertices,triangles->indices+first*3,count*3));
 }
-void _rasterizer_environment_diffuse_textures_begin(void) { assert(frame_state==3 && !diffuse_active); diffuse_active=1; }
-void _rasterizer_environment_diffuse_textures_end(void) { assert(diffuse_active); n3ds_gpu_world_state_restore();diffuse_active=0; }
+void _rasterizer_environment_diffuse_textures_begin(void) { assert(frame_state==3 && !diffuse_active && !bsp_packet_count); diffuse_active=1; }
+void _rasterizer_environment_diffuse_textures_end(void) { assert(diffuse_active); bsp_batch_flush();n3ds_gpu_world_state_restore();diffuse_active=0; }
 void _rasterizer_environment_diffuse_texture_draw(const struct shader *shader, short bitmap_index,
     long handle, long first, long count, const struct vertex_buffer *source)
 {
@@ -289,7 +356,9 @@ void _rasterizer_environment_diffuse_texture_draw(const struct shader *shader, s
     if (!count) return;
     assert(environment && n3ds_cache_resolve(tags, environment, sizeof(*environment))==environment);
     assert(shader->base.type==3); /* Original _shader_type_environment. */
+    bsp_batch_flush();
     if (!rasterizer_set_texture_direct(0, environment->base_map.index, bitmap_index)) n3ds_gpu_texture_bind(0, NULL);
+    if(n3ds_presentation_midpoint_rejected()) return;
     rasterizer_draw_dynamic_triangles_static_vertices(handle,first,count,source);
 }
 
@@ -301,7 +370,7 @@ static void environment_bump_prepare(struct native_geometry *entry,const struct 
 {
     if(entry->bump_tried) return;
     entry->bump_tried=1;
-    unsigned int bytes=(unsigned int)source->count*sizeof(struct native_environment_bump_vertex);
+    unsigned int bytes=entry->vertex_count*sizeof(struct native_environment_bump_vertex);
     unsigned int budget=n3ds_input_platform_original_model()?512*1024:1024*1024;
     if(!entry->lightmap_valid || bsp_bump_bytes>budget || bytes>budget-bsp_bump_bytes) {++bsp_bump_fallbacks;return;}
     struct native_environment_bump_vertex *out=n3ds_gpu_geometry_optional_allocate(bytes);
@@ -328,34 +397,73 @@ static void environment_bump_prepare(struct native_geometry *entry,const struct 
             length+=local[a]*local[a];
         }
         if(!isfinite(magnitude) || !isfinite(length)) {n3ds_gpu_geometry_free(out);++bsp_bump_fallbacks;return;}
-        out[i].weight=PIN(magnitude,0.f,1.f);
-        memcpy(out[i].light_uv,entry->light_uv+i*2,2*sizeof(float));
-        out[i].quaternion[0]=out[i].quaternion[1]=out[i].quaternion[3]=0;out[i].quaternion[2]=1;
+        /* Retain whole-source validity checks before skipping unused data. */
+        unsigned int v=entry->vertex_remap?entry->vertex_remap[i]:i;
+        if(v==65535)continue;
+        out[v].weight=PIN(magnitude,0.f,1.f);
+        memcpy(out[v].light_uv,entry->light_uv+v*2,2*sizeof(float));
+        out[v].quaternion[0]=out[v].quaternion[1]=out[v].quaternion[3]=0;out[v].quaternion[2]=1;
         if(length>1e-12f) {
             float inverse=1/sqrtf(length);for(int a=0;a<3;++a) local[a]*=inverse;
             local[2]+=1;length=local[0]*local[0]+local[1]*local[1]+local[2]*local[2];
-            if(length>1e-8f) {inverse=1/sqrtf(length);for(int a=0;a<3;++a) out[i].quaternion[a]=local[a]*inverse;}
-            else {out[i].quaternion[0]=1;out[i].quaternion[2]=0;}
+            if(length>1e-8f) {inverse=1/sqrtf(length);for(int a=0;a<3;++a) out[v].quaternion[a]=local[a]*inverse;}
+            else {out[v].quaternion[0]=1;out[v].quaternion[2]=0;}
         }
     }
     n3ds_gpu_geometry_flush(out,bytes);entry->bump=out;bsp_bump_bytes+=bytes;
 }
 
+struct environment_animation {byte reserved[0x18];real on[3],off[3];short function,pad;real period,phase;};
+struct environment_prefix {
+    byte header[0x28];word flags;byte reserved[0x42];word diffuse_flags;byte reserved_diffuse[0x1a];struct tag_reference base_map;
+    byte unused[0x18];short detail_function,pad;real detail_scale;struct tag_reference detail_map;
+    byte reserved_detail[0x44];real material_color[3];byte reserved_color[0xc];
+    real bump_scale;struct tag_reference bump_map;real runtime_bump_scale[2];
+    byte reserved_bump[0x10];short u_function,u_pad;real u_period,u_scale;
+    short v_function,v_pad;real v_period,v_scale;byte reserved_uv[0x18];
+    word emission_flags;short emission_pad;struct environment_animation animation[3];
+    byte reserved_emission[0x18];real emission_scale;struct tag_reference emission_map;
+};
+
+static int environment_extra_bitmap_index(const struct environment_prefix *environment)
+{
+    if(environment->detail_map.index!=NONE && environment->detail_function>=0 && environment->detail_function<=2 &&
+        isfinite(environment->detail_scale)) return environment->detail_map.index;
+    if(environment->detail_map.index==NONE && environment->bump_map.index!=NONE && !(environment->flags&2) &&
+        isfinite(environment->runtime_bump_scale[0]) && isfinite(environment->runtime_bump_scale[1]) &&
+        isfinite(environment->material_color[0]) && isfinite(environment->material_color[1]) &&
+        isfinite(environment->material_color[2])) return environment->bump_map.index;
+    return NONE;
+}
+
+static int environment_has_emission_slot(const struct environment_prefix *environment)
+{
+    return environment->emission_map.index!=NONE && environment->detail_map.index==NONE &&
+        (environment->bump_map.index==NONE || (environment->flags&2)) && isfinite(environment->emission_scale);
+}
+
+#ifdef HALO_N3DS_TEXTURE_PREFETCH
+const struct bitmap_data *n3ds_engine_bsp_prefetch_bitmap(const struct shader *shader, short bitmap_index, int extra)
+{
+    const struct environment_prefix *environment = (const void *)shader;
+    const struct n3ds_cache_view *tags = n3ds_engine_cache_view(0);
+    if (!shader || n3ds_cache_resolve(tags, environment, sizeof(*environment)) != environment ||
+        shader->base.type != 3)
+        return NULL;
+    int index=environment->base_map.index;
+    if(extra) {
+        index=environment_extra_bitmap_index(environment);
+        if(index==NONE && environment_has_emission_slot(environment)) index=environment->emission_map.index;
+    }
+    return n3ds_engine_bitmap_metadata(index, bitmap_index);
+}
+#endif
+
 void n3ds_engine_bsp_draw(const struct shader *shader,short bitmap_index,
     const unsigned short *indices,unsigned int count,const struct vertex_buffer *source,
-    int lightmap_group,short lightmap_index,const struct vertex_buffer *lightmap_source)
+    int lightmap_group,short lightmap_index,const struct vertex_buffer *lightmap_source,
+    const struct native_bsp_material_visibility *visibility)
 {
-    struct environment_animation {byte reserved[0x18];real on[3],off[3];short function,pad;real period,phase;};
-    struct environment_prefix {
-        byte header[0x28];word flags;byte reserved[0x42];word diffuse_flags;byte reserved_diffuse[0x1a];struct tag_reference base_map;
-        byte unused[0x18];short detail_function,pad;real detail_scale;struct tag_reference detail_map;
-        byte reserved_detail[0x44];real material_color[3];byte reserved_color[0xc];
-        real bump_scale;struct tag_reference bump_map;real runtime_bump_scale[2];
-        byte reserved_bump[0x10];short u_function,u_pad;real u_period,u_scale;
-        short v_function,v_pad;real v_period,v_scale;byte reserved_uv[0x18];
-        word emission_flags;short emission_pad;struct environment_animation animation[3];
-        byte reserved_emission[0x18];real emission_scale;struct tag_reference emission_map;
-    };
     _Static_assert(offsetof(struct environment_prefix,u_function)==0x150,"Xbox environment UV animation ABI");
     _Static_assert(offsetof(struct environment_prefix,emission_flags)==0x180,"Xbox environment illumination ABI");
     _Static_assert(offsetof(struct environment_prefix,animation[0].on)==0x19c,"Xbox environment primary color ABI");
@@ -370,25 +478,36 @@ void n3ds_engine_bsp_draw(const struct shader *shader,short bitmap_index,
     const struct n3ds_cache_view *bsp=n3ds_engine_cache_view(1),*tags=n3ds_engine_cache_view(0);
     assert(frame_state==3 && diffuse_active && count && count%3==0 && count<=131072*3);
     assert(environment && n3ds_cache_resolve(tags,environment,sizeof(*environment))==environment && shader->base.type==3);
-    struct native_geometry *entry=get_geometry(source);
+    /* Keep cutouts and every authored bump/emission path immediate. Flush
+     * before changing their bindings, including paths that later fall back. */
+    int batchable=!(environment->flags&1) && environment->bump_map.index==NONE && environment->emission_map.index==NONE;
+    if(bsp_packet_count && (!batchable || bsp_packets[0].shader!=shader ||
+       bsp_packets[0].permutation!=bitmap_index || bsp_packets[0].lightmap_group!=lightmap_group ||
+       bsp_packets[0].lightmap_index!=lightmap_index)) bsp_batch_flush();
+    if(n3ds_presentation_midpoint_rejected()) return;
+    struct native_geometry *entry=get_geometry(source,indices,count);
     struct native_render_vertex *vertices=entry->vertices;
     if(!entry->indices) {
         assert(indices && n3ds_cache_resolve(bsp,indices,count*sizeof(*indices))==indices);
         for(unsigned int i=0;i<count;++i) assert(indices[i]<source->count);
         entry->indices=n3ds_gpu_geometry_allocate(count*sizeof(*indices));assert(entry->indices);
-        memcpy(entry->indices,indices,count*sizeof(*indices));
+        if(entry->vertex_remap)for(unsigned int i=0;i<count;++i) {
+            unsigned int v=entry->vertex_remap[indices[i]];assert(v<entry->vertex_count);entry->indices[i]=v;
+        } else memcpy(entry->indices,indices,count*sizeof(*indices));
         n3ds_gpu_geometry_flush(entry->indices,count*sizeof(*indices));
         entry->index_source=indices;entry->index_count=count;
         bsp_index_bytes+=count*sizeof(*indices);++bsp_index_misses;
     } else {
         assert(entry->index_source==indices && entry->index_count==count);++bsp_index_hits;
     }
-    const unsigned short *visible_indices=bsp_visible_index_buffer(entry,&count);
+    const unsigned short *visible_indices=bsp_visible_index_buffer(entry,&count,visibility);
     if(!count)return;
+    if(visible_indices!=entry->indices || count!=entry->index_count) {bsp_batch_flush();batchable=0;}
+    if(n3ds_presentation_midpoint_rejected()) return;
     if(!entry->light_uv) {
-        entry->light_uv=n3ds_gpu_geometry_allocate(source->count*2*sizeof(float));
+        entry->light_uv=n3ds_gpu_geometry_allocate(entry->vertex_count*2*sizeof(float));
         if(entry->light_uv) {
-            bsp_light_uv_bytes+=source->count*2*sizeof(float);
+            bsp_light_uv_bytes+=entry->vertex_count*2*sizeof(float);
             unsigned int stride=lightmap_source->type==3?8:20;
             int valid=lightmap_source->count==source->count && (lightmap_source->type==2 || lightmap_source->type==3) &&
                 lightmap_source->base_address && n3ds_cache_resolve(bsp,lightmap_source->base_address,source->count*stride)==lightmap_source->base_address;
@@ -400,10 +519,11 @@ void n3ds_engine_bsp_draw(const struct shader *shader,short bitmap_index,
                     else memcpy(uv,at+12,8);
                     assert(isfinite(uv[0]) && isfinite(uv[1]));
                 }
-                memcpy(entry->light_uv+v*2,uv,sizeof(uv));
+                unsigned int out=entry->vertex_remap?entry->vertex_remap[v]:v;
+                if(out!=65535)memcpy(entry->light_uv+out*2,uv,sizeof(uv));
             }
             entry->lightmap_valid=valid;
-            n3ds_gpu_geometry_flush(entry->light_uv,source->count*2*sizeof(float));
+            n3ds_gpu_geometry_flush(entry->light_uv,entry->vertex_count*2*sizeof(float));
         }
     }
     if(!entry->bitmap_metadata_valid || entry->bitmap_shader!=shader || entry->bitmap_permutation!=bitmap_index ||
@@ -412,20 +532,12 @@ void n3ds_engine_bsp_draw(const struct shader *shader,short bitmap_index,
          * bitmap->hardware_format/slot remain validated by normal binding. */
         entry->bitmap_metadata[0]=n3ds_engine_bitmap_metadata(environment->base_map.index,bitmap_index);
         entry->bitmap_metadata[1]=entry->lightmap_valid?n3ds_engine_bitmap_metadata(lightmap_group,lightmap_index):NULL;
-        int extra_bitmap=NONE;
-        if(environment->detail_map.index!=NONE && environment->detail_function>=0 && environment->detail_function<=2 && isfinite(environment->detail_scale))
-            extra_bitmap=environment->detail_map.index;
-        else if(environment->detail_map.index==NONE && environment->bump_map.index!=NONE && !(environment->flags&2) &&
-                isfinite(environment->runtime_bump_scale[0]) && isfinite(environment->runtime_bump_scale[1]) &&
-                isfinite(environment->material_color[0]) && isfinite(environment->material_color[1]) && isfinite(environment->material_color[2]))
-            extra_bitmap=environment->bump_map.index;
-        entry->bitmap_metadata[2]=n3ds_engine_bitmap_metadata(extra_bitmap,bitmap_index);
+        entry->bitmap_metadata[2]=n3ds_engine_bitmap_metadata(environment_extra_bitmap_index(environment),bitmap_index);
         entry->emission_ready=0;entry->emission_animated=0;entry->emission_bitmap=NULL;entry->plasma=0;entry->plasma_on=0xff000000u;
         /* Preserve detail/bump paths when all three samplers are occupied.
          * Plasma uses signed fragment lighting and all six combiners; retain
          * authored detail/true bump when those already occupy the third unit. */
-        entry->emission_allowed=environment->emission_map.index!=NONE && environment->detail_map.index==NONE &&
-            (environment->bump_map.index==NONE || (environment->flags&2)) && isfinite(environment->emission_scale);
+        entry->emission_allowed=environment_has_emission_slot(environment);
         for(int i=0;i<3;++i) {
             const struct environment_animation *a=&environment->animation[i];
             if(i<2 && a->function>=2 && memcmp(a->on,a->off,sizeof(a->on))) entry->emission_animated|=1<<i;
@@ -447,12 +559,15 @@ void n3ds_engine_bsp_draw(const struct shader *shader,short bitmap_index,
         entry->bitmap_shader=shader;entry->bitmap_permutation=bitmap_index;
         entry->lightmap_group=lightmap_group;entry->lightmap_index=lightmap_index;entry->bitmap_metadata_valid=1;
     }
+    if(!entry->light_uv) {bsp_batch_flush();batchable=0;}
     if(!rasterizer_set_texture_bitmap_data(0,entry->bitmap_metadata[0])) n3ds_gpu_texture_bind(0,NULL);
+    if(n3ds_presentation_midpoint_rejected()) return;
     if(!entry->light_uv) {n3ds_gpu_world_state_restore();assert(n3ds_gpu_geometry_draw_resident(vertices,visible_indices,count));return;}
     /* Lightmaps always clamp. Installing the default repeat sampler first
      * forced two descriptor changes per draw even when reusing the same map. */
     int lightmap=entry->lightmap_valid && lightmap_group!=NONE && lightmap_index!=NONE &&
         n3ds_engine_bitmap_bind_sampler(1,entry->bitmap_metadata[1],NATIVE_SAMPLER_CLAMP_U|NATIVE_SAMPLER_CLAMP_V);
+    if(n3ds_presentation_midpoint_rejected()) return;
     if(entry->material_shader!=shader) {
         entry->material_color=0xff000000;
         for(int c=0;c<3;++c) {
@@ -491,6 +606,7 @@ void n3ds_engine_bsp_draw(const struct shader *shader,short bitmap_index,
             lightmap?entry->material_color:0xffffffffu,!!(environment->flags&1),&entry->emission));}
         ++bsp_emission_draws;if(lightmap) ++bsp_lightmap_draws;else ++bsp_base_draws;return;
     }
+    if(n3ds_presentation_midpoint_rejected()) return;
     /* Preserve authored detail where its third sampler is already used.
      * A bump map marked as a specular mask is not a normal map. */
     if(lightmap && environment->detail_map.index==NONE && environment->bump_map.index!=NONE && !(environment->flags&2) &&
@@ -502,10 +618,12 @@ void n3ds_engine_bsp_draw(const struct shader *shader,short bitmap_index,
             ++bsp_bump_draws;++bsp_lightmap_draws;return;
         }
     }
+    if(n3ds_presentation_midpoint_rejected()) return;
     int detail=0;
     if(environment->detail_map.index!=NONE && environment->detail_function>=0 && environment->detail_function<=2 &&
        isfinite(environment->detail_scale) && rasterizer_set_texture_bitmap_data(2,entry->bitmap_metadata[2]))
         detail=environment->detail_function==2?3:environment->detail_function==0?2:1;
+    if(n3ds_presentation_midpoint_rejected()) return;
     if(detail && (entry->detail_shader!=shader || entry->detail_bitmap_index!=bitmap_index || !entry->detail_scale_valid)) {
         /* Tag metadata and BSP geometry share the map lifetime. Cache only the
          * authored UV scale, never a texture handle; uploads/eviction remain
@@ -528,5 +646,14 @@ void n3ds_engine_bsp_draw(const struct shader *shader,short bitmap_index,
     if(detail) ++bsp_detail_draws;
     if(detail==3) ++bsp_detail_add_draws;
     if(lightmap && entry->material_color!=0xffffffffu) ++bsp_tinted_draws;
-    assert(n3ds_gpu_environment_draw(vertices,entry->light_uv,visible_indices,count,lightmap,detail,detail?entry->detail_scale[0]:1.f,detail?entry->detail_scale[1]:1.f,lightmap?entry->material_color:0xffffffffu,!!(environment->flags&1)));
+    if(batchable) {
+        const struct bsp_draw_packet packet={
+            .owner=entry,.shader=shader,.permutation=bitmap_index,.lightmap_group=lightmap_group,.lightmap_index=lightmap_index,
+            .textures={n3ds_gpu_texture_bound(0),n3ds_gpu_texture_bound(1),n3ds_gpu_texture_bound(2)},
+            .lightmap=lightmap,.detail=detail,.alpha=0,
+            .scale={detail?entry->detail_scale[0]:1.f,detail?entry->detail_scale[1]:1.f},
+            .material=lightmap?entry->material_color:0xffffffffu
+        };
+        bsp_batch_submit(&packet);
+    } else assert(n3ds_gpu_environment_draw(vertices,entry->light_uv,visible_indices,count,lightmap,detail,detail?entry->detail_scale[0]:1.f,detail?entry->detail_scale[1]:1.f,lightmap?entry->material_color:0xffffffffu,!!(environment->flags&1)));
 }

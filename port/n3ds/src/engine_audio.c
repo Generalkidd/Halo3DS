@@ -24,7 +24,12 @@ struct sound_platform_definition {
     real direct_path_gain;
 };
 _Static_assert(sizeof(struct sound_platform_definition)==60,"Sound platform ABI");
-struct native_voice {struct sound_permutation *playing,*queued;struct platform_sound_channel_properties properties;struct sound_location location;float obstruction,occlusion;int spatial;};
+struct native_voice {
+    struct sound_permutation *playing,*queued;
+    struct platform_sound_channel_properties properties;
+    float distance,pan,obstruction,occlusion;
+    int spatial;
+};
 static struct native_voice voice[24];static int live;static unsigned int queued_count;
 void n3ds_log(const char *);
 static void refresh(short i)
@@ -55,10 +60,9 @@ static void properties_apply(short i)
     float gain=MAX(0.f,v->properties.gain),pan=0;
     int rate=i>=22?44100:22050;
     if(v->spatial) {
-        const real_point3d *p=&v->location.position;
-        float distance=sqrtf(p->x*p->x+p->y*p->y+p->z*p->z),minimum=MAX(v->properties.minimum_distance,.001f);
+        float distance=v->distance,minimum=MAX(v->properties.minimum_distance,.001f);
         if(distance>minimum) gain*=minimum/distance;
-        if(distance>1e-5f) pan=PIN(-p->y/distance,-1.f,1.f); /* listener +Y is left */
+        pan=v->pan;
         gain*=PIN(1-v->obstruction,0.f,1.f)*PIN(1-v->occlusion,0.f,1.f);
     }
     float left=gain*(pan>0?1-pan:1),right=gain*(pan<0?1+pan:1);
@@ -70,7 +74,18 @@ static void properties(short i,const struct platform_sound_channel_properties *p
 }
 static void location(short i,boolean spatial,const struct sound_location *p,real obstruction,real occlusion,boolean attenuate)
 {
-    assert(i>=0 && i<24);voice[i].spatial=spatial;voice[i].location=*p;voice[i].obstruction=obstruction;voice[i].occlusion=occlusion;properties_apply(i);
+    assert(i>=0 && i<24);
+    struct native_voice *v=voice+i;
+    v->spatial=spatial;v->obstruction=obstruction;v->occlusion=occlusion;
+    if(spatial) {
+        /* Gain and pitch callbacks reuse the current listener-relative
+         * position. Only a location callback changes distance or pan. */
+        const real_point3d *position=&p->position;
+        v->distance=sqrtf(position->x*position->x+position->y*position->y+position->z*position->z);
+        v->pan=0;
+        if(v->distance>1e-5f) v->pan=PIN(-position->y/v->distance,-1.f,1.f); /* listener +Y is left */
+    }
+    properties_apply(i);
 }
 static void queue(short i,struct sound_permutation *p)
 {

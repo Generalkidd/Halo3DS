@@ -153,6 +153,179 @@ int n3ds_generic_validate_inputs(const struct native_generic_material *m,unsigne
 }
 int n3ds_generic_validate(const struct native_generic_material *m)
 { return m && m->maps>0 && n3ds_generic_validate_inputs(m,0,15); }
+/* Lower only a complete, unsigned final register expression. NV2A signed
+ * scratch values must not be prematurely saturated by PICA's [0,1] stages.
+ * Leading copy stages can be substituted into that expression; arithmetic
+ * intermediates cannot, because another TEV stage would round them early. */
+struct generic_lower_source {
+    int kind,index,component,inverse; /* kind: literal, texture, constant */
+};
+struct generic_lower_term {
+    int count; /* zero, one source, or a product of two sources */
+    struct generic_lower_source arg[2];
+};
+static int generic_lower_source(const struct native_generic_material *m,int source,int mode,int alpha,
+    const struct generic_lower_source previous[2],struct generic_lower_source *out)
+{
+    struct generic_lower_source s={0};
+    if(mode<0 || mode>1) return 0;
+    if(source<5) {
+        if(source<0) return 0;
+        /* Literal .5 survives unsigned inversion; negative literals map to
+         * zero/one, exactly as input()'s original zero-register lookup. */
+        s.index=source==2?2:(source==1?!mode:mode);
+    } else if(source==11 || source==21) {
+        int from_alpha=alpha?(source==11):(source==21);
+        s=previous[from_alpha];
+        if(s.kind<0) return 0;
+        /* Cross-component alpha selects blue from r0.rgb. A scalar RGB
+         * alias already replicates its selected component into blue. */
+        if(alpha && !from_alpha && s.component==0 && s.kind) s.component=4;
+        if(!s.kind) {
+            if(mode && s.index!=2) s.index=1-s.index;
+        } else {
+            /* Do not turn 1-(1-x) into x: CPU floating-point rounding need
+             * not make that identity exact for filtered texture samples. */
+            if(mode && s.inverse) return 0;
+            s.inverse|=mode;
+        }
+    } else {
+        s.inverse=mode;s.component=alpha?2:0;
+        if(source>=15) {source-=10;s.component=alpha?4:2;}
+        if(source>=5 && source<=8) {s.kind=1;s.index=source-5;}
+        else if(source==13 || source==14) {s.kind=2;s.index=source-13;}
+        else return 0; /* No vertex inputs or other scratch registers. */
+        if(s.kind==1 && (s.index>=m->maps || s.index>=3)) return 0;
+    }
+    *out=s;return 1;
+}
+static struct generic_lower_term generic_lower_product(struct generic_lower_source a,struct generic_lower_source b)
+{
+    struct generic_lower_term term={0};
+    if((!a.kind && !a.index) || (!b.kind && !b.index)) return term;
+    term.count=1;
+    if(!a.kind && a.index==1) term.arg[0]=b;
+    else if(!b.kind && b.index==1) term.arg[0]=a;
+    else {term.count=2;term.arg[0]=a;term.arg[1]=b;}
+    return term;
+}
+static int generic_lower_constant(struct native_generic_recipe *recipe,unsigned int *mask,int component,unsigned int value)
+{
+    unsigned int bit=1u<<component,shift=component*8;
+    if((*mask&bit) && ((recipe->constant>>shift)&255u)!=value) return 0;
+    recipe->constant=(recipe->constant&~(255u<<shift))|(value<<shift);
+    *mask|=bit;return 1;
+}
+static int generic_lower_operand(const struct native_generic_stage *stage,struct generic_lower_source source,
+    struct native_generic_recipe *recipe,unsigned int *mask,unsigned int *out_source,unsigned int *out_operand)
+{
+    if(source.kind==1) {
+        *out_source=source.index;*out_operand=source.component+source.inverse;return 1;
+    }
+    *out_source=3;
+    if(!source.kind) {
+        /* Exact half is not an 8-bit TEV constant. Zero/one use a shared zero
+         * alpha byte; if an authored constant needs another alpha, decline. */
+        if(source.index==2 || !generic_lower_constant(recipe,mask,3,0)) return 0;
+        *out_operand=2+source.index;return 1;
+    }
+    int first=source.component==0?0:source.component==2?3:2;
+    int last=source.component==0?2:first;
+    for(int c=first;c<=last;++c) {
+        float value=stage->constant[source.index][c];
+        if(!isfinite(value) || value<0 || value>1) return 0;
+        unsigned int byte=(unsigned int)(value*255.f+.5f);
+        if(value!=(float)byte/255.f || !generic_lower_constant(recipe,mask,c,byte)) return 0;
+    }
+    *out_operand=source.component+source.inverse;return 1;
+}
+static int generic_lower_complement(struct generic_lower_source a,struct generic_lower_source b)
+{
+    return a.kind && a.kind==b.kind && a.index==b.index && a.component==b.component &&
+        a.inverse==(b.inverse^1);
+}
+static int generic_lower_channel(const struct native_generic_material *m,int stage_index,int alpha,
+    const struct generic_lower_source previous[2],struct generic_lower_source *alias,
+    struct native_generic_recipe *recipe,unsigned int *mask)
+{
+    const struct native_generic_stage *stage=m->stage+stage_index;
+    const int *op=stage->op;
+    struct generic_lower_source inputs[4],args[3]={{0}};
+    struct generic_lower_term terms[2];
+    unsigned int function;
+    int destination=-1;
+    for(int i=0;i<4;++i)
+        if(!generic_lower_source(m,op[alpha*14+i*2],op[alpha*14+i*2+1],alpha,previous,&inputs[i])) return 0;
+    for(int i=0;i<3;++i) {
+        int d=op[alpha?22+i:8+i*2];
+        if(d<0 || d>1 || (d && destination>=0)) return 0;
+        if(d) destination=i;
+    }
+    if(destination<0) {
+        if(!alpha) return 0;
+        /* A missing alpha write retains the prior r0.a, captured before RGB
+         * publication; the initial alias is texture0.a. */
+        args[0]=previous[1];function=NATIVE_GENERIC_REPLACE;
+    } else {
+        terms[0]=generic_lower_product(inputs[0],inputs[1]);
+        terms[1]=generic_lower_product(inputs[2],inputs[3]);
+        if(destination<2 || !terms[0].count || !terms[1].count) {
+            struct generic_lower_term term=destination<2?terms[destination]:terms[terms[0].count?0:1];
+            function=term.count==2?NATIVE_GENERIC_MODULATE:NATIVE_GENERIC_REPLACE;
+            if(term.count) args[0]=term.arg[0];
+            if(term.count==2) args[1]=term.arg[1];
+        } else if(terms[0].count==1 && terms[1].count==1) {
+            function=NATIVE_GENERIC_ADD;args[0]=terms[0].arg[0];args[1]=terms[1].arg[0];
+        } else if(terms[0].count==1 || terms[1].count==1) {
+            int product=terms[0].count==2?0:1;
+            function=NATIVE_GENERIC_MULTIPLY_ADD;
+            args[0]=terms[product].arg[0];args[1]=terms[product].arg[1];args[2]=terms[1-product].arg[0];
+        } else {
+            /* A*C+B*(1-C), permitting commutation inside each product only. */
+            int first=-1,second=-1;
+            for(int a=0;a<2 && first<0;++a) for(int b=0;b<2;++b)
+                if(generic_lower_complement(terms[0].arg[a],terms[1].arg[b])) {first=a;second=b;break;}
+            if(first<0) return 0;
+            function=NATIVE_GENERIC_INTERPOLATE;
+            args[0]=terms[0].arg[1-first];args[1]=terms[1].arg[1-second];args[2]=terms[0].arg[first];
+        }
+    }
+    struct native_generic_channel *channel=&recipe->channel[alpha];
+    int count=function==NATIVE_GENERIC_REPLACE?1:function<=NATIVE_GENERIC_ADD?2:3;
+    channel->function=function;
+    for(int i=0;i<count;++i) {
+        if(!alpha && args[i].component>2) return 0;
+        if(!generic_lower_operand(stage,args[i],recipe,mask,&channel->source[i],&channel->operand[i])) return 0;
+    }
+    /* Unused alpha operands still carry legal alpha selectors in the packet. */
+    if(alpha) for(int i=count;i<3;++i) channel->operand[i]=2;
+    *alias=function==NATIVE_GENERIC_REPLACE?args[0]:(struct generic_lower_source){.kind=-1};
+    return 1;
+}
+int n3ds_generic_lower(const struct native_generic_material *m,struct native_generic_recipe *out)
+{
+    struct native_generic_recipe recipe={0};
+    if(!out) return 0;
+    memset(out,0,sizeof(*out));
+    if(!m || m->maps<1 || m->maps>3 || !n3ds_generic_validate(m)) return 0;
+    struct generic_lower_source previous[2]={{.kind=-1},{.kind=1,.component=2}};
+    for(int i=0;i<m->stages;++i) {
+        const struct native_generic_stage *stage=m->stage+i;
+        struct generic_lower_source aliases[2];unsigned int mask=0;
+        memset(&recipe,0,sizeof(recipe));
+        if((stage->flags&~4) || stage->op[9] || stage->op[11] || stage->op[13] || stage->op[25] ||
+            !generic_lower_channel(m,i,0,previous,&aliases[0],&recipe,&mask) ||
+            !generic_lower_channel(m,i,1,previous,&aliases[1],&recipe,&mask)) return 0;
+        if(i+1<m->stages) {
+            /* Copy-only prefixes introduce neither saturation nor numeric
+             * precision changes. Constants belong to each NV2A stage; keep
+             * prefixes using those registers on the existing fallback. */
+            if(aliases[0].kind<0 || aliases[1].kind<0 || aliases[0].kind==2 || aliases[1].kind==2) return 0;
+            memcpy(previous,aliases,sizeof(previous));
+        }
+    }
+    *out=recipe;return 1;
+}
 int n3ds_generic_lit_lerp(const struct native_generic_material *m)
 {
     static const int op[2][26]={

@@ -8,11 +8,169 @@
 #include <math.h>
 #include "engine_audio.h"
 #include "engine_parallel.h"
+#include "engine_sounds.h"
+#include "engine_algorithm_profile.h"
+
+enum { SOUND_READ_IDLE,SOUND_READ_QUEUED,SOUND_READ_DONE,SOUND_READ_CHUNK=32*1024 };
+static Thread sound_reader;
+static LightEvent sound_reader_work;
+static int sound_reader_state,sound_reader_stop,sound_reader_cancelled,sound_reader_success;
+static int sound_reader_unavailable;
+static unsigned char *sound_reader_buffer;
+static unsigned int sound_reader_capacity;
+static char sound_reader_path[128];
+static struct n3ds_sound_read_key sound_reader_key;
+
+static int same_read(const struct n3ds_sound_read_key *key)
+{
+    return key->map_generation==sound_reader_key.map_generation && key->handle==sound_reader_key.handle &&
+        key->offset==sound_reader_key.offset && key->bytes==sound_reader_key.bytes;
+}
+static void sound_reader_main(void *unused)
+{
+    (void)unused;
+    char open_path[sizeof(sound_reader_path)]={0};
+    Handle file=0;
+    for (;;) {
+        LightEvent_Wait(&sound_reader_work);
+        if (__atomic_load_n(&sound_reader_stop,__ATOMIC_ACQUIRE)) break;
+        if (__atomic_load_n(&sound_reader_state,__ATOMIC_ACQUIRE)!=SOUND_READ_QUEUED) continue;
+        unsigned int done=0;
+        if (!__atomic_load_n(&sound_reader_cancelled,__ATOMIC_ACQUIRE) &&
+            (!file || strcmp(open_path,sound_reader_path))) {
+            if (file) FSFILE_Close(file);
+            file=0;
+            if (R_SUCCEEDED(FSUSER_OpenFileDirectly(&file,ARCHIVE_SDMC,fsMakePath(PATH_EMPTY,NULL),
+                    fsMakePath(PATH_ASCII,sound_reader_path+5),FS_OPEN_READ,0)))
+                strcpy(open_path,sound_reader_path);
+            else file=0;
+        }
+        while (file && done<sound_reader_key.bytes &&
+                !__atomic_load_n(&sound_reader_cancelled,__ATOMIC_ACQUIRE)) {
+            unsigned int count=sound_reader_key.bytes-done;
+            if (count>SOUND_READ_CHUNK) count=SOUND_READ_CHUNK;
+            u32 got=0;
+            if (R_FAILED(FSFILE_Read(file,&got,(u64)sound_reader_key.offset+done,
+                    sound_reader_buffer+done,count)) || !got || got>count) {
+                FSFILE_Close(file);
+                file=0;
+                break;
+            }
+            done+=got;
+        }
+        sound_reader_success=done==sound_reader_key.bytes;
+        __atomic_store_n(&sound_reader_state,SOUND_READ_DONE,__ATOMIC_RELEASE);
+    }
+    if (file) FSFILE_Close(file);
+}
+int n3ds_sound_reader_supported(void)
+{
+#ifdef HALO_N3DS_LOW_MEMORY_TEST
+    return 0;
+#else
+    static int supported=-1;
+    if (supported<0) {
+        bool new_model=false;
+        supported=R_SUCCEEDED(APT_CheckNew3DS(&new_model)) && new_model;
+    }
+    return supported;
+#endif
+}
+void n3ds_sound_reader_cancel(void)
+{
+    __atomic_store_n(&sound_reader_cancelled,1,__ATOMIC_RELEASE);
+}
+void n3ds_sound_reader_discard(unsigned int map_generation,unsigned int handle)
+{
+    if (__atomic_load_n(&sound_reader_state,__ATOMIC_ACQUIRE)!=SOUND_READ_IDLE &&
+        sound_reader_key.map_generation==map_generation && sound_reader_key.handle==handle)
+        n3ds_sound_reader_cancel();
+}
+void n3ds_sound_reader_offer(const char *path,const struct n3ds_sound_read_key *key)
+{
+    if (sound_reader_unavailable || !path || strncmp(path,"sdmc:/",6) ||
+        strlen(path)>=sizeof(sound_reader_path) || !key->bytes || key->bytes>N3DS_SOUND_READ_LIMIT ||
+        key->offset>~0u-key->bytes) return;
+    int state=__atomic_load_n(&sound_reader_state,__ATOMIC_ACQUIRE);
+    if (state!=SOUND_READ_IDLE && same_read(key) &&
+        !__atomic_load_n(&sound_reader_cancelled,__ATOMIC_ACQUIRE)) return;
+    if (state==SOUND_READ_QUEUED) {
+        /* A lower pending slot may replace the hint. Never wait for a reader
+         * on the game thread or rewrite its data before it reports completion. */
+        n3ds_sound_reader_cancel();
+        return;
+    }
+    if (key->bytes>sound_reader_capacity) {
+        unsigned int capacity=(key->bytes+SOUND_READ_CHUNK-1)&~(SOUND_READ_CHUNK-1u);
+        unsigned char *buffer=realloc(sound_reader_buffer,capacity);
+        if (!buffer) return;
+        sound_reader_buffer=buffer;
+        sound_reader_capacity=capacity;
+    }
+    if (!sound_reader) {
+        LightEvent_Init(&sound_reader_work,RESET_ONESHOT);
+        __atomic_store_n(&sound_reader_stop,0,__ATOMIC_RELAXED);
+        s32 priority=0x30;
+        svcGetThreadPriority(&priority,CUR_THREAD_HANDLE);
+        priority=priority<=0x3c?priority+3:0x3f;
+        /* Leave the main and system cores alone, and keep the existing
+         * geometry/codec and texture helper jobs above this reader. */
+        sound_reader=threadCreate(sound_reader_main,NULL,16*1024,priority,2,false);
+        if (!sound_reader) {
+            sound_reader_unavailable=1;
+            free(sound_reader_buffer);
+            sound_reader_buffer=NULL;
+            sound_reader_capacity=0;
+            return;
+        }
+    }
+    strcpy(sound_reader_path,path);
+    sound_reader_key=*key;
+    __atomic_store_n(&sound_reader_cancelled,0,__ATOMIC_RELAXED);
+    __atomic_store_n(&sound_reader_state,SOUND_READ_QUEUED,__ATOMIC_RELEASE);
+    LightEvent_Signal(&sound_reader_work);
+}
+int n3ds_sound_reader_copy(const struct n3ds_sound_read_key *key,void *destination)
+{
+    int state=__atomic_load_n(&sound_reader_state,__ATOMIC_ACQUIRE);
+    if (state==SOUND_READ_QUEUED) {
+        /* A synchronous cache read is now authoritative. Avoid issuing
+         * another speculative SD request between its own I/O operations. */
+        n3ds_sound_reader_cancel();
+        return 0;
+    }
+    if (state!=SOUND_READ_DONE || !same_read(key)) return 0;
+    int success=sound_reader_success && !__atomic_load_n(&sound_reader_cancelled,__ATOMIC_ACQUIRE);
+    if (success) memcpy(destination,sound_reader_buffer,key->bytes);
+    __atomic_store_n(&sound_reader_state,SOUND_READ_IDLE,__ATOMIC_RELAXED);
+    return success;
+}
+void n3ds_sound_reader_shutdown(void)
+{
+    if (!sound_reader) return;
+    n3ds_sound_reader_cancel();
+    __atomic_store_n(&sound_reader_stop,1,__ATOMIC_RELEASE);
+    LightEvent_Signal(&sound_reader_work);
+    if (svcWaitSynchronization(threadGetHandle(sound_reader),U64_MAX)!=0) svcBreak(USERBREAK_PANIC);
+    threadFree(sound_reader);
+    sound_reader=NULL;
+    free(sound_reader_buffer);
+    sound_reader_buffer=NULL;
+    sound_reader_capacity=0;
+    __atomic_store_n(&sound_reader_state,SOUND_READ_IDLE,__ATOMIC_RELAXED);
+}
+
 #define VOICES 24
 #define PACKETS 4
 #define FRAMES 2048
 struct clip {const unsigned char *data;unsigned int bytes,offset;int channels,compression;};
-struct voice {struct clip current,next;ndspWaveBuf wave[PACKETS];short *pcm[PACKETS];int outstanding;};
+struct voice {
+    struct clip current,next;
+    ndspWaveBuf wave[PACKETS];
+    short *pcm[PACKETS];
+    int outstanding,rate_valid,mix_valid;
+    float rate,gains[2];
+};
 static struct voice voices[VOICES];
 static short *storage;
 static int ready,count,paused;
@@ -50,6 +208,7 @@ void n3ds_audio_stop(int channel)
     if(!ready || channel<0 || channel>=count) return;
     struct voice *v=voices+channel;ndspChnWaveBufClear(channel);
     memset(v->wave,0,sizeof(v->wave));memset(&v->current,0,sizeof(v->current));memset(&v->next,0,sizeof(v->next));v->outstanding=0;
+    v->rate_valid=v->mix_valid=0;
 }
 /* Also called by libctru on abort/_exit, which can bypass atexit. Do not use
  * stdio here: newlib may already have closed it. The worker must be joined
@@ -61,6 +220,9 @@ void userAppExit(void)
     extern void n3ds_log_shutdown(void) __attribute__((weak));
     extern void n3ds_stall_watch_stop(void) __attribute__((weak));
     extern void n3ds_prefetch_shutdown(void);
+    extern void n3ds_texture_reader_shutdown(void) __attribute__((weak));
+    n3ds_sound_reader_shutdown();
+    if(n3ds_texture_reader_shutdown) n3ds_texture_reader_shutdown();
     n3ds_prefetch_shutdown();
     n3ds_parallel_shutdown();
     if(n3ds_log_shutdown) n3ds_log_shutdown();
@@ -94,8 +256,19 @@ int n3ds_audio_queue(int i,const void *data,unsigned int bytes,int channels,int 
 void n3ds_audio_properties(int i,float rate,float left,float right)
 {
     if(!ready || i<0 || i>=count) return;
-    float mix[12]={0};mix[0]=left;mix[1]=right;
-    ndspChnSetRate(i,rate);ndspChnSetMix(i,mix);
+    struct voice *v=voices+i;
+    float gains[2]={left,right};
+    if (!v->rate_valid || memcmp(&v->rate,&rate,sizeof(rate))) {
+        ndspChnSetRate(i,rate);
+        memcpy(&v->rate,&rate,sizeof(rate));
+        v->rate_valid=1;
+    }
+    if (!v->mix_valid || memcmp(v->gains,gains,sizeof(gains))) {
+        float mix[12]={left,right};
+        ndspChnSetMix(i,mix);
+        memcpy(v->gains,gains,sizeof(gains));
+        v->mix_valid=1;
+    }
 }
 void n3ds_audio_pause(int p)
 {
@@ -121,6 +294,11 @@ static int decode_range(void *context,unsigned int begin,unsigned int end)
 void n3ds_audio_update(void)
 {
     if(!ready || paused) return;
+#ifdef HALO_N3DS_ALGORITHM_PROFILE
+    u64 profile_start=svcGetSystemTick();
+    unsigned int profile_active=0,profile_pcm=0,profile_drains=0,profile_bad=0;
+    unsigned int profile_frames=0,profile_packets=0;
+#endif
     unsigned int jobs=0,compressed_bytes=0;
     for(int i=0;i<count;++i) {
         struct voice *v=voices+i;
@@ -131,12 +309,23 @@ void n3ds_audio_update(void)
         }
         struct clip *c=&v->current;
         if(!c->data) continue;
-        if(c->offset && c->offset<c->bytes && !v->outstanding) ++underruns;
+#ifdef HALO_N3DS_ALGORITHM_PROFILE
+        ++profile_active;
+#endif
+        if(c->offset && c->offset<c->bytes && !v->outstanding) {
+            ++underruns;
+#ifdef HALO_N3DS_ALGORITHM_PROFILE
+            ++profile_drains;
+#endif
+        }
         for(int p=0;p<PACKETS && c->offset<c->bytes;++p) if(v->wave[p].status==NDSP_WBUF_FREE) {
             unsigned int bytes=c->compression?(FRAMES/64)*36*c->channels:FRAMES*2*c->channels;
             if(bytes>c->bytes-c->offset) bytes=c->bytes-c->offset;
             decode_jobs[jobs++]=(struct audio_decode_job){c->data+c->offset,v->pcm[p],bytes,0,c->channels,c->compression,i,p};
             if(c->compression) compressed_bytes+=bytes;
+#ifdef HALO_N3DS_ALGORITHM_PROFILE
+            else profile_pcm+=bytes;
+#endif
             c->offset+=bytes;
         }
     }
@@ -145,19 +334,55 @@ void n3ds_audio_update(void)
      * PCM/results; no sound-manager or ndsp state is accessed off-thread. */
     /* Tiny final packets and plain PCM copies do not repay a worker wake.
      * Count encoded work, not just descriptors, before splitting a batch. */
+#ifdef HALO_N3DS_ALGORITHM_PROFILE
+    u64 profile_decode_start=svcGetSystemTick();
+#endif
     if(compressed_bytes>=8192) n3ds_parallel_range(decode_range,decode_jobs,jobs,4,0);
     else decode_range(decode_jobs,0,jobs);
+#ifdef HALO_N3DS_ALGORITHM_PROFILE
+    u64 profile_submit_start=svcGetSystemTick();
+#endif
     unsigned int bad=0;
-    for(unsigned int i=0;i<jobs;++i) if(!decode_jobs[i].frames) bad|=1u<<decode_jobs[i].voice;
+    for(unsigned int i=0;i<jobs;++i) if(!decode_jobs[i].frames) {
+        bad|=1u<<decode_jobs[i].voice;
+#ifdef HALO_N3DS_ALGORITHM_PROFILE
+        ++profile_bad;
+#endif
+    }
     for(int i=0;i<count;++i) if(bad&(1u<<i)) {n3ds_log("AUDIO ERROR: malformed encoded block; voice stopped");n3ds_audio_stop(i);}
     for(unsigned int i=0;i<jobs;++i) {
         struct audio_decode_job *j=decode_jobs+i;
         if(bad&(1u<<j->voice)) continue;
         struct voice *v=voices+j->voice;ndspWaveBuf *wave=v->wave+j->packet;
         decoded_frames+=j->frames;++submitted;
+#ifdef HALO_N3DS_ALGORITHM_PROFILE
+        profile_frames+=j->frames;++profile_packets;
+#endif
         memset(wave,0,sizeof(*wave));wave->data_pcm16=j->pcm;wave->nsamples=j->frames;
         DSP_FlushDataCache(j->pcm,j->frames*j->channels*2);ndspChnWaveBufAdd(j->voice,wave);++v->outstanding;
     }
+#ifdef HALO_N3DS_ALGORITHM_PROFILE
+    u64 profile_end=svcGetSystemTick();
+    /* Owner-only aggregation after the existing decode join and DSP submit.
+     * A refill drain is an observation, not a measurement of audible dropout.
+     * begin/end can each call update, so these counts are updates, not frames. */
+    n3ds_algorithm_profile_add(N3DS_ALG_IO_AUDIO_UPDATES,1);
+    n3ds_algorithm_profile_add(N3DS_ALG_IO_AUDIO_ACTIVE_VOICES,profile_active);
+    n3ds_algorithm_profile_max(N3DS_ALG_IO_AUDIO_PEAK_VOICES,profile_active);
+    n3ds_algorithm_profile_add(N3DS_ALG_IO_AUDIO_JOBS,jobs);
+    n3ds_algorithm_profile_add(compressed_bytes>=8192?N3DS_ALG_IO_AUDIO_RANGE_BATCHES:N3DS_ALG_IO_AUDIO_LOCAL_BATCHES,jobs!=0);
+    n3ds_algorithm_profile_add(N3DS_ALG_IO_AUDIO_PCM_BYTES,profile_pcm);
+    n3ds_algorithm_profile_add(N3DS_ALG_IO_AUDIO_ADPCM_BYTES,compressed_bytes);
+    n3ds_algorithm_profile_add(N3DS_ALG_IO_AUDIO_DECODED_FRAMES,profile_frames);
+    n3ds_algorithm_profile_add(N3DS_ALG_IO_AUDIO_PACKETS,profile_packets);
+    n3ds_algorithm_profile_add(N3DS_ALG_IO_AUDIO_BAD_JOBS,profile_bad);
+    n3ds_algorithm_profile_add(N3DS_ALG_IO_AUDIO_DRAINS,profile_drains);
+    n3ds_algorithm_profile_add(N3DS_ALG_IO_AUDIO_PLAN_TICKS,profile_decode_start-profile_start);
+    n3ds_algorithm_profile_add(N3DS_ALG_IO_AUDIO_DECODE_TICKS,profile_submit_start-profile_decode_start);
+    n3ds_algorithm_profile_add(N3DS_ALG_IO_AUDIO_SUBMIT_TICKS,profile_end-profile_submit_start);
+    n3ds_algorithm_profile_add(N3DS_ALG_IO_AUDIO_TOTAL_TICKS,profile_end-profile_start);
+    n3ds_algorithm_profile_max(N3DS_ALG_IO_AUDIO_PEAK_TICKS,profile_end-profile_start);
+#endif
 }
 int n3ds_audio_parallel_tests(void)
 {

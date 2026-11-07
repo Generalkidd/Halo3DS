@@ -1,6 +1,7 @@
 /* Original HUD owners; screen postprocessing remains an explicit capability
  * boundary. The game's HUD, inventory and motion tracking stay authoritative. */
 #include "cseries.h"
+#include "engine_presentation.h"
 #include "rasterizer/rasterizer.h"
 #include "rasterizer/rasterizer_debug_options.h"
 #include "rasterizer/rasterizer_cinematics.h"
@@ -217,12 +218,23 @@ void n3ds_hud_draw_screen(void)
     /* Original HUD offsets/glyphs target a 480-line display. A virtual 800x480
      * surface preserves their shape and anchors on the wider 400x240 top LCD. */
     for(int i=0;i<4;++i) { saved[i]=*rects[i]; for(int c=0;c<4;++c) rects[i]->v[c]*=2; }
-    split_hud=1;hud_visible=0;
+    split_hud=1;
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+    int midpoint=n3ds_presentation_midpoint_active();
+    if(!midpoint)
+#endif
+        hud_visible=0;
     interface_draw_screen();
-    long player=local_player_get_player_index(0);
-    control_unit=player==NONE?NONE:player_get(player)->unit_index;
-    control_generation=n3ds_engine_cache_generation();
-    n3ds_input_touch_handler(touch_action);draw_touch_panel();
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+    if(!midpoint) {
+#endif
+        long player=local_player_get_player_index(0);
+        control_unit=player==NONE?NONE:player_get(player)->unit_index;
+        control_generation=n3ds_engine_cache_generation();
+        n3ds_input_touch_handler(touch_action);draw_touch_panel();
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+    }
+#endif
     n3ds_hud_screen(0);split_hud=0;
     for(int i=0;i<4;++i) *rects[i]=saved[i];
 }
@@ -305,6 +317,9 @@ static void *bitmap(short kind)
 void _rasterizer_hud_motion_sensor_blip_begin(void)
 {
     assert(hud_active && !sensor_active);
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+    if(n3ds_presentation_midpoint_active()) return;
+#endif
     if(!rasterizer_debug_options.hud_motion_sensor) return;
     blips[0]=bitmap(_interface_bitmap_motion_blip); blips[1]=bitmap(_interface_bitmap_iface_map1);
     n3ds_gpu_sensor_begin();sensor_active=1;

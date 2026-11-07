@@ -4,6 +4,7 @@
  * composition, dependent bump reflection and water fog remain approximated.
  * Extended-range tints/cache failures preserve the legacy vertex fallback. */
 #include "cseries.h"
+#include "engine_presentation.h"
 #include "engine_models.h"
 #include "engine_transparent.h"
 #include "rasterizer/rasterizer_geometry.h"
@@ -12,8 +13,10 @@
 #include "engine_generic.h"
 #include "engine_textures.h"
 #include "engine_cache.h"
+#include "engine_input.h"
 #include "cache_reader.h"
 #include "rasterizer/rasterizer.h"
+#include "render/render.h"
 #include "shaders/shader_definitions.h"
 struct water_shader {
     struct shader shader;word flags;short type;byte reserved[32];
@@ -48,6 +51,7 @@ static int water_native(const struct water_shader *w,short permutation,
     const struct model_vertex_uncompressed *cached=type==5?n3ds_model_decode_stream(data,count):NULL;
     const real_vector2d unit={1,1};
     const struct native_render_vertex *pose=n3ds_model_skin_stream(cached,count,&p->skinning,&unit,p->unique_identifier);
+    const real_vector3d *normals=n3ds_model_normal_stream(cached,count,&p->skinning,p->unique_identifier);
     struct native_render_vertex *out=n3ds_gpu_model_vertices_allocate(count);assert(out);
     float t=global_frame_parameters.game_time_sec*w->velocity;
     float offset_u=t*cosf(w->angle),offset_v=t*sinf(w->angle);
@@ -59,7 +63,8 @@ static int water_native(const struct water_shader *w,short permutation,
         if(!pose) {assert(n3ds_model_skin_vertex(v,&p->skinning,&unit,&temporary));}
         memcpy(out[i].position,pose?pose[i].position:temporary.position,12);
         real_vector3d normal={0};
-        for(int k=0;k<2;++k) if(v->node_weights[k]) {
+        if(normals)normal=normals[i];
+        else for(int k=0;k<2;++k) if(v->node_weights[k]) {
             assert(v->nodes[k]>=0 && v->nodes[k]<p->skinning.node_matrix_count);
             real_vector3d n;matrix4x3_transform_vector(p->skinning.node_matrices+v->nodes[k],&v->normal,&n);
             for(int c=0;c<3;++c) normal.n[c]+=n.n[c]*v->node_weights[k];
@@ -92,18 +97,24 @@ void n3ds_water_model_draw(const struct shader *shader,short permutation,
     assert(n3ds_cache_resolve(view,w,sizeof(*w))==w && w->type==0 && !(w->flags&~15));
     assert(isfinite(w->scale) && isfinite(w->angle) && isfinite(w->velocity));
     if(water_native(w,permutation,p,data,count,type,indices,index_count)) return;
+    if(n3ds_presentation_midpoint_rejected()) return;
     const byte *cube=w->reflection_map.index!=NONE?n3ds_cube_load(w->reflection_map.index,permutation):NULL;
+    if(n3ds_presentation_midpoint_rejected()) return;
     struct native_generic_material sample={.maps=1};
     sample.transform[0][0][0]=sample.transform[0][1][1]=1;
     sample.clamp_u[0]=sample.clamp_v[0]=1;
     if(w->base_map.index!=NONE) {
-        assert(rasterizer_set_texture_direct(0,w->base_map.index,permutation));
+        boolean bound=rasterizer_set_texture_direct(0,w->base_map.index,permutation);
+        if(!bound && n3ds_presentation_midpoint_rejected()) return;
+        assert(bound);
         sample.textures[0]=n3ds_gpu_texture_bound(0);
     }
     const struct model_vertex_uncompressed *cached=type==5?n3ds_model_decode_stream(data,count):NULL;
     const real_vector2d unit={1,1};
     const struct native_render_vertex *pose=n3ds_model_skin_stream(cached,count,&p->skinning,&unit,p->unique_identifier);
+    const real_vector3d *normals=n3ds_model_normal_stream(cached,count,&p->skinning,p->unique_identifier);
     float t=global_frame_parameters.game_time_sec*w->velocity;
+    const float offset_u=t*cosf(w->angle),offset_v=t*sinf(w->angle);
     for(int pass=(w->flags&2)?0:1;pass<2;++pass) {
         struct native_chicago_material material={.maps=1,.blend=pass?0:1,.two_sided=1,.fade=1,.vertex_color=1};
         material.sky=!!(p->geometry_flags&(1<<4));
@@ -120,24 +131,31 @@ void n3ds_water_model_draw(const struct shader *shader,short permutation,
             if(sample.textures[0]) n3ds_gpu_generic_sample(&sample,0,v->texcoord.x*p->base_map_scale.i,v->texcoord.y*p->base_map_scale.j,base);
             if(!pass) {memcpy(out[i].color,base,16);continue;}
             real_vector3d normal={0};float eye[3],reflection[3],n2=0,e2=0,dot=0;
-            for(int k=0;k<2;++k) if(v->node_weights[k]) {
+            if(normals)normal=normals[i];
+            else for(int k=0;k<2;++k) if(v->node_weights[k]) {
                 assert(v->nodes[k]>=0 && v->nodes[k]<p->skinning.node_matrix_count);
                 real_vector3d n;matrix4x3_transform_vector(p->skinning.node_matrices+v->nodes[k],&v->normal,&n);
                 for(int c=0;c<3;++c) normal.n[c]+=n.n[c]*v->node_weights[k];
             }
             for(int c=0;c<3;++c) n2+=normal.n[c]*normal.n[c];
-            assert(n2>1e-12f);for(int c=0;c<3;++c) normal.n[c]/=sqrtf(n2);
+            assert(n2>1e-12f);
+            const float normal_length=sqrtf(n2);
+            for(int c=0;c<3;++c) normal.n[c]/=normal_length;
             /* Authored ripple direction/speed/scale drive bounded analytic
              * waves. No extra render targets, texture reads or scene copy. */
-            float u=v->texcoord.x*w->scale+t*cosf(w->angle),q=v->texcoord.y*w->scale+t*sinf(w->angle);
+            float u=v->texcoord.x*w->scale+offset_u,q=v->texcoord.y*w->scale+offset_v;
             normal.i+=.035f*sinf(u*6.2831853f);normal.j+=.035f*cosf(q*6.2831853f);
             n2=dot_product3d(&normal,&normal);
+            const float wave_length=sqrtf(n2);
             for(int c=0;c<3;++c) {
-                normal.n[c]/=sqrtf(n2);
+                normal.n[c]/=wave_length;
                 eye[c]=global_window_parameters.camera.position.n[c]-posed->position[c];e2+=eye[c]*eye[c];
             }
             if(e2<1e-12f) for(int c=0;c<3;++c) eye[c]=-global_window_parameters.camera.forward.n[c];
-            else for(int c=0;c<3;++c) eye[c]/=sqrtf(e2);
+            else {
+                const float eye_length=sqrtf(e2);
+                for(int c=0;c<3;++c) eye[c]/=eye_length;
+            }
             for(int c=0;c<3;++c) dot+=normal.n[c]*eye[c];
             for(int c=0;c<3;++c) reflection[c]=2*dot*normal.n[c]-eye[c];
             float rgb[4]={1,1,1,1},facing=PIN(fabsf(dot),0.f,1.f);
@@ -156,11 +174,11 @@ void n3ds_water_model_draw(const struct shader *shader,short permutation,
     }
 }
 
-/* Map surfaces use BSP vertices, not skinned model vertices. Cache only the
- * immutable CPU decode; animated GPU vertices/indices belong to the frame
- * arena and may be reused by the second eye after a serial check. */
+/* Preserve the admitted CPU wave basis and frame-owned fallback. A recurring
+ * New-model draw can keep an exact immutable copy of that basis and its indices. */
 #define WATER_BSP_SLOTS 32
 #define WATER_BSP_BYTES (128u*1024u)
+#define WATER_BSP_RESIDENT_BYTES (256u*1024u)
 static struct water_bsp_entry {
     const struct vertex_buffer *source;
     struct native_water_wave_vertex *base;
@@ -170,17 +188,102 @@ static struct water_bsp_entry {
     const unsigned short *indices,*frame_indices;
     unsigned int index_count;
     unsigned long long frame;
+    struct native_water_wave_vertex *resident;
+    unsigned short *resident_indices;
+    const unsigned short *resident_source_indices;
+    unsigned int resident_index_count;
+    float resident_scale;
+    int resident_attempted;
+    struct water_bsp_filter {
+        unsigned short *indices;
+        const unsigned short *source;
+        unsigned int capacity,source_count,count;
+        unsigned int visible[MAXIMUM_CLUSTERS_PER_STRUCTURE/32];
+        unsigned long long frame;
+        int valid;
+    } filter[2];
 } water_bsp[WATER_BSP_SLOTS];
 static unsigned int water_bsp_bytes,water_bsp_generation;
 static unsigned int water_bsp_draws,water_bsp_reuses,water_bsp_uncached;
+static unsigned int water_bsp_resident_bytes,water_bsp_resident_draws,water_bsp_filter_bytes;
+int n3ds_water_bsp_has_resident(void) { return water_bsp_resident_bytes!=0 || water_bsp_filter_bytes!=0; }
 void n3ds_water_bsp_release(void)
 {
     if(water_bsp_draws || water_bsp_uncached) {
-        char text[180];snprintf(text,sizeof(text),"BSP WATER CACHE: draws=%u stereo_reuses=%u uncached_draws=%u decode_bytes=%u",water_bsp_draws,water_bsp_reuses,water_bsp_uncached,water_bsp_bytes);n3ds_log(text);
+        char text[224];snprintf(text,sizeof(text),"BSP WATER CACHE: draws=%u stereo_reuses=%u uncached_draws=%u decode_bytes=%u resident_draws=%u resident_bytes=%u",
+            water_bsp_draws,water_bsp_reuses,water_bsp_uncached,water_bsp_bytes,water_bsp_resident_draws,water_bsp_resident_bytes);n3ds_log(text);
     }
-    for(unsigned int i=0;i<WATER_BSP_SLOTS;++i) free(water_bsp[i].base);
+    for(unsigned int i=0;i<WATER_BSP_SLOTS;++i) {
+        free(water_bsp[i].base);
+        n3ds_gpu_geometry_free(water_bsp[i].resident);
+        n3ds_gpu_geometry_free(water_bsp[i].resident_indices);
+        for(unsigned int eye=0;eye<2;++eye)n3ds_gpu_geometry_free(water_bsp[i].filter[eye].indices);
+    }
     memset(water_bsp,0,sizeof(water_bsp));water_bsp_bytes=water_bsp_generation=0;
     water_bsp_draws=water_bsp_reuses=water_bsp_uncached=0;
+    water_bsp_resident_bytes=water_bsp_resident_draws=water_bsp_filter_bytes=0;
+}
+unsigned int n3ds_bsp_visible_indices(const unsigned short *,unsigned int,unsigned short *);
+static const unsigned short *water_bsp_visible_indices(struct water_bsp_entry *entry,
+    const unsigned short *indices,unsigned int *count)
+{
+#ifdef HALO_N3DS_BSP_FILTER_OFF
+    return indices;
+#endif
+    if(!entry)return indices;
+    struct water_bsp_filter *filter=&entry->filter[n3ds_gpu_stereo_view()];
+    unsigned long long frame=n3ds_gpu_model_frame_serial();
+    if(!filter->valid || filter->source!=indices || filter->source_count!=*count ||
+       memcmp(filter->visible,render.visible_cluster_flags,sizeof(filter->visible))) {
+        /* Never rewrite indices referenced earlier in this command list.
+         * Optional views use warm exact matches or the complete material. */
+        if(filter->frame==frame)return indices;
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+        if(n3ds_presentation_midpoint_active())return indices;
+#endif
+        unsigned int kept=n3ds_bsp_visible_indices(indices,*count,NULL);
+        assert(kept<=*count);
+        if(kept && kept>*count-*count/4)kept=*count;
+        if(kept && kept<*count) {
+            if(!filter->indices) {
+                unsigned int bytes=*count*sizeof(*indices);
+                unsigned int budget=n3ds_input_platform_original_model()?64*1024:256*1024;
+                if(bytes<=budget && water_bsp_filter_bytes<=budget-bytes)
+                    filter->indices=n3ds_gpu_geometry_optional_allocate(bytes);
+                if(filter->indices) {filter->capacity=*count;water_bsp_filter_bytes+=bytes;}
+            }
+            if(filter->indices && kept<=filter->capacity) {
+                assert(n3ds_bsp_visible_indices(indices,*count,filter->indices)==kept);
+                n3ds_gpu_geometry_flush(filter->indices,kept*sizeof(*indices));
+            } else kept=*count;
+        }
+        filter->source=indices;filter->source_count=*count;filter->count=kept;filter->valid=1;
+        memcpy(filter->visible,render.visible_cluster_flags,sizeof(filter->visible));
+    }
+    filter->frame=frame;
+    *count=filter->count;
+    return *count<filter->source_count?filter->indices:indices;
+}
+static void water_bsp_promote(struct water_bsp_entry *entry,const unsigned short *indices,unsigned int index_count)
+{
+    unsigned int vertex_bytes=(unsigned int)entry->source->count*sizeof(*entry->base);
+    unsigned int index_bytes=index_count*sizeof(*indices);
+    entry->resident_attempted=1;
+    if(vertex_bytes+index_bytes>WATER_BSP_RESIDENT_BYTES-water_bsp_resident_bytes) return;
+    for(unsigned int i=0;i<index_count;++i) if(indices[i]>=(unsigned int)entry->source->count) return;
+
+    struct native_water_wave_vertex *resident=n3ds_gpu_geometry_optional_allocate(vertex_bytes);
+    if(!resident) return;
+    unsigned short *resident_indices=n3ds_gpu_geometry_optional_allocate(index_bytes);
+    if(!resident_indices) {n3ds_gpu_geometry_free(resident);return;}
+    memcpy(resident,entry->base,vertex_bytes);
+    memcpy(resident_indices,indices,index_bytes);
+    n3ds_gpu_geometry_flush(resident,vertex_bytes);
+    n3ds_gpu_geometry_flush(resident_indices,index_bytes);
+    entry->resident=resident;entry->resident_indices=resident_indices;
+    entry->resident_source_indices=indices;entry->resident_index_count=index_count;
+    entry->resident_scale=entry->wave_scale;
+    water_bsp_resident_bytes+=vertex_bytes+index_bytes;
 }
 static void water_bsp_decode(const struct vertex_buffer *source,unsigned int i,struct native_render_vertex *v)
 {
@@ -209,17 +312,20 @@ void n3ds_water_bsp_draw(const struct transparent_geometry_group *group)
     assert(triangles && triangles->type==0 && triangles->count>0 && triangles->count<=0x7fffffff/6);
     unsigned int index_count=triangles->count*3;const unsigned short *indices=triangles->base_address;
     assert(indices && n3ds_cache_resolve(bsp,indices,index_count*2)==indices);
-    if(water_bsp_generation!=n3ds_engine_cache_generation()) {n3ds_water_bsp_release();water_bsp_generation=n3ds_engine_cache_generation();}
+    unsigned int generation=n3ds_engine_cache_generation();
+    /* BSP unload retires resident entries after the GPU fence. A stale
+     * generation discovered during recording can only use the fallback. */
+    if(water_bsp_generation!=generation && !n3ds_water_bsp_has_resident()) {
+        n3ds_water_bsp_release();water_bsp_generation=generation;
+    }
     struct native_water_material material={.flags=w->flags};
     for(int c=0;c<4;++c) {
         material.perpendicular[c]=c==3?w->perpendicular.alpha:w->perpendicular.rgb.n[c];
         material.parallel[c]=c==3?w->parallel.alpha:w->parallel.rgb.n[c];
         assert(material.perpendicular[c]>=0 && material.perpendicular[c]<=1 && material.parallel[c]>=0 && material.parallel[c]<=1);
     }
-    if(w->reflection_map.index!=NONE && !(material.cube=n3ds_engine_bitmap_resource(w->reflection_map.index,group->shader_permutation_index))) return;
-    if(w->base_map.index!=NONE && !(material.base=n3ds_engine_bitmap_resource(w->base_map.index,group->shader_permutation_index))) return;
     struct water_bsp_entry *entry=NULL,*empty=NULL;
-    for(unsigned int i=0;i<WATER_BSP_SLOTS;++i) {
+    for(unsigned int i=0;water_bsp_generation==generation && i<WATER_BSP_SLOTS;++i) {
         if(water_bsp[i].source==source) {entry=water_bsp+i;break;}
         if(!water_bsp[i].source && !empty) empty=water_bsp+i;
     }
@@ -236,6 +342,11 @@ void n3ds_water_bsp_draw(const struct transparent_geometry_group *group)
             char text[192];snprintf(text,sizeof(text),"BSP WATER GPU: vertices=%u triangles=%u flags=%u passes=%u gpu_waves=%d bytes=%u",count,index_count/3,w->flags,1+!!(w->flags&2),!!entry,water_bsp_bytes);n3ds_log(text);
         }
     }
+    unsigned int visible_count=index_count;
+    const unsigned short *visible_indices=water_bsp_visible_indices(entry,indices,&visible_count);
+    if(!visible_count)return;
+    if(w->reflection_map.index!=NONE && !(material.cube=n3ds_engine_bitmap_resource(w->reflection_map.index,group->shader_permutation_index))) return;
+    if(w->base_map.index!=NONE && !(material.base=n3ds_engine_bitmap_resource(w->base_map.index,group->shader_permutation_index))) return;
     float phase[4];
     if(entry) {
         if(entry->wave_scale!=w->scale) {
@@ -253,10 +364,23 @@ void n3ds_water_bsp_draw(const struct transparent_geometry_group *group)
         material.wave_phase=phase;
     }
     unsigned long long frame=n3ds_gpu_model_frame_serial();
+    if(entry && !entry->resident_attempted && entry->frame && entry->frame!=frame &&
+       !n3ds_input_platform_original_model()
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+       && !n3ds_presentation_midpoint_active()
+#endif
+    ) water_bsp_promote(entry,indices,index_count);
+    if(entry && entry->resident && entry->resident_source_indices==indices &&
+       entry->resident_index_count==index_count && entry->resident_scale==w->scale) {
+        const unsigned short *gpu_indices=visible_indices==indices?entry->resident_indices:visible_indices;
+        assert(n3ds_gpu_water_draw_resident(&entry->resident[0].vertex,gpu_indices,visible_count,&material));
+        ++water_bsp_draws;++water_bsp_resident_draws;return;
+    }
     struct native_render_vertex *out;
-    const unsigned short *gpu_indices=indices;
-    if(entry && entry->frame==frame && entry->animated_shader==group->shader && entry->indices==indices && entry->index_count==index_count) {
-        out=entry->animated;gpu_indices=entry->frame_indices;++water_bsp_reuses;
+    int reuse_vertices=entry && entry->frame==frame && entry->animated_shader==group->shader;
+    const unsigned short *gpu_indices=NULL;
+    if(reuse_vertices) {
+        out=entry->animated;++water_bsp_reuses;
     } else {
         unsigned int bytes=count*(entry?sizeof(*entry->base):sizeof(*out));
         out=n3ds_gpu_model_vertices_allocate((bytes+sizeof(*out)-1)/sizeof(*out));assert(out);
@@ -271,11 +395,18 @@ void n3ds_water_bsp_draw(const struct transparent_geometry_group *group)
             }
         }
         n3ds_gpu_geometry_flush(out,bytes);
-        gpu_indices=n3ds_gpu_indices_upload(indices,index_count);assert(gpu_indices);
-        if(entry) {
-            entry->frame=frame;entry->animated=out;entry->animated_shader=group->shader;
-            entry->frame_indices=gpu_indices;entry->indices=indices;entry->index_count=index_count;
-        } else ++water_bsp_uncached;
+        if(!entry)++water_bsp_uncached;
     }
-    assert(n3ds_gpu_water_draw(out,gpu_indices,index_count,&material));++water_bsp_draws;
+    /* Both eyes can share immutable wave vertices even when their portal
+     * subsets differ. Full-list promotion above always uses original indices. */
+    if(visible_indices!=indices)gpu_indices=visible_indices;
+    else if(reuse_vertices && entry->indices==indices && entry->index_count==index_count)
+        gpu_indices=entry->frame_indices;
+    else gpu_indices=n3ds_gpu_indices_upload(indices,index_count);
+    assert(gpu_indices);
+    if(entry) {
+        entry->frame=frame;entry->animated=out;entry->animated_shader=group->shader;
+        entry->frame_indices=gpu_indices;entry->indices=visible_indices;entry->index_count=visible_count;
+    }
+    assert(n3ds_gpu_water_draw_resident(out,gpu_indices,visible_count,&material));++water_bsp_draws;
 }

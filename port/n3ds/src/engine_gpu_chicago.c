@@ -15,6 +15,7 @@ void n3ds_log(const char *message);
 #include "engine_rigid_chicago_shader.h"
 #include "engine_skin_chicago_shader.h"
 #include "engine_hologram_shader.h"
+#include "engine_presentation.h"
 static DVLB_s *hologram_binary;
 static shaderProgram_s hologram_program;
 static int hologram_ready,hologram_projection,hologram_screen;
@@ -23,6 +24,14 @@ static DVLB_s *shader;
 static shaderProgram_s program;
 static int ready,location;
 static struct {DVLB_s *binary;shaderProgram_s program;int ready,projection,bone,uv;} transform_programs[2];
+static C3D_AttrInfo chicago_attributes,transform_attributes[2];
+enum { CHICAGO_RECIPE_SLOTS=16 };
+static struct {
+    struct native_chicago_material key;
+    C3D_TexEnv stages[6];
+    int valid;
+} chicago_recipes[CHICAGO_RECIPE_SLOTS];
+static unsigned int chicago_recipe_next,chicago_recipe_last;
 static struct native_chicago_vertex *stream;
 static unsigned int used;
 #define BAKE_SIZE NATIVE_GENERIC_BAKE_SIZE
@@ -54,7 +63,10 @@ static void bake_report(void)
 void n3ds_gpu_chicago_map_release(void)
 {
     bake_report();
-    for(unsigned int i=0;i<baked_count;++i) C3D_TexDelete(&baked[i]);
+    memset(chicago_recipes,0,sizeof(chicago_recipes));chicago_recipe_next=chicago_recipe_last=0;
+    for(unsigned int i=0;i<baked_count;++i) {
+        n3ds_gpu_texture_revision_begin(&baked[i]);C3D_TexDelete(&baked[i]);
+    }
     memset(baked,0,sizeof(baked));memset(bake_cache,0,sizeof(bake_cache));
     baked_count=0;bake_frame=1;
     bake_requests=bake_hits=bake_uncached=bake_texels=bake_full=bake_shield_texels=0;
@@ -77,6 +89,15 @@ void n3ds_gpu_chicago_dispose(void)
 }
 int n3ds_gpu_chicago_initialize(void)
 {
+    /* Layouts contain no GPU-owned resources; rebuild them on every init. */
+    AttrInfo_Init(&chicago_attributes);AttrInfo_AddLoader(&chicago_attributes,0,GPU_FLOAT,3);
+    for(int i=1;i<4;++i) AttrInfo_AddLoader(&chicago_attributes,i,GPU_FLOAT,2);
+    AttrInfo_AddLoader(&chicago_attributes,4,GPU_FLOAT,4);
+    for(int i=0;i<2;++i) {
+        C3D_AttrInfo *a=&transform_attributes[i];AttrInfo_Init(a);
+        AttrInfo_AddLoader(a,0,GPU_FLOAT,3);AttrInfo_AddLoader(a,1,GPU_FLOAT,3);AttrInfo_AddLoader(a,2,GPU_FLOAT,2);
+        if(i) AttrInfo_AddLoader(a,3,GPU_FLOAT,4);
+    }
     shader=DVLB_ParseFile((u32 *)engine_chicago_shader,sizeof(engine_chicago_shader));
     stream=linearAlloc(VERTICES*sizeof(*stream));
     if(!shader || !stream) goto fail;
@@ -124,19 +145,55 @@ static unsigned int tiled_offset(unsigned int x,unsigned int y,unsigned int widt
 }
 static int wrap(int x,int size,int clamped)
 {
-    return clamped?(x<0?0:x>=size?size-1:x):((x%size)+size)%size;
+    if(clamped) return x<0?0:x>=size?size-1:x;
+    /* PICA texture dimensions are powers of two. Unsigned conversion preserves
+     * the exact positive wrap for negative coordinates without signed divide. */
+    if(size>0 && !(size&(size-1))) return (unsigned int)x&(unsigned int)(size-1);
+    return ((x%size)+size)%size;
 }
 static void sample(const C3D_Tex *t,float u,float v,int point,int cu,int cv,float result[4])
 {
     float x=u*t->width-(point?0:.5f),y=v*t->height-(point?0:.5f);
     int ix=(int)floorf(x),iy=(int)floorf(y);float fx=x-ix,fy=y-iy;
+    int taps=point?1:2,tx[2],ty[2];
+    for(int i=0;i<taps;++i) {
+        tx[i]=wrap(ix+i,t->width,cu);
+        ty[i]=t->height-1-wrap(iy+i,t->height,cv);
+    }
     for(int c=0;c<4;++c) result[c]=0;
-    for(int j=0;j<(point?1:2);++j) for(int i=0;i<(point?1:2);++i) {
-        int tx=wrap(ix+i,t->width,cu),ty=t->height-1-wrap(iy+j,t->height,cv);
-        unsigned int texel=((const unsigned int *)t->data)[tiled_offset(tx,ty,t->width)];
+    for(int j=0;j<taps;++j) for(int i=0;i<taps;++i) {
+        unsigned int texel=((const unsigned int *)t->data)[tiled_offset(tx[i],ty[j],t->width)];
         float weight=point?1:(i?fx:1-fx)*(j?fy:1-fy);
         for(int c=0;c<4;++c) result[c]+=((texel>>(24-c*8))&255)*(weight/255.f);
     }
+}
+static int bake_find(const struct native_generic_material *m,const float bounds[4],int meter,
+    const unsigned int identity[4])
+{
+    for(unsigned int i=0;i<baked_count;++i)
+        if(bake_cache[i].valid && bake_cache[i].meter==meter &&
+           !memcmp(bake_cache[i].identity,identity,sizeof(bake_cache[i].identity)) &&
+           !memcmp(bake_cache[i].bounds,bounds,sizeof(bake_cache[i].bounds)) &&
+           !memcmp(&bake_cache[i].material,m,sizeof(*m))) return (int)i;
+    return -1;
+}
+int n3ds_gpu_generic_bake_preflight(const struct native_generic_material *m,const float bounds[4],int kind)
+{
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+    if(!n3ds_presentation_midpoint_active()) return 1;
+    if(n3ds_presentation_check_midpoint()) return 0;
+    unsigned int identity[4]={0};
+    if(!ready || !m || !bounds || m->maps<1 || m->maps>4 || kind<0 || kind>3) goto miss;
+    for(int i=0;i<m->maps;++i) {
+        identity[i]=n3ds_gpu_texture_content_id(m->textures[i]);
+        if(!identity[i]) goto miss;
+    }
+    if(bake_find(m,bounds,kind,identity)>=0) return 1;
+miss:
+    n3ds_presentation_reject_texture();return 0;
+#else
+    (void)m;(void)bounds;(void)kind;return 1;
+#endif
 }
 static void *bake_material(const struct native_generic_material *m,const float bounds[4],int meter)
 {
@@ -151,15 +208,17 @@ static void *bake_material(const struct native_generic_material *m,const float b
         identity[i]=n3ds_gpu_texture_content_id(m->textures[i]);
         if(!identity[i]) reusable=0;
     }
-    if(reusable) for(unsigned int i=0;i<baked_count;++i) {
-        if(!bake_cache[i].valid || bake_cache[i].meter!=meter ||
-           memcmp(bake_cache[i].identity,identity,sizeof(identity)) ||
-           memcmp(bake_cache[i].bounds,bounds,sizeof(bake_cache[i].bounds)) ||
-           memcmp(&bake_cache[i].material,m,sizeof(*m))) continue;
-        bake_cache[i].last_frame=bake_frame;++bake_hits;
-        return &baked[i];
+    int resident=reusable?bake_find(m,bounds,meter,identity):-1;
+    if(resident>=0) {
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+        if(!n3ds_presentation_midpoint_active())
+#endif
+            bake_cache[resident].last_frame=bake_frame;
+        ++bake_hits;
+        return &baked[resident];
     }
-    else ++bake_uncached;
+    if(!reusable) ++bake_uncached;
+    if(n3ds_presentation_reject_texture()) return NULL;
     unsigned int slot=baked_count;
     if(slot==BAKE_SLOTS) {
         uint64_t oldest=bake_frame;
@@ -178,6 +237,7 @@ static void *bake_material(const struct native_generic_material *m,const float b
         memcpy(bake_cache[slot].bounds,bounds,sizeof(bake_cache[slot].bounds));
     }
     C3D_Tex *t=&baked[slot];
+    n3ds_gpu_texture_revision_begin(t);
     /* PICA requires an 8x8 texture. Shade generic materials on a coarser
      * grid, then expand each sample; model meters retain their full grid. */
     unsigned int samples=(meter==1 || meter==3)?BAKE_SIZE:NATIVE_GENERIC_SAMPLE_SIZE;
@@ -196,10 +256,13 @@ static void *bake_material(const struct native_generic_material *m,const float b
                 const C3D_Tex *source=m->textures[i];int point=m->point[i];
                 float sx=tu*source->width-(point?0:.5f),sy=tv*source->height-(point?0:.5f);
                 int ix=(int)floorf(sx),iy=(int)floorf(sy);float fx=sx-ix,fy=sy-iy;
-                for(int y=0;y<(point?1:2);++y) for(int x=0;x<(point?1:2);++x) {
-                    int tx=wrap(ix+x,source->width,m->clamp_u[i]);
-                    int ty=source->height-1-wrap(iy+y,source->height,m->clamp_v[i]);
-                    unsigned int pixel=((const unsigned int *)source->data)[tiled_offset(tx,ty,source->width)];
+                int taps=point?1:2,tx[2],ty[2];
+                for(int k=0;k<taps;++k) {
+                    tx[k]=wrap(ix+k,source->width,m->clamp_u[i]);
+                    ty[k]=source->height-1-wrap(iy+k,source->height,m->clamp_v[i]);
+                }
+                for(int y=0;y<taps;++y) for(int x=0;x<taps;++x) {
+                    unsigned int pixel=((const unsigned int *)source->data)[tiled_offset(tx[x],ty[y],source->width)];
                     float weight=point?1:(x?fx:1-fx)*(y?fy:1-fy);
                     texels[i][3]+=(pixel&255)*(weight/255.f);
                 }
@@ -220,6 +283,7 @@ static void *bake_material(const struct native_generic_material *m,const float b
     }
     C3D_TexSetFilter(t,GPU_LINEAR,GPU_LINEAR);
     C3D_TexSetWrap(t,GPU_CLAMP_TO_EDGE,GPU_CLAMP_TO_EDGE);C3D_TexFlush(t);
+    n3ds_gpu_texture_revision_publish(t);
     return t;
 }
 void n3ds_gpu_generic_sample(const struct native_generic_material *m,int map,float u,float v,float result[4])
@@ -286,10 +350,7 @@ int n3ds_gpu_effect_layer_draw(struct native_chicago_vertex *vertices,unsigned i
         if(!n3ds_gpu_texture_bind_sampler(i,original[1-i],override)) return 0;
     }
     C3D_BindProgram(&program);C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER,location,&projection);
-    C3D_AttrInfo *attributes=C3D_GetAttrInfo();AttrInfo_Init(attributes);
-    AttrInfo_AddLoader(attributes,0,GPU_FLOAT,3);
-    for(int i=1;i<4;++i) AttrInfo_AddLoader(attributes,i,GPU_FLOAT,2);
-    AttrInfo_AddLoader(attributes,4,GPU_FLOAT,4);
+    C3D_SetAttrInfo(&chicago_attributes);
     for(int i=0;i<6;++i) C3D_TexEnvInit(C3D_GetTexEnv(i));
     C3D_TexEnvBufUpdate(C3D_Both,0);C3D_TexEnvBufColor(0);
     C3D_TexEnv *env=C3D_GetTexEnv(0);
@@ -321,6 +382,143 @@ int n3ds_gpu_effect_layer_draw(struct native_chicago_vertex *vertices,unsigned i
     for(int i=0;i<2;++i) n3ds_gpu_texture_bind(i,original[i]);
     return result;
 }
+/* Keep copied combiner recipes rather than assuming the previous draw left
+ * TEV state intact. Every application restores all six stages; sorting and
+ * the shared program/uniform invalidation rules remain unchanged. */
+static int chicago_generic_valid(const struct native_generic_recipe *recipe,int maps)
+{
+    for(int c=0;c<2;++c) {
+        const struct native_generic_channel *channel=&recipe->channel[c];
+        if(channel->function<NATIVE_GENERIC_REPLACE || channel->function>NATIVE_GENERIC_MULTIPLY_ADD) return 0;
+        for(int i=0;i<3;++i)
+            if(channel->source[i]>3 || (channel->source[i]<3 && channel->source[i]>=(unsigned int)maps) ||
+                (c?(channel->operand[i]<2 || channel->operand[i]>5):channel->operand[i]>3)) return 0;
+    }
+    return 1;
+}
+static void chicago_generic_stage(const struct native_generic_recipe *recipe,C3D_TexEnv *env)
+{
+    static const GPU_TEVSRC sources[4]={GPU_TEXTURE0,GPU_TEXTURE1,GPU_TEXTURE2,GPU_CONSTANT};
+    static const GPU_COMBINEFUNC functions[6]={GPU_REPLACE,GPU_REPLACE,GPU_MODULATE,GPU_ADD,GPU_INTERPOLATE,GPU_MULTIPLY_ADD};
+    static const int rgb[4]={GPU_TEVOP_RGB_SRC_COLOR,GPU_TEVOP_RGB_ONE_MINUS_SRC_COLOR,GPU_TEVOP_RGB_SRC_ALPHA,GPU_TEVOP_RGB_ONE_MINUS_SRC_ALPHA};
+    static const int alpha[4]={GPU_TEVOP_A_SRC_ALPHA,GPU_TEVOP_A_ONE_MINUS_SRC_ALPHA,GPU_TEVOP_A_SRC_B,GPU_TEVOP_A_ONE_MINUS_SRC_B};
+    C3D_TexEnvColor(env,recipe->constant);
+    for(int c=0;c<2;++c) {
+        const struct native_generic_channel *channel=&recipe->channel[c];
+        int mode=c?C3D_Alpha:C3D_RGB;
+        C3D_TexEnvSrc(env,mode,sources[channel->source[0]],sources[channel->source[1]],sources[channel->source[2]]);
+        if(c) C3D_TexEnvOpAlpha(env,alpha[channel->operand[0]-2],alpha[channel->operand[1]-2],alpha[channel->operand[2]-2]);
+        else C3D_TexEnvOpRgb(env,rgb[channel->operand[0]],rgb[channel->operand[1]],rgb[channel->operand[2]]);
+        C3D_TexEnvFunc(env,mode,functions[channel->function]);
+    }
+}
+static void chicago_recipe_build(const struct native_chicago_material *m,C3D_TexEnv recipe[6])
+{
+    int generic=m->generic.channel[0].function!=0;
+    int fade_stage=generic?1:m->maps;
+    for(int i=0;i<6;++i) C3D_TexEnvInit(&recipe[i]);
+    C3D_TexEnv *env=&recipe[0];
+    C3D_TexEnvSrc(env,C3D_Both,m->vertex_color?GPU_PRIMARY_COLOR:GPU_TEXTURE0,GPU_CONSTANT,GPU_PRIMARY_COLOR);
+    C3D_TexEnvFunc(env,C3D_Both,GPU_REPLACE);
+    for(int i=1;!generic && i<m->maps;++i) {
+        env=&recipe[i];
+        combine(env,C3D_RGB,m->color_function[i-1],GPU_TEXTURE0+i,m->alpha_replicate[i-1]);
+        combine(env,C3D_Alpha,m->alpha_function[i-1],GPU_TEXTURE0+i,0);
+    }
+    if(generic) chicago_generic_stage(&m->generic,&recipe[0]);
+    if(m->generic_lit_lerp) {
+        env=&recipe[0];
+        C3D_TexEnvSrc(env,C3D_RGB,GPU_TEXTURE0,GPU_TEXTURE1,GPU_TEXTURE0);
+        C3D_TexEnvOpRgb(env,GPU_TEVOP_RGB_SRC_COLOR,GPU_TEVOP_RGB_SRC_COLOR,GPU_TEVOP_RGB_SRC_ALPHA);
+        C3D_TexEnvFunc(env,C3D_RGB,GPU_INTERPOLATE);
+        C3D_TexEnvSrc(env,C3D_Alpha,GPU_TEXTURE1,GPU_CONSTANT,GPU_CONSTANT);
+        /* Xbox cross-component alpha reads BLUE, not the texture's alpha. */
+        C3D_TexEnvOpAlpha(env,GPU_TEVOP_A_ONE_MINUS_SRC_B,0,0);
+        C3D_TexEnvFunc(env,C3D_Alpha,GPU_REPLACE);
+        env=&recipe[1];
+        C3D_TexEnvSrc(env,C3D_Both,GPU_PREVIOUS,GPU_PRIMARY_COLOR,GPU_CONSTANT);
+        C3D_TexEnvFunc(env,C3D_Both,GPU_MODULATE);
+    }
+    if(m->shield_mask) {
+        /* tint*(1-mask.a) + intensity.a*mask.rgb, clamped once after addition.
+         * Two samplers/stages; alpha and the existing fade/blend stay intact. */
+        env=&recipe[0];C3D_TexEnvColor(env,m->shield_tint);
+        C3D_TexEnvSrc(env,C3D_RGB,GPU_CONSTANT,GPU_TEXTURE1,GPU_CONSTANT);
+        C3D_TexEnvOpRgb(env,GPU_TEVOP_RGB_SRC_COLOR,GPU_TEVOP_RGB_ONE_MINUS_SRC_ALPHA,0);
+        C3D_TexEnvFunc(env,C3D_RGB,GPU_MODULATE);
+        C3D_TexEnvSrc(env,C3D_Alpha,GPU_TEXTURE0,GPU_CONSTANT,GPU_CONSTANT);
+        C3D_TexEnvFunc(env,C3D_Alpha,GPU_REPLACE);
+        env=&recipe[1];
+        C3D_TexEnvSrc(env,C3D_RGB,GPU_TEXTURE0,GPU_TEXTURE1,GPU_PREVIOUS);
+        C3D_TexEnvOpRgb(env,GPU_TEVOP_RGB_SRC_ALPHA,GPU_TEVOP_RGB_SRC_COLOR,GPU_TEVOP_RGB_SRC_COLOR);
+        C3D_TexEnvFunc(env,C3D_RGB,GPU_MULTIPLY_ADD);
+        C3D_TexEnvSrc(env,C3D_Alpha,GPU_PREVIOUS,GPU_CONSTANT,GPU_CONSTANT);
+        C3D_TexEnvFunc(env,C3D_Alpha,GPU_REPLACE);
+    }
+    /* Original blend-specific fade: alpha modes scale alpha; add scales RGB;
+     * multiply interpolates toward white (half gray for double multiply). */
+    env=&recipe[fade_stage];
+    unsigned int fade=(unsigned int)(m->fade*255.f+.5f);
+    C3D_TexEnvColor(env,fade*0x01010101u);
+    int channel=(m->blend==NATIVE_BLEND_ALPHA)?C3D_Alpha:C3D_RGB;
+    if(m->blend==NATIVE_BLEND_PREMULTIPLIED_ALPHA) channel=C3D_Both;
+    C3D_TexEnvSrc(env,channel,GPU_PREVIOUS,GPU_CONSTANT,GPU_CONSTANT);
+    C3D_TexEnvFunc(env,channel,GPU_MODULATE);
+    if(m->fade!=1.f && (m->blend==NATIVE_BLEND_MULTIPLY || m->blend==NATIVE_BLEND_MIN || m->blend==NATIVE_BLEND_DOUBLE_MULTIPLY)) {
+        env=&recipe[fade_stage+1];
+        unsigned int neutral=m->blend==NATIVE_BLEND_DOUBLE_MULTIPLY?(255-fade)/2:255-fade;
+        C3D_TexEnvColor(env,neutral*0x01010101u);
+        C3D_TexEnvSrc(env,C3D_RGB,GPU_PREVIOUS,GPU_CONSTANT,GPU_CONSTANT);
+        C3D_TexEnvFunc(env,C3D_RGB,GPU_ADD);
+    }
+    if(m->vertex_fade) {
+        /* Compose angular and animation fades once, before blending. */
+        for(int i=fade_stage;i<6;++i) C3D_TexEnvInit(&recipe[i]);
+        env=&recipe[fade_stage];
+        C3D_TexEnvSrc(env,channel,GPU_PREVIOUS,GPU_PRIMARY_COLOR,GPU_CONSTANT);
+        C3D_TexEnvFunc(env,channel,GPU_MODULATE);
+        if(m->blend==NATIVE_BLEND_MULTIPLY || m->blend==NATIVE_BLEND_MIN || m->blend==NATIVE_BLEND_DOUBLE_MULTIPLY) {
+            env=&recipe[fade_stage+1];
+            C3D_TexEnvColor(env,m->blend==NATIVE_BLEND_DOUBLE_MULTIPLY?0x80808080u:0xffffffffu);
+            C3D_TexEnvSrc(env,C3D_RGB,GPU_PRIMARY_COLOR,GPU_CONSTANT,GPU_PREVIOUS);
+            C3D_TexEnvOpRgb(env,GPU_TEVOP_RGB_ONE_MINUS_SRC_COLOR,GPU_TEVOP_RGB_SRC_COLOR,GPU_TEVOP_RGB_SRC_COLOR);
+            C3D_TexEnvFunc(env,C3D_RGB,GPU_MULTIPLY_ADD);
+        }
+    }
+    if(m->meter) {
+        env=&recipe[4];C3D_TexEnvColor(env,m->meter_tint);
+        C3D_TexEnvSrc(env,C3D_RGB,GPU_PREVIOUS,GPU_CONSTANT,GPU_CONSTANT);
+        C3D_TexEnvOpRgb(env,GPU_TEVOP_RGB_SRC_COLOR,GPU_TEVOP_RGB_SRC_ALPHA,GPU_TEVOP_RGB_SRC_COLOR);
+        C3D_TexEnvFunc(env,C3D_RGB,GPU_MODULATE);
+    }
+}
+static void chicago_recipe_apply(const struct native_chicago_material *m)
+{
+    /* Zero-initialized effective key excludes sampler, geometry and projection
+     * state. Byte comparison retains exact animated constants/fade values. */
+    struct native_chicago_material key={0};
+    key.maps=m->maps;key.blend=m->blend;key.fade=m->fade;
+    memcpy(key.color_function,m->color_function,sizeof(key.color_function));
+    memcpy(key.alpha_function,m->alpha_function,sizeof(key.alpha_function));
+    memcpy(key.alpha_replicate,m->alpha_replicate,sizeof(key.alpha_replicate));
+    key.vertex_fade=m->vertex_fade;key.vertex_color=m->vertex_color;
+    key.meter=m->meter;key.meter_tint=m->meter_tint;
+    key.generic_lit_lerp=m->generic_lit_lerp;key.shield_mask=m->shield_mask;key.shield_tint=m->shield_tint;
+    key.generic=m->generic;
+    unsigned int slot=chicago_recipe_last;
+    if(!chicago_recipes[slot].valid || memcmp(&chicago_recipes[slot].key,&key,sizeof(key))) {
+        for(slot=0;slot<CHICAGO_RECIPE_SLOTS;++slot)
+            if(chicago_recipes[slot].valid && !memcmp(&chicago_recipes[slot].key,&key,sizeof(key)))break;
+        if(slot==CHICAGO_RECIPE_SLOTS) {
+            slot=chicago_recipe_next++%CHICAGO_RECIPE_SLOTS;
+            chicago_recipe_build(m,chicago_recipes[slot].stages);
+            chicago_recipes[slot].key=key;chicago_recipes[slot].valid=1;
+        }
+        chicago_recipe_last=slot;
+    }
+    C3D_TexEnvBufUpdate(C3D_Both,0);C3D_TexEnvBufColor(0);
+    for(int i=0;i<6;++i)*C3D_GetTexEnv(i)=chicago_recipes[slot].stages[i];
+}
 static int chicago_draw(const struct native_chicago_material *m,
     struct native_chicago_vertex *vertices,unsigned int vertex_count,
     const unsigned short *indices,unsigned int index_count,const void *gpu_vertices,
@@ -328,6 +526,7 @@ static int chicago_draw(const struct native_chicago_material *m,
 {
     C3D_Mtx projection;
     void *textures[3]={0};
+    int generic=m && m->generic.channel[0].function;
     if(!ready || !m || m->maps<1 || m->maps>3 || m->blend<0 || m->blend>=NATIVE_BLEND_COUNT ||
        !(m->fade>=0 && m->fade<=1) || (!vertices && !gpu_vertices) || !indices || !vertex_count ||
        (m->vertex_fade && (m->vertex_fade<1 || m->vertex_fade>2 || (m->vertex_fade==1 && m->maps!=1 && !m->shield_mask))) ||
@@ -335,15 +534,17 @@ static int chicago_draw(const struct native_chicago_material *m,
        (m->vertex_color && (m->maps!=1 || m->vertex_fade || m->meter)) ||
        (m->generic_lit_lerp && (m->maps!=2 || m->blend!=0 || m->vertex_color || m->vertex_fade || m->meter)) ||
        (m->shield_mask && (m->maps!=2 || m->vertex_color || m->meter || m->generic_lit_lerp)) ||
+       (generic && (m->vertex_color || m->meter || m->generic_lit_lerp || m->shield_mask ||
+        !chicago_generic_valid(&m->generic,m->maps))) ||
        (!gpu_vertices && ((uintptr_t)vertices<(uintptr_t)stream || (uintptr_t)vertices>(uintptr_t)(stream+used) ||
        vertex_count>(unsigned int)(stream+used-vertices))) ||
        !n3ds_gpu_world_projection((float *)&projection)) return 0;
     if(gpu_vertices && (!rows || !uv_rows || !nodes || nodes>28 || skinned<0 || skinned>1 ||
-        m->vertex_fade || m->meter || m->vertex_color || m->generic_lit_lerp || m->shield_mask)) return 0;
+        m->vertex_fade || m->meter || m->vertex_color || m->generic_lit_lerp || m->shield_mask || generic)) return 0;
     if(m->sky && !n3ds_gpu_sky_projection((float *)&projection)) return 0;
     if(relative && !m->sky) {float origin[3];if(!n3ds_gpu_model_projection((float *)&projection,origin))return 0;}
     for(unsigned int i=0;i<index_count;++i) if(indices[i]>=vertex_count) return 0;
-    for(int i=0;i<m->maps-1;++i)
+    for(int i=0;!generic && i<m->maps-1;++i)
         if(!n3ds_chicago_native_function(m->color_function[i]) || !n3ds_chicago_native_function(m->alpha_function[i])) return 0;
     for(int i=0;i<m->maps;++i) {
         textures[i]=n3ds_gpu_texture_bound(i); if(!textures[i] && !m->vertex_color) return 0;
@@ -360,87 +561,15 @@ static int chicago_draw(const struct native_chicago_material *m,
             const float *v=uv_rows+i*4;
             C3D_FVUnifSet(GPU_VERTEX_SHADER,transform_programs[skinned].uv+i,v[0],v[1],0,v[3]);
         }
-        C3D_AttrInfo *a=C3D_GetAttrInfo();AttrInfo_Init(a);
-        AttrInfo_AddLoader(a,0,GPU_FLOAT,3);AttrInfo_AddLoader(a,1,GPU_FLOAT,3);AttrInfo_AddLoader(a,2,GPU_FLOAT,2);
-        if(skinned) AttrInfo_AddLoader(a,3,GPU_FLOAT,4);
+        C3D_SetAttrInfo(&transform_attributes[skinned]);
     } else {
     C3D_BindProgram(&program);
     C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER,location,&projection);
-    C3D_AttrInfo *attributes=C3D_GetAttrInfo(); AttrInfo_Init(attributes);
-    AttrInfo_AddLoader(attributes,0,GPU_FLOAT,3);
-    for(int i=1;i<4;++i) AttrInfo_AddLoader(attributes,i,GPU_FLOAT,2);
-    AttrInfo_AddLoader(attributes,4,GPU_FLOAT,4);
+    C3D_SetAttrInfo(&chicago_attributes);
     }
-    for(int i=0;i<6;++i) C3D_TexEnvInit(C3D_GetTexEnv(i));
-    C3D_TexEnvBufUpdate(C3D_Both,0); C3D_TexEnvBufColor(0);
-    C3D_TexEnv *env=C3D_GetTexEnv(0);
-    C3D_TexEnvSrc(env,C3D_Both,m->vertex_color?GPU_PRIMARY_COLOR:GPU_TEXTURE0,GPU_CONSTANT,GPU_PRIMARY_COLOR);
-    C3D_TexEnvFunc(env,C3D_Both,GPU_REPLACE);
-    for(int i=1;i<m->maps;++i) {
-        env=C3D_GetTexEnv(i);
-        combine(env,C3D_RGB,m->color_function[i-1],GPU_TEXTURE0+i,m->alpha_replicate[i-1]);
-        combine(env,C3D_Alpha,m->alpha_function[i-1],GPU_TEXTURE0+i,0);
-    }
-    if(m->generic_lit_lerp) {
-        env=C3D_GetTexEnv(0);
-        C3D_TexEnvSrc(env,C3D_RGB,GPU_TEXTURE0,GPU_TEXTURE1,GPU_TEXTURE0);
-        C3D_TexEnvOpRgb(env,GPU_TEVOP_RGB_SRC_COLOR,GPU_TEVOP_RGB_SRC_COLOR,GPU_TEVOP_RGB_SRC_ALPHA);
-        C3D_TexEnvFunc(env,C3D_RGB,GPU_INTERPOLATE);
-        C3D_TexEnvSrc(env,C3D_Alpha,GPU_TEXTURE1,GPU_CONSTANT,GPU_CONSTANT);
-        /* Xbox cross-component alpha reads BLUE, not the texture's alpha. */
-        C3D_TexEnvOpAlpha(env,GPU_TEVOP_A_ONE_MINUS_SRC_B,0,0);
-        C3D_TexEnvFunc(env,C3D_Alpha,GPU_REPLACE);
-        env=C3D_GetTexEnv(1);
-        C3D_TexEnvSrc(env,C3D_Both,GPU_PREVIOUS,GPU_PRIMARY_COLOR,GPU_CONSTANT);
-        C3D_TexEnvFunc(env,C3D_Both,GPU_MODULATE);
-    }
-    if(m->shield_mask) {
-        /* tint*(1-mask.a) + intensity.a*mask.rgb, clamped once after addition.
-         * Two samplers/stages; alpha and the existing fade/blend stay intact. */
-        env=C3D_GetTexEnv(0);C3D_TexEnvColor(env,m->shield_tint);
-        C3D_TexEnvSrc(env,C3D_RGB,GPU_CONSTANT,GPU_TEXTURE1,GPU_CONSTANT);
-        C3D_TexEnvOpRgb(env,GPU_TEVOP_RGB_SRC_COLOR,GPU_TEVOP_RGB_ONE_MINUS_SRC_ALPHA,0);
-        C3D_TexEnvFunc(env,C3D_RGB,GPU_MODULATE);
-        C3D_TexEnvSrc(env,C3D_Alpha,GPU_TEXTURE0,GPU_CONSTANT,GPU_CONSTANT);
-        C3D_TexEnvFunc(env,C3D_Alpha,GPU_REPLACE);
-        env=C3D_GetTexEnv(1);
-        C3D_TexEnvSrc(env,C3D_RGB,GPU_TEXTURE0,GPU_TEXTURE1,GPU_PREVIOUS);
-        C3D_TexEnvOpRgb(env,GPU_TEVOP_RGB_SRC_ALPHA,GPU_TEVOP_RGB_SRC_COLOR,GPU_TEVOP_RGB_SRC_COLOR);
-        C3D_TexEnvFunc(env,C3D_RGB,GPU_MULTIPLY_ADD);
-        C3D_TexEnvSrc(env,C3D_Alpha,GPU_PREVIOUS,GPU_CONSTANT,GPU_CONSTANT);
-        C3D_TexEnvFunc(env,C3D_Alpha,GPU_REPLACE);
-    }
-    /* Original blend-specific fade: alpha modes scale alpha; add scales RGB;
-     * multiply interpolates toward white (half gray for double multiply). */
-    env=C3D_GetTexEnv(m->maps);
-    unsigned int fade=(unsigned int)(m->fade*255.f+.5f);
-    C3D_TexEnvColor(env,fade*0x01010101u);
-    int channel=(m->blend==NATIVE_BLEND_ALPHA)?C3D_Alpha:C3D_RGB;
-    if(m->blend==NATIVE_BLEND_PREMULTIPLIED_ALPHA) channel=C3D_Both;
-    C3D_TexEnvSrc(env,channel,GPU_PREVIOUS,GPU_CONSTANT,GPU_CONSTANT);
-    C3D_TexEnvFunc(env,channel,GPU_MODULATE);
-    if(m->fade!=1.f && (m->blend==NATIVE_BLEND_MULTIPLY || m->blend==NATIVE_BLEND_MIN || m->blend==NATIVE_BLEND_DOUBLE_MULTIPLY)) {
-        env=C3D_GetTexEnv(m->maps+1);
-        unsigned int neutral=m->blend==NATIVE_BLEND_DOUBLE_MULTIPLY?(255-fade)/2:255-fade;
-        C3D_TexEnvColor(env,neutral*0x01010101u);
-        C3D_TexEnvSrc(env,C3D_RGB,GPU_PREVIOUS,GPU_CONSTANT,GPU_CONSTANT);
-        C3D_TexEnvFunc(env,C3D_RGB,GPU_ADD);
-    }
-    if(m->vertex_fade) {
-        /* Compose angular and animation fades once, before blending. */
+    if(m->vertex_fade)
         for(unsigned int i=0;i<vertex_count;++i) for(int c=0;c<4;++c) vertices[i].color[c]*=m->fade;
-        for(int i=m->maps;i<6;++i) C3D_TexEnvInit(C3D_GetTexEnv(i));
-        env=C3D_GetTexEnv(m->maps);
-        C3D_TexEnvSrc(env,channel,GPU_PREVIOUS,GPU_PRIMARY_COLOR,GPU_CONSTANT);
-        C3D_TexEnvFunc(env,channel,GPU_MODULATE);
-        if(m->blend==NATIVE_BLEND_MULTIPLY || m->blend==NATIVE_BLEND_MIN || m->blend==NATIVE_BLEND_DOUBLE_MULTIPLY) {
-            env=C3D_GetTexEnv(m->maps+1);
-            C3D_TexEnvColor(env,m->blend==NATIVE_BLEND_DOUBLE_MULTIPLY?0x80808080u:0xffffffffu);
-            C3D_TexEnvSrc(env,C3D_RGB,GPU_PRIMARY_COLOR,GPU_CONSTANT,GPU_PREVIOUS);
-            C3D_TexEnvOpRgb(env,GPU_TEVOP_RGB_ONE_MINUS_SRC_COLOR,GPU_TEVOP_RGB_SRC_COLOR,GPU_TEVOP_RGB_SRC_COLOR);
-            C3D_TexEnvFunc(env,C3D_RGB,GPU_MULTIPLY_ADD);
-        }
-    }
+    chicago_recipe_apply(m);
     C3D_DepthTest(!m->sky,GPU_GEQUAL,GPU_WRITE_COLOR & ~GPU_WRITE_ALPHA);
     /* Xbox D3DCULL_CCW rejects counterclockwise faces, rather than keeping
      * them as the front-facing side. */
@@ -452,10 +581,6 @@ static int chicago_draw(const struct native_chicago_material *m,
         /* Apply brightness in TEV so the blend unit only needs constant RGB.
          * This also avoids backends that cannot combine constant-alpha and
          * constant-color factors in the same RGB blending equation. */
-        env=C3D_GetTexEnv(4);C3D_TexEnvColor(env,m->meter_tint);
-        C3D_TexEnvSrc(env,C3D_RGB,GPU_PREVIOUS,GPU_CONSTANT,GPU_CONSTANT);
-        C3D_TexEnvOpRgb(env,GPU_TEVOP_RGB_SRC_COLOR,GPU_TEVOP_RGB_SRC_ALPHA,GPU_TEVOP_RGB_SRC_COLOR);
-        C3D_TexEnvFunc(env,C3D_RGB,GPU_MODULATE);
         C3D_AlphaTest(true,GPU_GREATER,0);
         C3D_AlphaBlend(GPU_BLEND_ADD,GPU_BLEND_ADD,GPU_ONE,GPU_CONSTANT_COLOR,GPU_ZERO,GPU_ONE);
         C3D_BlendingColor(m->meter_tint);
@@ -463,7 +588,7 @@ static int chicago_draw(const struct native_chicago_material *m,
     for(int i=0;i<m->maps && !m->vertex_color;++i) {
         /* Preserve immutable owner identity even with per-unit sampler state.
          * Identical overrides and restores do not dirty the GPU texture cache. */
-        unsigned int flags=(m->point[i]?(NATIVE_SAMPLER_MIN_POINT|((m->generic_lit_lerp || m->shield_mask)?NATIVE_SAMPLER_MAG_POINT:0)):0)|
+        unsigned int flags=(m->point[i]?(NATIVE_SAMPLER_MIN_POINT|((m->generic_lit_lerp || m->shield_mask || generic)?NATIVE_SAMPLER_MAG_POINT:0)):0)|
             (m->clamp_u[i]?NATIVE_SAMPLER_CLAMP_U:0)|(m->clamp_v[i]?NATIVE_SAMPLER_CLAMP_V:0);
         if(!n3ds_gpu_texture_bind_sampler(i,textures[i],flags)) return 0;
     }

@@ -2,6 +2,7 @@
 #include "game_state.h"
 #include "crc.h"
 #include "engine_checkpoint.h"
+#include "engine_presentation.h"
 
 void n3ds_log(const char *message);
 void *n3ds_state_allocate(unsigned int bytes);
@@ -61,9 +62,8 @@ void game_state_create_or_open_file(void)
     /* Xbox snapshots contain live pointers. A session checkpoint is safe at
      * this arena base; cross-launch saves need explicit relocation/versioning.
      * Never interpret a prior process's raw pointers as this process's state. */
-    /* Both models retain a bounded compressed snapshot in ordinary RAM,
-     * leaving linear GPU memory untouched. Allocation failure falls back to disk. */
-    n3ds_log("CHECKPOINT: bounded compressed RAM snapshots on both model families; disk fallback on allocation failure");
+    /* Both snapshot forms use ordinary RAM and leave GPU memory available. */
+    n3ds_log("CHECKPOINT: bounded RAM snapshots with compressed and disk fallbacks");
     state.valid = FALSE;
 }
 
@@ -83,11 +83,11 @@ boolean game_state_write_to_file(void)
     assert(state.arena);
     long long start=n3ds_engine_ticks();
     state.valid = FALSE;
-    void *snapshot=n3ds_save_snapshot_create(state.arena,state.bytes);
+    void *snapshot=n3ds_save_snapshot_capture(state.arena,state.bytes,state.snapshot);
     if(snapshot) {
         n3ds_save_snapshot_release(state.snapshot);state.snapshot=snapshot;state.valid=TRUE;
         extern long long n3ds_engine_tick_frequency(void);char message[128];
-        snprintf(message,sizeof(message),"CHECKPOINT SNAPSHOT: compressed_bytes=%u main_thread_ms=%.3f",n3ds_save_snapshot_size(snapshot),(n3ds_engine_ticks()-start)*1000./n3ds_engine_tick_frequency());n3ds_log(message);return TRUE;
+        snprintf(message,sizeof(message),"CHECKPOINT SNAPSHOT: stored_bytes=%u main_thread_ms=%.3f",n3ds_save_snapshot_size(snapshot),(n3ds_engine_ticks()-start)*1000./n3ds_engine_tick_frequency());n3ds_log(message);return TRUE;
     }
     n3ds_save_snapshot_release(state.snapshot);state.snapshot=NULL;
     if(!state.checkpoint)state.checkpoint=fopen("sdmc:/halo-source/state/engine-session.bin","w+b");
@@ -102,20 +102,25 @@ boolean game_state_write_to_file(void)
 
 boolean game_state_read_from_file(void)
 {
-    byte *block;
     unsigned long checksum, offset;
     assert(state.arena && (state.checkpoint || state.snapshot) && state.valid);
     /* Transient cinematic filters must not survive reverting to gameplay. */
     extern void rasterizer_screen_effect_stop(void);
     rasterizer_screen_effect_stop();
     if(state.snapshot) {
-        /* Validate the compact image before touching live state. The SD job
+        /* Validate the immutable image before touching live state. The SD job
          * owns a separate reference and only reads, so reverting need not wait. */
-        if(!n3ds_save_snapshot_validate(state.snapshot))return FALSE;
-        block=(malloc)(32768);if(!block)return FALSE;
-        for(offset=0;offset<state.bytes;offset+=32768){unsigned int n=MIN(32768u,state.bytes-offset);
-            assert(n3ds_save_snapshot_read(state.snapshot,offset,block,n));memcpy((byte *)state.arena+offset,block,n);}
-        free(block);n3ds_state_flush(state.arena,state.bytes);return TRUE;
+        int restored=n3ds_save_snapshot_restore(state.snapshot,state.arena,state.bytes);
+        if(restored<0) {
+            vhalt("Native checkpoint decompression failed during restore");
+            return FALSE;
+        }
+        if(!restored) return FALSE;
+        n3ds_state_flush(state.arena,state.bytes);
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+        n3ds_presentation_reset();
+#endif
+        return TRUE;
     }
     /* Verify the whole file before modifying live engine state. */
     if (fseek(state.checkpoint, 0, SEEK_END) || ftell(state.checkpoint) != (long)state.bytes ||
@@ -134,5 +139,8 @@ boolean game_state_read_from_file(void)
         vhalt("Native checkpoint read failed during restore");
     }
     n3ds_state_flush(state.arena, state.bytes);
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+    n3ds_presentation_reset();
+#endif
     return TRUE;
 }

@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include "engine_diagnostics.h"
+#include "engine_renderer.h"
 
 /* Original AI path states alone occupy about 112 KiB per nested caller.
  * B30's firing-position search exceeds the former 256 KiB stack (observed SP
@@ -36,7 +37,36 @@ int n3ds_engine_float_tests(void)
 long long n3ds_engine_ticks(void) { return (long long)svcGetSystemTick(); }
 long long n3ds_engine_tick_frequency(void) { return SYSCLOCK_ARM11; }
 int n3ds_engine_app_running(void) { return aptMainLoop(); }
-float n3ds_platform_3d_slider(void) { return osGet3DSliderState(); }
+int n3ds_platform_console_model(void)
+{
+    static int model=-2;
+    if(model==-2) {
+        model=-1;
+        if(R_SUCCEEDED(cfguInit())) {
+            u8 value=0;
+            Result result=CFGU_GetSystemModel(&value);
+            cfguExit();
+            if(R_SUCCEEDED(result)) model=value;
+        }
+    }
+    return model;
+}
+int n3ds_platform_stereo_supported(void)
+{
+    int model=n3ds_platform_console_model();
+    /* Preserve stereo for systems whose model is unknown or unavailable. */
+    return model!=CFG_MODEL_2DS && model!=CFG_MODEL_N2DSXL;
+}
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+int n3ds_platform_is_new_2ds_xl(void)
+{
+    return n3ds_platform_console_model() == CFG_MODEL_N2DSXL;
+}
+#endif
+float n3ds_platform_3d_slider(void)
+{
+    return n3ds_platform_stereo_supported()?osGet3DSliderState():0.f;
+}
 int n3ds_input_platform_original_model(void)
 {
     static int original=-1;
