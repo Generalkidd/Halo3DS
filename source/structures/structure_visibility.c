@@ -119,6 +119,12 @@ symbols in this file:
 #include "shaders/shader_definitions.h"
 #include "structures/structure_bsp_definitions.h"
 #include "tag_files/tag_groups.h"
+#ifdef HALO_N3DS
+#include "engine_algorithm_profile.h"
+#define NATIVE_CPU_ADD(metric, value) n3ds_algorithm_profile_add(metric, value)
+#else
+#define NATIVE_CPU_ADD(metric, value) ((void)0)
+#endif
 
 /* ---------- constants */
 
@@ -263,6 +269,69 @@ static short portal_hull_from_points(
 	real_point3d const *vertices,
 	short winding,
 	struct portal_hull *result);
+#if defined(HALO_N3DS) && !defined(HALO_N3DS_DISABLE_PORTAL_CACHE)
+#define NATIVE_PORTAL_CACHE
+/* Portal projection cache adapted from Kevin Boggs's New3DS integration.
+ * See LICENSE-KEVIN-MIT.md. Each pass has one camera and frustum, and
+ * stores only the projection, before clipping against the incoming portal. */
+enum
+{
+	ORIGINAL_PORTAL_CACHE_SLOTS = 128,
+	NEW_PORTAL_CACHE_SLOTS = 512,
+	PORTAL_CACHE_VERTICES = 24,
+};
+
+struct native_portal_cache_entry
+{
+	unsigned int generation, key;
+	short result, vertex_count;
+	real_point2d vertices[PORTAL_CACHE_VERTICES];
+};
+
+static struct native_portal_cache_entry original_portal_cache[ORIGINAL_PORTAL_CACHE_SLOTS];
+static struct native_portal_cache_entry *native_portal_cache = original_portal_cache;
+static unsigned int native_portal_cache_slots = ORIGINAL_PORTAL_CACHE_SLOTS;
+static unsigned int native_portal_generation;
+static boolean native_portal_cache_active;
+
+static void native_portal_cache_dispose(void)
+{
+	(free)(native_portal_cache);
+}
+
+static void native_portal_cache_begin(void)
+{
+	static boolean initialized;
+	if (!initialized)
+	{
+		extern int n3ds_input_platform_original_model(void);
+		initialized = TRUE;
+		/* Allocate the larger table only on New hardware. Keep the smaller
+		 * table when allocation fails or on Original models. */
+		if (!n3ds_input_platform_original_model())
+		{
+			struct native_portal_cache_entry *cache = calloc(NEW_PORTAL_CACHE_SLOTS, sizeof(*cache));
+			if (cache && atexit(native_portal_cache_dispose) == 0)
+			{
+				native_portal_cache = cache;
+				native_portal_cache_slots = NEW_PORTAL_CACHE_SLOTS;
+			}
+			else
+			{
+				(free)(cache);
+			}
+		}
+	}
+
+	if (++native_portal_generation == 0)
+	{
+		/* Generation 1 may still be in an unused slot after wraparound. */
+		csmemset(native_portal_cache, 0, native_portal_cache_slots * sizeof(*native_portal_cache));
+		native_portal_generation = 1;
+	}
+	native_portal_cache_active = TRUE;
+}
+#endif
 static short portal_hull_from_portal(
 	short portal_index,
 	boolean direction,
@@ -565,6 +634,7 @@ static short bounding_rectangles_intersect(
 {
 	short result;
 
+	NATIVE_CPU_ADD(N3DS_ALG_CPU_VIS_RECTANGLE, 1);
 	if (rectangle->x1 < test_rectangle->x0 ||
 		rectangle->x0 > test_rectangle->x1 ||
 		rectangle->y1 < test_rectangle->y0 ||
@@ -600,6 +670,7 @@ static long planes_intersect_rectangle(
 	real_rectangle3d local_bounds = *bounds;
 	short plane_index;
 
+	NATIVE_CPU_ADD(N3DS_ALG_CPU_VIS_PLANES, 1);
 	for (plane_index = 0; plane_index < cull_plane_count; plane_index++)
 	{
 		real_plane3d plane = cull_planes[plane_index];
@@ -640,12 +711,14 @@ static long planes_intersect_rectangle(
 
 		if (corner_mask == UNSIGNED_CHAR_MAX)
 		{
+			NATIVE_CPU_ADD(N3DS_ALG_CPU_VIS_PLANE_TEST, plane_index + 1);
 			return _intersection_out;
 		}
 
 		accumulated_behind |= corner_mask;
 	}
 
+	NATIVE_CPU_ADD(N3DS_ALG_CPU_VIS_PLANE_TEST, plane_index);
 	if (accumulated_behind)
 	{
 		return _intersection_spanning;
@@ -860,6 +933,7 @@ static short portal_hull_from_points(
 	short output_index;
 	short hull_result;
 
+	NATIVE_CPU_ADD(N3DS_ALG_CPU_PORTAL_PROJECT, 1);
 	result->vertex_count = 0;
 	facing = plane3d_distance_to_point(plane, &camera->position) * winding;
 
@@ -874,6 +948,7 @@ static short portal_hull_from_points(
 	}
 	else if (facing > 0.0f)
 	{
+		NATIVE_CPU_ADD(N3DS_ALG_CPU_PORTAL_TRANSFORM, vertex_count > 0 ? vertex_count : 0);
 		for (vertex_index = 0; vertex_index < vertex_count; vertex_index++)
 		{
 			matrix4x3_transform_point(
@@ -938,13 +1013,33 @@ static short portal_hull_from_portal(
 	boolean direction,
 	struct portal_hull *result)
 {
+	NATIVE_CPU_ADD(N3DS_ALG_CPU_PORTAL_REQUEST, 1);
+#ifdef NATIVE_PORTAL_CACHE
+	struct native_portal_cache_entry *entry = NULL;
+	unsigned int key = ((unsigned int)(unsigned short)portal_index << 1) | (direction ? 1u : 0u);
+	if (native_portal_cache_active)
+	{
+		entry = &native_portal_cache[key & (native_portal_cache_slots - 1)];
+		if (entry->generation == native_portal_generation && entry->key == key)
+		{
+			NATIVE_CPU_ADD(N3DS_ALG_CPU_PORTAL_HIT, 1);
+			result->vertex_count = entry->vertex_count;
+			if (entry->vertex_count)
+			{
+				csmemcpy(result->vertices, entry->vertices, entry->vertex_count * sizeof(entry->vertices[0]));
+				NATIVE_CPU_ADD(N3DS_ALG_CPU_PORTAL_COPY, entry->vertex_count * sizeof(entry->vertices[0]));
+			}
+			return entry->result;
+		}
+	}
+#endif
 	struct structure_bsp *structure = global_structure_bsp_get();
 	struct structure_visibility_portal *portal = TAG_BLOCK_GET_ELEMENT(
 		&structure->cluster_portals,
 		portal_index,
 		struct structure_visibility_portal);
 
-	return portal_hull_from_points(
+	short hull_result = portal_hull_from_points(
 		&render.camera,
 		&render.frustum,
 		TAG_BLOCK_GET_ELEMENT(
@@ -958,6 +1053,20 @@ static short portal_hull_from_portal(
 		(real_point3d const *)portal->vertices.address,
 		direction ? -1 : 1,
 		result);
+#ifdef NATIVE_PORTAL_CACHE
+	if (entry && result->vertex_count >= 0 && result->vertex_count <= PORTAL_CACHE_VERTICES)
+	{
+		entry->generation = native_portal_generation;
+		entry->key = key;
+		entry->result = hull_result;
+		entry->vertex_count = result->vertex_count;
+		if (entry->vertex_count)
+		{
+			csmemcpy(entry->vertices, result->vertices, entry->vertex_count * sizeof(entry->vertices[0]));
+		}
+	}
+#endif
+	return hull_result;
 }
 
 boolean structure_visibility_find_mirror(
@@ -1486,6 +1595,7 @@ static void structure_visibility_traverse_cluster(
 	struct rendered_cluster *rendered_cluster;
 	long portal_list_index;
 
+	NATIVE_CPU_ADD(N3DS_ALG_CPU_VIS_CLUSTER, 1);
 	match_assert(
 		"c:\\halo\\SOURCE\\structures\\structure_visibility.c",
 		0x3EE,
@@ -1684,6 +1794,7 @@ static void structure_visibility_compute_internal(
 {
 	struct structure_bsp *structure = global_structure_bsp_get();
 
+	NATIVE_CPU_ADD(N3DS_ALG_CPU_VISIBILITY, 1);
 	profile_enter(render_structure_visibility_portal_traversal);
 	if (render.cluster_index != NONE)
 	{
@@ -1706,7 +1817,18 @@ static void structure_visibility_compute_internal(
 		0,
 		BIT_VECTOR_SIZE_IN_BYTES(structure->surfaces.count));
 	render.rendered_cluster_count = 0;
+#ifdef NATIVE_PORTAL_CACHE
+	/* The Xbox traversal is also the uncached reference in the native
+	 * visibility diagnostic. Only the native render pass uses the cache. */
+	if (!build_environment_surfaces)
+	{
+		native_portal_cache_begin();
+	}
+#endif
 	structure_visibility_find_clusters();
+#ifdef NATIVE_PORTAL_CACHE
+	native_portal_cache_active = FALSE;
+#endif
 
 	if (structures_use_pvs_for_vs)
 	{
