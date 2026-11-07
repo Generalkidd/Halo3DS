@@ -8,6 +8,7 @@
 #include "engine_renderer.h"
 #include "engine_renderer_features.h"
 #include "engine_algorithm_profile.h"
+#include "engine_dependency_trace.h"
 #include "engine_parallel.h"
 
 static FILE *log_file;
@@ -97,6 +98,10 @@ int main(void)
     n3ds_log("Halo native engine bootstrap");
     n3ds_log("BUILD: Halo3DS Original-model adaptive rendering 2026-10-05");
     renderer_configuration_log();
+#ifndef HALO_N3DS_DEPENDENCY_TRACE
+    n3ds_log("DEPENDENCY TRACE: enabled=0");
+#endif
+    n3ds_trace_initialize();
 #ifdef HALO_N3DS_LOW_MEMORY_TEST
     n3ds_log("LOW MEMORY FIXTURE: 24 MiB application heap + 32 MiB linear heap");
 #endif
@@ -124,6 +129,7 @@ int main(void)
     extern void n3ds_stall_watch_start(void),n3ds_stall_watch_stop(void);
     n3ds_stall_watch_start();
     int result = textures_ready ? halo_engine_boot() : 1;
+    n3ds_trace_finish();
     n3ds_gpu_algorithm_profile_finish();
     n3ds_algorithm_profile_stop();
     extern void n3ds_prefetch_shutdown(void);

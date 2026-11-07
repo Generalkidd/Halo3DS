@@ -32,6 +32,7 @@
 #include "cache/texture_cache.h"
 #include "engine_presentation.h"
 #include "engine_algorithm_profile.h"
+#include "engine_dependency_trace.h"
 #ifdef HALO_N3DS_PRESENT_INTERPOLATION
 #include "bink/bink_playback.h"
 #include "engine_controls.h"
@@ -146,6 +147,10 @@ void n3ds_frontend_trace(const char *);
 #define FRONTEND_STAGE(s) ((void)0)
 #endif
 #define CHECK(e) do { if(!(e)) { n3ds_log("MISSION RENDER FAIL: " #e); return 1; } } while(0)
+/* Frame checks occur within an open view. Preserve the existing failure path
+ * while closing only its trace scopes; do not submit or retire failed work. */
+#define FRAME_CHECK(e) do { if(!(e)) { n3ds_log("MISSION RENDER FAIL: " #e); \
+    n3ds_trace_view_end();n3ds_trace_attempt_end(N3DS_TRACE_ATTEMPT_PREPARATION_REJECT);return 1; } } while(0)
 /* Populate terrain depth after the held weapon, before world models. This
  * permits early rejection of scenery/characters behind terrain without an
  * extra depth pass. Transparent groups still use the common sorted queue. */
@@ -554,6 +559,7 @@ int n3ds_engine_mission_render(long unit_index,long time,long long tick_start)
             } else {
                 long long midpoint_begin=n3ds_engine_ticks();
                 n3ds_algorithm_profile_context(time,n3ds_engine_cache_generation(),global_structure_bsp_index_get(),2);
+                n3ds_trace_attempt_begin(2,time,n3ds_engine_cache_generation(),global_structure_bsp_index_get());
                 n3ds_gpu_frame_sync(0);
                 if(n3ds_gpu_midpoint_try_begin()) {
                     presentation.midpoint=1;
@@ -569,6 +575,7 @@ int n3ds_engine_mission_render(long unit_index,long time,long long tick_start)
                     else presentation.midpoint_prepare_ticks=MAX(cost,
                         presentation.midpoint_prepare_ticks-presentation.midpoint_prepare_ticks/8);
                 } else {
+                    n3ds_trace_attempt_end(N3DS_TRACE_ATTEMPT_GPU_BUSY);
                     ++presentation.busy_skips;
                 }
             }
@@ -589,6 +596,8 @@ static int mission_render_frame(long unit_index, long time, const struct render_
     float slider, int midpoint, int weapon_prepared, long long begin)
 {
     n3ds_algorithm_profile_context(time,n3ds_engine_cache_generation(),global_structure_bsp_index_get(),midpoint?2:1);
+    /* Midpoints begin their attempt before the nonblocking GPU reservation. */
+    if(!midpoint) n3ds_trace_attempt_begin(1,time,n3ds_engine_cache_generation(),global_structure_bsp_index_get());
     extern boolean cinematic_in_progress(void);
     long long stamp[7];static long long profile[6],service_profile[9],wait_profile;static unsigned int profile_frames;
 #ifdef HALO_N3DS_PERFORMANCE_PROFILE
@@ -628,6 +637,8 @@ static int mission_render_frame(long unit_index, long time, const struct render_
     /* Right view first; left last leaves the ordinary HUD camera authoritative.
      * Simulation, frame service, and the original HUD execute only once. */
     for(int eye=stereo?1:0;eye>=0;--eye) {
+        n3ds_trace_view_begin((unsigned int)eye);
+        n3ds_trace_event(N3DS_TRACE_FRUSTUM_BEGIN,0,0);
         float offset=stereo?(eye?1.f:-1.f)*.0105f*slider:0.f;
         render.camera=center_render;window.camera=center_raster;
         if(stereo) {
@@ -660,19 +671,22 @@ static int mission_render_frame(long unit_index, long time, const struct render_
             if(!memcmp(&render.camera,&window.camera,sizeof(render.camera))) window.frustum=render.frustum;
             else render_camera_build_frustum(&window.camera,NULL,&window.frustum,TRUE);
         }
+        n3ds_trace_event(N3DS_TRACE_FRUSTUM_END,0,0);
+        n3ds_trace_event(N3DS_TRACE_VISIBILITY_BEGIN,0,0);
         structure_visibility_find_camera(&render.camera);
 #ifdef HALO_N3DS_PERFORMANCE_PROFILE
         long long visibility_start = n3ds_engine_ticks();
 #endif
         n3ds_structure_visibility_compute();
+        n3ds_trace_event(N3DS_TRACE_VISIBILITY_END,(unsigned int)render.rendered_cluster_count,0);
 #ifdef HALO_N3DS_PERFORMANCE_PROFILE
         if(!midpoint) visibility_ticks += n3ds_engine_ticks() - visibility_start;
 #endif
 #ifdef HALO_N3DS_ARCHIVE_VERIFY
-        if(!midpoint && render.frame_index%30==0) CHECK(batch_visibility_test());
+        if(!midpoint && render.frame_index%30==0) FRAME_CHECK(batch_visibility_test());
 #endif
         if(!midpoint && native_visibility_verify && render.frame_index%300==0) {
-            CHECK(n3ds_structure_visibility_test());
+            FRAME_CHECK(n3ds_structure_visibility_test());
             n3ds_log("PASS: native cluster visibility matches full Xbox traversal; unused surface list omitted");
         }
         n3ds_gpu_world_view_begin();
@@ -728,7 +742,7 @@ static int mission_render_frame(long unit_index, long time, const struct render_
         view_cost[0]+=stamp[2]-stamp[1];view_cost[1]+=stamp[3]-stamp[2];view_cost[2]+=stamp[4]-stamp[3];
     }
     n3ds_gpu_world_resolve();
-    if(eye) {rasterizer_window_end();continue;}
+    if(eye) {rasterizer_window_end();n3ds_trace_view_end();continue;}
     n3ds_gpu_stereo_overlay(stereo);
 #ifdef HALO_N3DS_HUD_PROFILE
     n3ds_gpu_hud_profile_reset();
@@ -748,8 +762,13 @@ static int mission_render_frame(long unit_index, long time, const struct render_
     }
 finish_view:
     rasterizer_window_end(); rasterizer_windows_end(); rasterizer_frame_end(); rasterizer_present(NULL,NULL);
+    n3ds_trace_view_end();
 #ifdef HALO_N3DS_PRESENT_INTERPOLATION
-    if(midpoint) return n3ds_presentation_reject_reason;
+    if(midpoint) {
+        /* Trace reason values 1/2 deliberately match texture/deadline rejects. */
+        n3ds_trace_attempt_end((unsigned int)n3ds_presentation_reject_reason);
+        return n3ds_presentation_reject_reason;
+    }
 #endif
 #ifdef HALO_N3DS_TEXTURE_PREFETCH
     if (!cinematic_in_progress())
@@ -758,6 +777,7 @@ finish_view:
     if(N3DS_MISSION_PROFILE) stamp[6]=n3ds_engine_ticks();
     } /* eye views */
     render.time_delta_since_tick_sec=frame.dt;
+    n3ds_trace_attempt_end(N3DS_TRACE_ATTEMPT_COMPLETE);
     if(!N3DS_MISSION_PROFILE) return 0;
     profile[1]+=view_cost[0];profile[2]+=view_cost[1];profile[3]+=view_cost[2];
     profile[4]+=stamp[5]-stamp[4];profile[5]+=stamp[6]-stamp[5];

@@ -11,6 +11,7 @@
 #include "engine_renderer.h"
 #include "engine_presentation.h"
 #include "engine_algorithm_profile.h"
+#include "engine_dependency_trace.h"
 #include "engine_input.h"
 #include "engine_textures.h"
 #include "engine_bitmaps.h"
@@ -180,9 +181,13 @@ void _rasterizer_frame_begin(const struct rasterizer_frame_begin_parameters *par
     } else
 #endif
     {
+        n3ds_trace_event(N3DS_TRACE_THREAD_COLLECT_BEGIN,0,0);
         n3ds_threads_collect();
+        n3ds_trace_event(N3DS_TRACE_THREAD_COLLECT_END,0,0);
         next=n3ds_engine_ticks();frame_service_ticks[0]=next-stamp;stamp=next;
+        n3ds_trace_event(N3DS_TRACE_TEXTURE_SERVICE_BEGIN,0,0);
         texture_cache_idle();
+        n3ds_trace_event(N3DS_TRACE_TEXTURE_SERVICE_END,0,0);
         next=n3ds_engine_ticks();frame_service_ticks[1]=next-stamp;stamp=next;
     }
     global_frame_parameters=*parameters;

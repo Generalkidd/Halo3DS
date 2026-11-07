@@ -4,6 +4,7 @@
 #include "engine_cache.h"
 #include "engine_textures.h"
 #include "engine_algorithm_profile.h"
+#include "engine_dependency_trace.h"
 #include "cache_files.h"
 #include "crc.h"
 #include "data.h"
@@ -331,6 +332,7 @@ long n3ds_engine_tags_load(const char *name)
     native_tags = candidate;
     cache_generation_advance();++native_tag_generation;
     n3ds_algorithm_profile_location(native_cache_generation,NONE);
+    n3ds_trace_location(native_cache_generation,NONE);
     strcpy(native_map, path);
     strcpy(native_name, base);
     assert(!native_read_stream);
@@ -368,6 +370,7 @@ boolean n3ds_engine_bsp_load(struct scenario_structure_bsp_reference *reference)
     native_bsp = candidate;
     cache_generation_advance();
     n3ds_algorithm_profile_location(native_cache_generation,(int)index);
+    n3ds_trace_location(native_cache_generation,(int)index);
     native_reference = reference;
     cache_files_bind_native_bsp(header, reference->structure_bsp.index);
     bsp_prefetch_next(references,count,index,native_map);
@@ -387,6 +390,7 @@ void n3ds_engine_bsp_unload(struct scenario_structure_bsp_reference *reference)
     native_reference = NULL;
     cache_generation_advance();
     n3ds_algorithm_profile_location(native_cache_generation,NONE);
+    n3ds_trace_location(native_cache_generation,NONE);
     bsp_close(&native_bsp);
 }
 
@@ -416,6 +420,7 @@ void n3ds_engine_tags_unload(void)
     if (native_tags.tags) {++native_tag_generation;cache_generation_advance();cache_files_bind_native(NULL, NULL);}
     n3ds_cache_close(&native_tags);
     n3ds_algorithm_profile_location(native_cache_generation,NONE);
+    n3ds_trace_location(native_cache_generation,NONE);
     native_map[0] = native_name[0] = 0;
     n3ds_files_unlock();
     /* Original models need a contiguous region for the next campaign cache.

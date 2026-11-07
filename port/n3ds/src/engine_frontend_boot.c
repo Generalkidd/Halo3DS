@@ -18,6 +18,7 @@
 #include "engine_input.h"
 #include "engine_renderer.h"
 #include "engine_algorithm_profile.h"
+#include "engine_dependency_trace.h"
 #include "engine_models.h"
 #include "engine_textures.h"
 #include "engine_bitmaps.h"
@@ -254,6 +255,9 @@ int halo_engine_boot(void)
         n3ds_algorithm_profile_begin_loop((unsigned long long)frame+1,game_time_get(),
             n3ds_engine_cache_generation(),global_structure_bsp_index_get(),game_in_progress() &&
             !main_menu_is_active() && !cinematic_in_progress() && !game_time_get_paused() && !ui_widgets_active());
+        n3ds_trace_begin_loop((unsigned int)frame+1,game_time_get(),
+            n3ds_engine_cache_generation(),global_structure_bsp_index_get(),game_in_progress() &&
+            !main_menu_is_active() && !cinematic_in_progress() && !game_time_get_paused() && !ui_widgets_active());
         n3ds_frontend_trace("checkpoint-poll");n3ds_checkpoint_poll();
         current_frame=frame+1;n3ds_frontend_trace("services");
 #ifdef HALO_N3DS_CHECKPOINT_TEST
@@ -285,14 +289,20 @@ int halo_engine_boot(void)
             #endif
         }
         #endif
+        n3ds_trace_event(N3DS_TRACE_FRAME_SERVICES_BEGIN,0,0);
         n3ds_main_frontend_services();
+        n3ds_trace_event(N3DS_TRACE_FRAME_SERVICES_END,0,0);
         n3ds_algorithm_profile_context(game_time_get(),n3ds_engine_cache_generation(),global_structure_bsp_index_get(),0);
+        n3ds_trace_tick(game_time_get());
         long long services_end=n3ds_engine_ticks();
         n3ds_frontend_trace("input");
         n3ds_input_platform_poll(&sample);
         n3ds_input_gameplay_controls(game_in_progress() && !main_menu_is_active() &&
             !ui_widgets_active() && player_input_enabled() && !cinematic_in_progress());
-        if((sample.held&(NATIVE_KEY_START|NATIVE_KEY_SELECT))==(NATIVE_KEY_START|NATIVE_KEY_SELECT)) break;
+        if((sample.held&(NATIVE_KEY_START|NATIVE_KEY_SELECT))==(NATIVE_KEY_START|NATIVE_KEY_SELECT)) {
+            n3ds_trace_end_loop();
+            break;
+        }
         n3ds_engine_input_sample(&sample);input_update();input_abstraction_update();
 #if FRONTEND_TRACE_FIXTURE
         if(frame%30==0 || memcmp(&sample,&prior,sizeof(sample))) {
@@ -397,6 +407,7 @@ int halo_engine_boot(void)
         #endif
         long long simulation_end=n3ds_engine_ticks();
         n3ds_algorithm_profile_context(game_time_get(),n3ds_engine_cache_generation(),global_structure_bsp_index_get(),0);
+        n3ds_trace_tick(game_time_get());
         #ifdef HALO_N3DS_HIDDEN_HUD_AIM_TEST
         if(frame+1>=831 && frame+1<=930) {
             extern boolean scripted_show_hud(boolean);
@@ -482,6 +493,7 @@ int halo_engine_boot(void)
         n3ds_gpu_frame_work((pacing_stages[4]-start)*(1000.f/n3ds_engine_tick_frequency()));
         n3ds_engine_pace_frame(start);
         n3ds_algorithm_profile_end_loop();
+        n3ds_trace_end_loop();
     }
     #ifdef HALO_N3DS_PLASMA_SHIELD_TEST
     {
@@ -496,6 +508,7 @@ int halo_engine_boot(void)
 #endif
     n3ds_gpu_algorithm_profile_finish();
     n3ds_algorithm_profile_stop();
+    n3ds_trace_stop();
     game_time_end();game_dispose_from_old_map();game_unload();game_dispose();
     sound_dispose();
     /* The finished targets survive map teardown until rasterizer_dispose.

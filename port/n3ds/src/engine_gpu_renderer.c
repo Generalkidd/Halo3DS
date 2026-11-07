@@ -6,6 +6,7 @@
 #include <math.h>
 #include "engine_renderer.h"
 #include "engine_algorithm_profile.h"
+#include "engine_dependency_trace.h"
 #include "engine_presentation.h"
 #include "engine_textures.h"
 #include "engine_text.h"
@@ -1185,10 +1186,16 @@ int n3ds_gpu_renderer_initialize(void)
 }
 static int begin_frame(int midpoint)
 {
+    n3ds_trace_gpu_poll();
+    n3ds_trace_event(N3DS_TRACE_GPU_ACQUIRE_BEGIN,midpoint,0);
     frame_wait_ticks=0;
-    if (!target || frame_active) return 0;
+    if (!target || frame_active) {
+        n3ds_trace_event(N3DS_TRACE_GPU_ACQUIRE_REJECT,midpoint,!target?1:2);
+        return 0;
+    }
     if(!midpoint && !aptMainLoop()) {
         /* Close can arrive at this inner frame boundary as well as the loop. */
+        n3ds_trace_event(N3DS_TRACE_GPU_ACQUIRE_REJECT,midpoint,3);
         n3ds_log("EXIT: HOME requested close at GPU frame boundary");exit(0);
     }
     long long before=svcGetSystemTick();
@@ -1199,8 +1206,12 @@ static int begin_frame(int midpoint)
      * NONBLOCK only polls queue completion; buffers stay owned until it ends. */
     const u8 flags = C3D_FRAME_NONBLOCK | (!midpoint && frame_sync ? C3D_FRAME_SYNCDRAW : 0);
     while(!C3D_FrameBegin(flags)) {
-        if(midpoint) return 0;
+        if(midpoint) {
+            n3ds_trace_event(N3DS_TRACE_GPU_ACQUIRE_REJECT,midpoint,4);
+            return 0;
+        }
         if(svcGetSystemTick()-(u64)before>5ULL*SYSCLOCK_ARM11) {
+            n3ds_trace_event(N3DS_TRACE_GPU_ACQUIRE_REJECT,midpoint,5);
             u32 busy=0;Result status=GSPGPU_ReadHWRegs(0x400034,&busy,sizeof(busy));
             char message[192];snprintf(message,sizeof(message),
                 "GPU STALL FATAL: queue wait exceeded 5s busy=%08lx status=%08lx command_peak=%.4f models=%u indices=%u stereo=%d",
@@ -1212,6 +1223,8 @@ static int begin_frame(int midpoint)
         svcSleepThread(250000LL);
     }
     frame_wait_ticks=svcGetSystemTick()-before;
+    n3ds_trace_event(N3DS_TRACE_GPU_ACQUIRE_END,midpoint,flags);
+    n3ds_trace_gpu_poll();
 #ifdef HALO_N3DS_ALGORITHM_PROFILE
     algorithm_gpu_retire(frame_wait_ticks);
     /* Recorded draws have loop/kind attribution but no actual submission ID
@@ -1279,8 +1292,11 @@ int n3ds_gpu_frame_begin(void)
 int n3ds_gpu_midpoint_try_begin(void)
 {
     if(midpoint_state != MIDPOINT_IDLE || !n3ds_gpu_midpoint_compatible() ||
-       !gspHasGpuRight() || !top_swap_visible() || linearSpaceFree() < MODEL_RESIDENT_HEADROOM || !begin_frame(1))
+       !gspHasGpuRight() || !top_swap_visible() || linearSpaceFree() < MODEL_RESIDENT_HEADROOM) {
+        n3ds_trace_event(N3DS_TRACE_GPU_ACQUIRE_REJECT,1,6);
         return 0;
+    }
+    if(!begin_frame(1)) return 0;
     midpoint_submitted = midpoint_visible_before_keyframe = 0;
     midpoint_state = MIDPOINT_RESERVED;
     return 1;
@@ -2782,6 +2798,7 @@ static int discard_midpoint_if_rejected(void)
     if (midpoint_state == MIDPOINT_RENDERING && n3ds_presentation_check_midpoint()) {
         extern void n3ds_c3d_discard_frame(void);
         n3ds_c3d_discard_frame();
+        n3ds_trace_event(N3DS_TRACE_MIDPOINT_CANCEL,n3ds_presentation_reject_reason,0);
         n3ds_algorithm_profile_add(N3DS_ALGORITHM_GPU_CANCELED_MIDPOINTS,1);
         midpoint_state = MIDPOINT_IDLE;
         timing_pending = 0;
@@ -2794,6 +2811,7 @@ static int discard_midpoint_if_rejected(void)
 
 void n3ds_gpu_present(void)
 {
+    n3ds_trace_gpu_poll();
     if (!frame_active) svcBreak(USERBREAK_PANIC);
 #ifdef HALO_N3DS_PRESENT_INTERPOLATION
     if (discard_midpoint_if_rejected()) return;
@@ -2825,9 +2843,12 @@ void n3ds_gpu_present(void)
          * keep its transfer away from the still-scanning LCD buffer. */
         int ready = top_swap_visible();
         if (!ready && !midpoint) {
+            n3ds_trace_event(N3DS_TRACE_GPU_SWAP_WAIT_BEGIN,top_swap_wait_for,0);
             long long wait_begin = svcGetSystemTick();
             ready = wait_for_top_swap();
             frame_wait_ticks += svcGetSystemTick() - wait_begin;
+            n3ds_trace_event(N3DS_TRACE_GPU_SWAP_WAIT_END,top_swap_wait_for,ready);
+            n3ds_trace_gpu_poll();
         }
         if (!midpoint && midpoint_submitted) {
             midpoint_visible_before_keyframe = ready;
@@ -2848,7 +2869,11 @@ void n3ds_gpu_present(void)
 #endif
     /* Other vertices and textures are flushed when written. Preserve GPU-written
      * display buffers by requesting only command-memory flushing below. */
+    n3ds_trace_event(N3DS_TRACE_GPU_FRAME_END_BEGIN,GX_CMDLIST_FLUSH,
+        (target->used?1u:0u)|(right_target && right_target->used?2u:0u)|(bottom_target->used?4u:0u));
     C3D_FrameEnd(GX_CMDLIST_FLUSH);
+    n3ds_trace_event(N3DS_TRACE_GPU_FRAME_END_END,GX_CMDLIST_FLUSH,0);
+    n3ds_trace_gpu_poll();
 #ifdef HALO_N3DS_PRESENT_INTERPOLATION
     /* Adaptive resolution and the existing queue profile describe keyframes. */
     timing_pending = !midpoint;

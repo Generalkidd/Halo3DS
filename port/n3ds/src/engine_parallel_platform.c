@@ -4,6 +4,7 @@
 #include <string.h>
 #include "engine_parallel.h"
 #include "engine_algorithm_profile.h"
+#include "engine_dependency_trace.h"
 void n3ds_log(const char *);
 static Thread worker;
 static LightEvent wake,complete;
@@ -15,6 +16,27 @@ static void *job_context;
 static unsigned int job_begin,job_end;
 static unsigned int jobs[3],items[3];
 static u64 worker_ticks,main_ticks[3],wait_ticks[3],other_ticks[3];
+#ifdef HALO_N3DS_DEPENDENCY_TRACE
+/* One synchronous range job owns this scratch. The helper only writes its
+ * timestamps; the owner copies them after the existing completion barrier. */
+static u64 trace_worker_start,trace_worker_end;
+static int trace_worker_active;
+static int trace_parallel_serial(n3ds_range_function function,void *context,
+    unsigned int count,unsigned int category)
+{
+    unsigned int id=n3ds_trace_job_begin();
+    if(!id) return function(context,0,count);
+    struct n3ds_trace_context trace;
+    n3ds_trace_snapshot(&trace);trace.job=id;
+    n3ds_trace_event_at(&trace,N3DS_TRACE_SERIAL_BEGIN,n3ds_trace_clock(),category,count);
+    int result=function(context,0,count);
+    n3ds_trace_event_at(&trace,N3DS_TRACE_SERIAL_END,n3ds_trace_clock(),category,count);
+    return result;
+}
+#define PARALLEL_SERIAL_CALL() trace_parallel_serial(function,context,count,category)
+#else
+#define PARALLEL_SERIAL_CALL() function(context,0,count)
+#endif
 #ifdef HALO_N3DS_ALGORITHM_PROFILE
 /* The owner publishes dispatch fields with the job; the helper publishes only
  * this job's wake delay before the existing completion event. No helper calls
@@ -37,8 +59,8 @@ static const unsigned int algorithm_parallel_metrics[3][11]={
 static int algorithm_parallel_serial(n3ds_range_function function,void *context,
     unsigned int count,unsigned int category,u64 batch_start)
 {
-    if(category>=3) return function(context,0,count);
-    u64 start=svcGetSystemTick();int result=function(context,0,count);
+    if(category>=3) return PARALLEL_SERIAL_CALL();
+    u64 start=svcGetSystemTick();int result=PARALLEL_SERIAL_CALL();
     u64 end=svcGetSystemTick();const unsigned int *m=algorithm_parallel_metrics[category];
     n3ds_algorithm_profile_add(m[PAR_SERIAL_COUNT],1);
     n3ds_algorithm_profile_add(m[PAR_SERIAL_ITEMS],count);
@@ -50,7 +72,7 @@ static int algorithm_parallel_serial(n3ds_range_function function,void *context,
 }
 #define PARALLEL_RUN_SERIAL() algorithm_parallel_serial(function,context,count,category,algorithm_batch_start)
 #else
-#define PARALLEL_RUN_SERIAL() function(context,0,count)
+#define PARALLEL_RUN_SERIAL() PARALLEL_SERIAL_CALL()
 #endif
 static void worker_main(void *unused)
 {
@@ -66,6 +88,12 @@ static void worker_main(void *unused)
 #endif
         worker_result=job(job_context,job_begin,job_end);
         worker_ticks=svcGetSystemTick()-start;
+#ifdef HALO_N3DS_DEPENDENCY_TRACE
+        if(trace_worker_active) {
+            trace_worker_start=start;
+            trace_worker_end=start+worker_ticks;
+        }
+#endif
         __sync_synchronize();LightEvent_Signal(&complete);
     }
 }
@@ -126,15 +154,38 @@ int n3ds_parallel_range(n3ds_range_function function,void *context,unsigned int 
      * New-model appcore's work. Dedicated core2 can take half. */
     unsigned int share=worker_core==2?count/2:count/4;
     if(!share) return PARALLEL_RUN_SERIAL();
+#ifdef HALO_N3DS_DEPENDENCY_TRACE
+    unsigned int trace_id=n3ds_trace_job_begin();
+    struct n3ds_trace_context trace;
+    u64 trace_dispatch=0;
+    if(trace_id) {n3ds_trace_snapshot(&trace);trace.job=trace_id;}
+    trace_worker_active=trace_id!=0;
+#endif
     job=function;job_context=context;job_begin=count-share;job_end=count;
 #ifdef HALO_N3DS_ALGORITHM_PROFILE
     algorithm_profile_job=category<3;
     if(algorithm_profile_job)algorithm_dispatch_tick=svcGetSystemTick();
 #endif
+#ifdef HALO_N3DS_DEPENDENCY_TRACE
+    if(trace_id) trace_dispatch=n3ds_trace_clock();
+#endif
     __sync_synchronize();LightEvent_Signal(&wake);
     u64 start=svcGetSystemTick();int result=function(context,0,job_begin);
     u64 end=svcGetSystemTick();LightEvent_Wait(&complete);__sync_synchronize();
     u64 finished=svcGetSystemTick();
+#ifdef HALO_N3DS_DEPENDENCY_TRACE
+    if(trace_id) {
+        /* Timestamp order, not append order, defines overlap. a is the job
+         * category; b is the range size (dispatch: total, join: helper). */
+        n3ds_trace_event_at(&trace,N3DS_TRACE_WORKER_DISPATCH,trace_dispatch,category,count);
+        n3ds_trace_event_at(&trace,N3DS_TRACE_WORKER_START,trace_worker_start,category,share);
+        n3ds_trace_event_at(&trace,N3DS_TRACE_WORKER_END,trace_worker_end,category,share);
+        n3ds_trace_event_at(&trace,N3DS_TRACE_MAIN_WORK_BEGIN,start,category,job_begin);
+        n3ds_trace_event_at(&trace,N3DS_TRACE_MAIN_WORK_END,end,category,job_begin);
+        n3ds_trace_event_at(&trace,N3DS_TRACE_JOIN_BEGIN,end,category,share);
+        n3ds_trace_event_at(&trace,N3DS_TRACE_JOIN_END,finished,category,share);
+    }
+#endif
 #ifdef HALO_N3DS_ALGORITHM_PROFILE
     if(category<3) {
         const unsigned int *m=algorithm_parallel_metrics[category];
@@ -160,6 +211,7 @@ int n3ds_parallel_range(n3ds_range_function function,void *context,unsigned int 
     return result && worker_result;
 }
 #undef PARALLEL_RUN_SERIAL
+#undef PARALLEL_SERIAL_CALL
 static int test_range(void *context,unsigned int begin,unsigned int end)
 {
     unsigned int *out=context;

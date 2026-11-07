@@ -7,6 +7,7 @@
 #include "engine_textures.h"
 #include "engine_renderer.h"
 #include "engine_presentation.h"
+#include "engine_dependency_trace.h"
 
 enum { PLASMA_TEXTURE_SLOTS=16, PLASMA_TEXTURE_BYTES=128*1024 };
 static struct {void *owner,*resource;unsigned int identity,bytes;} plasma_textures[PLASMA_TEXTURE_SLOTS];
@@ -416,20 +417,24 @@ void *n3ds_gpu_texture_create_cube(const unsigned char *rgba,unsigned int side)
 }
 int n3ds_gpu_texture_barrier(void)
 {
+    n3ds_trace_event(N3DS_TRACE_GPU_TEXTURE_FENCE_BEGIN,0,0);
     /* FrameBegin waits for submitted GPU commands. Refuse resource reclamation
      * inside an active frame: its commands may still refer to these textures. */
     /* The suspend hook drained the queue before HOME took the GPU. Closing
      * must free resources without submitting an empty frame or waiting VBlank. */
-    if(aptShouldClose()) return 1;
-    if (n3ds_gpu_frame_active()) return 0;
+    if(aptShouldClose()) { n3ds_trace_event(N3DS_TRACE_GPU_TEXTURE_FENCE_END,1,1); return 1; }
+    if (n3ds_gpu_frame_active()) { n3ds_trace_event(N3DS_TRACE_GPU_TEXTURE_FENCE_END,0,2); return 0; }
     /* Retire submitted work without starting an empty frame or resetting the
      * timer for the last real submission. Both paths use the pinned queue. */
 #ifdef HALO_N3DS_PRESENT_INTERPOLATION
     extern int n3ds_c3d_wait_idle(void);
-    return n3ds_c3d_wait_idle();
+    int result=n3ds_c3d_wait_idle();
+    n3ds_trace_event(N3DS_TRACE_GPU_TEXTURE_FENCE_END,result,0);
+    return result;
 #else
     extern void C3Di_RenderQueueWaitDone(void);
     C3Di_RenderQueueWaitDone();
+    n3ds_trace_event(N3DS_TRACE_GPU_TEXTURE_FENCE_END,1,0);
     return 1;
 #endif
 }

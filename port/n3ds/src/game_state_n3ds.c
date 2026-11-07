@@ -3,6 +3,10 @@
 #include "crc.h"
 #include "engine_checkpoint.h"
 #include "engine_presentation.h"
+#include "engine_dependency_trace.h"
+#ifdef HALO_N3DS_DEPENDENCY_TRACE
+#include "game/game.h"
+#endif
 
 void n3ds_log(const char *message);
 void *n3ds_state_allocate(unsigned int bytes);
@@ -120,6 +124,7 @@ boolean game_state_read_from_file(void)
 #ifdef HALO_N3DS_PRESENT_INTERPOLATION
         n3ds_presentation_reset();
 #endif
+        n3ds_trace_restore(game_time_get());
         return TRUE;
     }
     /* Verify the whole file before modifying live engine state. */
@@ -142,5 +147,6 @@ boolean game_state_read_from_file(void)
 #ifdef HALO_N3DS_PRESENT_INTERPOLATION
     n3ds_presentation_reset();
 #endif
+    n3ds_trace_restore(game_time_get());
     return TRUE;
 }
