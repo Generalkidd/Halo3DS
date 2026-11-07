@@ -153,6 +153,12 @@ symbols in this file:
 #include "models/models.h"
 #include "models/model_definitions.h"
 #include "objects/objects.h"
+#ifdef HALO_N3DS
+#include "engine_algorithm_profile.h"
+#define NATIVE_CPU_ADD(metric, value) n3ds_algorithm_profile_add(metric, value)
+#else
+#define NATIVE_CPU_ADD(metric, value) ((void)0)
+#endif
 
 /* Xbox animation streams pack floats after 16-bit indices/6-byte rotations.
  * Keep their file layout, but do not dereference them as aligned ARM values.
@@ -545,6 +551,7 @@ void animation_graph_node_matrices_from_orientations(
 	short read_index;
 	short write_index;
 
+	NATIVE_CPU_ADD(N3DS_ALG_CPU_ANIM_HIERARCHY, 1);
 	matrix4x3_from_point_and_vectors(&root_matrix, origin, forward, up);
 
 	if (animation_graph->nodes.count > 0)
@@ -590,6 +597,7 @@ void animation_graph_node_matrices_from_orientations(
 			}
 		}
 		while (read_index != write_index);
+		NATIVE_CPU_ADD(N3DS_ALG_CPU_ANIM_HIERARCHY_NODES, read_index);
 	}
 
 	return;
@@ -690,6 +698,8 @@ void interpolate_node_orientations(
 	real inverse_fraction = 1.f - fraction;
 	short node_index;
 
+	NATIVE_CPU_ADD(N3DS_ALG_CPU_ANIM_INTERPOLATE, 1);
+	NATIVE_CPU_ADD(N3DS_ALG_CPU_ANIM_INTERPOLATE_NODES, node_count > 0 ? node_count : 0);
 	match_assert(
 		"c:\\halo\\SOURCE\\models\\model_animations.c",
 		1277,
@@ -726,6 +736,7 @@ void animation_get_root_matrix(
 {
 	struct real_orientation node_orientations[MAXIMUM_NODES_PER_ANIMATION];
 
+	NATIVE_CPU_ADD(N3DS_ALG_CPU_ANIM_ROOT_MATRIX, 1);
 	animation_get_node_orientations(model, animation, frame_index, node_orientations);
 	matrix4x3_from_point_and_quaternion(
 		root_matrix,
@@ -744,6 +755,7 @@ void animation_get_root_velocity(
 	struct real_orientation node_orientations[MAXIMUM_NODES_PER_ANIMATION];
 	struct real_orientation previous_node_orientations[MAXIMUM_NODES_PER_ANIMATION];
 
+	NATIVE_CPU_ADD(N3DS_ALG_CPU_ANIM_ROOT_VELOCITY, 1);
 	match_assert(
 		"c:\\halo\\SOURCE\\models\\model_animations.c",
 		221,
@@ -788,6 +800,8 @@ static void animation_get_node_orientations_uncached(
 		unsigned long scale_flags;
 		short node_index;
 
+		NATIVE_CPU_ADD(compressed ? N3DS_ALG_CPU_ANIM_COMPRESSED : N3DS_ALG_CPU_ANIM_RAW, 1);
+		NATIVE_CPU_ADD(N3DS_ALG_CPU_ANIM_DECODE_NODES, animation->node_count > 0 ? animation->node_count : 0);
 		for (node_index = 0; node_index<animation->node_count; node_index++)
 		{
 			struct real_orientation *orientation = &node_orientations[node_index];
@@ -889,6 +903,7 @@ static void animation_get_node_orientations_uncached(
 	}
 	else
 	{
+		NATIVE_CPU_ADD(N3DS_ALG_CPU_ANIM_DEFAULT, 1);
 		model_get_node_orientations(model, node_orientations);
 	}
 
@@ -920,9 +935,9 @@ static const real_orientation *native_animation_sample(const struct model *model
 {
  if(animation->type!=_animation_base || frame<0 || frame>=animation->frame_count || animation->node_count<=0 || animation->node_count>64 ||
   (model && (model->nodes.count!=animation->node_count || (animation->node_list_checksum && model->node_list_checksum && animation->node_list_checksum!=model->node_list_checksum))) ||
-  !n3ds_animation_map_owned(animation,sizeof(*animation)))return NULL;
+  !n3ds_animation_map_owned(animation,sizeof(*animation))){NATIVE_CPU_ADD(N3DS_ALG_CPU_ANIM_BYPASS,1);return NULL;}
  unsigned int capacity=n3ds_input_platform_original_model()?8:24;
- if(!native_samples){native_samples=(calloc)(capacity,sizeof(*native_samples));if(!native_samples)return NULL;}
+ if(!native_samples){native_samples=(calloc)(capacity,sizeof(*native_samples));if(!native_samples){NATIVE_CPU_ADD(N3DS_ALG_CPU_ANIM_BYPASS,1);return NULL;}}
  unsigned int generation=n3ds_engine_cache_generation();++native_sample_clock;
  struct native_animation_sample *replace=native_samples;
  for(unsigned int i=0;i<capacity;++i){
@@ -932,10 +947,12 @@ static const real_orientation *native_animation_sample(const struct model *model
    static real_orientation reference[64];animation_get_node_orientations_uncached(model,animation,frame,reference);
    assert(!memcmp(reference,c->pose,animation->node_count*sizeof(*reference)));
 #endif
+   NATIVE_CPU_ADD(N3DS_ALG_CPU_ANIM_HIT,1);
    c->stamp=native_sample_clock;++native_sample_hits;return c->pose;
   }
   if(!c->animation || native_sample_clock-c->stamp>native_sample_clock-replace->stamp)replace=c;
  }
+ NATIVE_CPU_ADD(N3DS_ALG_CPU_ANIM_MISS,1);
  animation_get_node_orientations_uncached(model,animation,frame,replace->pose);
  replace->animation=animation;replace->frame=frame;replace->nodes=animation->node_count;replace->generation=generation;replace->stamp=native_sample_clock;replace->compression=hs_model_animation_compression_enabled;++native_sample_misses;
  return replace->pose;
@@ -943,9 +960,10 @@ static const real_orientation *native_animation_sample(const struct model *model
 #endif
 void animation_get_node_orientations(struct model const *model,struct animation const *animation,short frame_index,struct real_orientation *node_orientations)
 {
+ NATIVE_CPU_ADD(N3DS_ALG_CPU_ANIM_FULL,1);
 #ifdef HALO_N3DS
  const real_orientation *pose=native_animation_sample(model,animation,frame_index);
- if(pose){memcpy(node_orientations,pose,animation->node_count*sizeof(*pose));return;}
+ if(pose){memcpy(node_orientations,pose,animation->node_count*sizeof(*pose));NATIVE_CPU_ADD(N3DS_ALG_CPU_ANIM_COPY,animation->node_count*sizeof(*pose));return;}
 #endif
  animation_get_node_orientations_uncached(model,animation,frame_index,node_orientations);
 }
@@ -959,6 +977,7 @@ void n3ds_animation_sample_distant(const struct model *model,const struct animat
  const real_orientation *a=native_animation_sample(model,animation,frame-1);
  if(!a){animation_get_node_orientations(model,animation,frame,out);return;}
  memcpy(out,a,animation->node_count*sizeof(*out));
+ NATIVE_CPU_ADD(N3DS_ALG_CPU_ANIM_COPY,animation->node_count*sizeof(*out));
  const real_orientation *b=native_animation_sample(model,animation,frame+1);
  if(!b){animation_get_node_orientations(model,animation,frame,out);return;}
  for(short i=0;i<animation->node_count;++i){

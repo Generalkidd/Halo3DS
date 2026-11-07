@@ -1305,8 +1305,9 @@ void render_model(
 		model_parameters.skinning.node_matrix_count = model->nodes.count;
 		model_parameters.geometry_flags = 0;
 #ifdef HALO_N3DS
-        /* Native-only packet bits survive the transparent queue. Never apply
-         * scenery reductions to actors, first-person weapons or sky packets. */
+        /* Native-only packet bits survive the transparent queue. Scenery
+         * thinning belongs only to the original-console budget; New models
+         * retain every island of the authored mesh LOD. */
         if(TEST_FLAG(flags,_render_model_native_scenery_bit) && !TEST_FLAG(flags,_render_model_immediate_bit)) {
             extern int n3ds_input_platform_original_model(void);
             int foliage=native_foliage_model(model_index);
@@ -1321,8 +1322,10 @@ void render_model(
 #endif
 
             int old=n3ds_input_platform_original_model();
-            if(old || level_of_detail_pixels<128.f)model_parameters.geometry_flags|=1u<<18;
-            if(level_of_detail_pixels<(old?160.f:64.f))model_parameters.geometry_flags|=1u<<19;
+            if(old) {
+                model_parameters.geometry_flags|=1u<<18;
+                if(level_of_detail_pixels<160.f)model_parameters.geometry_flags|=1u<<19;
+            }
         }
 #endif
 
