@@ -1667,6 +1667,14 @@ void hud_messaging_update(
 					case _hud_message_type_icon:
 						{
 							short icon_index = NONE;
+#ifdef HALO_N3DS
+							wchar_t label[N3DS_GAMEPLAY_BUTTON_LABEL_SIZE];
+							if (n3ds_ui_gameplay_button_label(element->data, label))
+							{
+								render_state_text(&line_bounds, &line_cursor, label, FALSE);
+								break;
+							}
+#endif
 
 							if (element->data > _icon_right_stick)
 							{

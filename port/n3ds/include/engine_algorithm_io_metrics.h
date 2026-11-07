@@ -8,6 +8,23 @@
  * may still run serially; small local audio batches bypass that range API.
  * Sound slot peaks include pending entries; resident bytes count loaded data. */
 #define N3DS_ALGORITHM_IO_METRICS(X) \
+ X(N3DS_ALG_IO_DEFERRED_DECODE_DISPATCH, "deferred_decode_dispatch_count") \
+ X(N3DS_ALG_IO_DEFERRED_DECODE_AGE, "deferred_decode_first_use_age_ticks") \
+ X(N3DS_ALG_IO_DEFERRED_DECODE_JOIN, "deferred_decode_first_use_wait_ticks") \
+ X(N3DS_ALG_IO_DEFERRED_DECODE_DISCARD, "deferred_decode_discard_count") \
+ X(N3DS_ALG_MEM_HEAP_PEAK, "ordinary_heap_sampled_peak_bytes") \
+ X(N3DS_ALG_MEM_LINEAR_PEAK, "linear_heap_sampled_peak_bytes") \
+ X(N3DS_ALG_MEM_HEAP_EVENT_PEAK, "ordinary_heap_event_peak_bytes") \
+ X(N3DS_ALG_MEM_HEAP_ALLOCS, "ordinary_heap_alloc_attempts") \
+ X(N3DS_ALG_MEM_HEAP_RESIZES, "ordinary_heap_resize_calls") \
+ X(N3DS_ALG_MEM_HEAP_ZERO_RESIZES, "ordinary_heap_zero_resize_calls") \
+ X(N3DS_ALG_MEM_HEAP_FREES, "ordinary_heap_free_requests") \
+ X(N3DS_ALG_MEM_HEAP_FAILURES, "ordinary_heap_alloc_failures") \
+ X(N3DS_ALG_MEM_LINEAR_EVENT_PEAK, "linear_heap_event_peak_bytes") \
+ X(N3DS_ALG_MEM_LINEAR_ALLOCS, "linear_heap_alloc_attempts") \
+ X(N3DS_ALG_MEM_LINEAR_FREES, "linear_heap_free_requests") \
+ X(N3DS_ALG_MEM_LINEAR_FAILURES, "linear_heap_alloc_failures") \
+ X(N3DS_ALG_MEM_TEXTURE_STAGE_PEAK, "texture_staging_peak_bytes") \
     X(N3DS_ALG_IO_AUDIO_UPDATES,"audio_update_count") \
     X(N3DS_ALG_IO_AUDIO_ACTIVE_VOICES,"audio_active_voice_count") \
     X(N3DS_ALG_IO_AUDIO_PEAK_VOICES,"audio_peak_voice_count") \

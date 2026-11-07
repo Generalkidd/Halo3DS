@@ -2,6 +2,7 @@
  * allocation failure without exhausting the process or replacing engine code. */
 #include "cseries.h"
 #include "array.h"
+#include "engine_allocation_profile.h"
 void n3ds_log(const char *message);
 void *__real_realloc(void *pointer,size_t size);
 static boolean fail_next_resize;
@@ -10,9 +11,12 @@ void *__wrap_realloc(void *pointer,size_t size)
 {
     if(fail_next_resize) {
         fail_next_resize=FALSE; ++injected_failures;
+        n3ds_allocation_profile_heap_event(N3DS_ALLOCATION_RESIZE, size != 0, size == 0);
         return NULL;
     }
-    return __real_realloc(pointer,size);
+    void *result = __real_realloc(pointer,size);
+    n3ds_allocation_profile_heap_event(N3DS_ALLOCATION_RESIZE, !result && size != 0, size == 0);
+    return result;
 }
 #define VERIFY(x) do { if(!(x)) { n3ds_log("FAIL: native heap: " #x); return 1; } } while(0)
 int halo_engine_heap_tests(void)

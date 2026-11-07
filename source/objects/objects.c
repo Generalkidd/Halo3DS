@@ -53,6 +53,13 @@ OBJECTS.C
 #include "sound/game_sound.h"
 #include "structures/structure_bsp_definitions.h"
 #include "units/units.h"
+#ifdef HALO_N3DS
+#include "engine_algorithm_profile.h"
+#if HALO_N3DS_ALGO_LOCAL_HIERARCHY != N3DS_ALGORITHM_REFERENCE
+#define NATIVE_LOCAL_HIERARCHY 1
+#include "engine_object_hierarchy.inl"
+#endif
+#endif
 
 /* ---------- constants */
 
@@ -1062,6 +1069,9 @@ void objects_dispose_from_old_map(
 
 	cluster_partition_make_invalid(&collideable_object_cluster_partition);
 	cluster_partition_make_invalid(&noncollideable_object_cluster_partition);
+#ifdef NATIVE_LOCAL_HIERARCHY
+	native_hierarchy_reset();
+#endif
 
 	return;
 }
@@ -2562,6 +2572,15 @@ void object_compute_node_matrices(
 		node_count = 1;
 		unknown_var = 0;
 		node_stack[0] = 0;
+#ifdef HALO_N3DS_ALGORITHM_PROFILE
+		extern long long n3ds_engine_ticks(void);
+		long long hierarchy_start = n3ds_engine_ticks();
+#endif
+#ifdef NATIVE_LOCAL_HIERARCHY
+		boolean reuse_hierarchy = model->nodes.count > 1 && native_hierarchy_begin();
+		n3ds_algorithm_profile_add(N3DS_ALG_CPU_OBJECT_HIERARCHY_BYPASS,
+			model->nodes.count > 1 && !reuse_hierarchy);
+#endif
 
 		while (TRUE)
 		{
@@ -2757,12 +2776,24 @@ void object_compute_node_matrices(
 			{
 				real_orientation *orientation = &node_orientations[node_stack_index];
 
-				matrix4x3_from_orientation(&object_nodes[node_stack_index], orientation);
-				match_assert("c:\\halo\\SOURCE\\objects\\objects.c", 2929, node->parent_node_index!=NONE);
-				matrix4x3_multiply(
-					&object_nodes[node->parent_node_index],
-					&object_nodes[node_stack_index],
-					&object_nodes[node_stack_index]);
+#ifdef NATIVE_LOCAL_HIERARCHY
+				if (!reuse_hierarchy || !VALID_INDEX(node->parent_node_index, model->nodes.count) ||
+					!native_hierarchy_child(object_index, object_definition->object.model.index,
+						node_stack_index, orientation, &object_nodes[node->parent_node_index],
+						&object_nodes[node_stack_index]))
+#endif
+				{
+					matrix4x3_from_orientation(&object_nodes[node_stack_index], orientation);
+					match_assert("c:\\halo\\SOURCE\\objects\\objects.c", 2929, node->parent_node_index!=NONE);
+					matrix4x3_multiply(
+						&object_nodes[node->parent_node_index],
+						&object_nodes[node_stack_index],
+						&object_nodes[node_stack_index]);
+#ifdef HALO_N3DS
+					n3ds_algorithm_profile_add(N3DS_ALG_CPU_OBJECT_HIERARCHY_LOCAL_BUILDS, 1);
+					n3ds_algorithm_profile_add(N3DS_ALG_CPU_OBJECT_HIERARCHY_WORLD_BUILDS, 1);
+#endif
+				}
 			}
 
 			if (node_stack_index==0)
@@ -2792,6 +2823,9 @@ void object_compute_node_matrices(
 				break;
 			}
 		}
+#ifdef HALO_N3DS_ALGORITHM_PROFILE
+		n3ds_algorithm_profile_add(N3DS_ALG_CPU_OBJECT_HIERARCHY_TICKS, n3ds_engine_ticks() - hierarchy_start);
+#endif
 	}
 	else
 	{

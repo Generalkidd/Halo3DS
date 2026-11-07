@@ -6,8 +6,20 @@
  * a failing batch may have stopped early. Bytes count explicit copies, not
  * memory traffic inferred from cache hits. No worker updates or inner clocks. */
 #define N3DS_ALGORITHM_CPU_METRICS(X) \
+ X(N3DS_ALG_CPU_REGION_SELECTION_BUILD, "region_selection_build_count") \
+ X(N3DS_ALG_CPU_REGION_SELECTION_REUSE, "region_selection_cross_lod_count") \
+ X(N3DS_ALG_CPU_PARTICLE_SNAPSHOT, "midpoint_particle_snapshot_count") \
+ X(N3DS_ALG_CPU_PARTICLE_INTERPOLATED, "midpoint_particle_interpolated_count") \
+ X(N3DS_ALG_CPU_PARTICLE_HOLD, "midpoint_particle_hold_count") \
+ X(N3DS_ALG_CPU_PARTICLE_PRESSURE, "midpoint_particle_history_failure_count") \
+ X(N3DS_ALG_CPU_RETAINED_SKIN_REUSE, "retained_skin_vertices_reused") \
+ X(N3DS_ALG_CPU_RETAINED_NORMAL_COPY, "retained_skin_normals_copied_bytes") \
+ X(N3DS_ALG_CPU_RETAINED_SKIN_PEAK, "retained_skin_raw_peak_bytes") \
+ X(N3DS_ALG_CPU_RETAINED_SKIN_BYPASS, "retained_skin_storage_bypass_count") \
  X(N3DS_ALG_CPU_ANIM_ROOT_MATRIX, "anim_root_matrix_calls") \
  X(N3DS_ALG_CPU_ANIM_ROOT_VELOCITY, "anim_root_velocity_calls") \
+ X(N3DS_ALG_CPU_ANIM_ROOT_BORROW, "anim_root_borrow_calls") \
+ X(N3DS_ALG_CPU_ANIM_ROOT_COPY_SAVED, "anim_root_copy_avoided_bytes") \
  X(N3DS_ALG_CPU_ANIM_FULL, "anim_full_pose_calls") \
  X(N3DS_ALG_CPU_ANIM_HIT, "anim_cache_hit_calls") \
  X(N3DS_ALG_CPU_ANIM_MISS, "anim_cache_miss_calls") \
@@ -16,11 +28,36 @@
  X(N3DS_ALG_CPU_ANIM_COMPRESSED, "anim_compressed_decode_calls") \
  X(N3DS_ALG_CPU_ANIM_RAW, "anim_raw_decode_calls") \
  X(N3DS_ALG_CPU_ANIM_DECODE_NODES, "anim_decode_nodes_calls") \
+ X(N3DS_ALG_CPU_ANIM_TRACK_BUILDS, "anim_track_descriptor_builds") \
+ X(N3DS_ALG_CPU_ANIM_TRACK_HITS, "anim_track_descriptor_hits") \
+ X(N3DS_ALG_CPU_ANIM_TRACK_BYPASS, "anim_track_bypasses") \
+ X(N3DS_ALG_CPU_ANIM_TRACK_EVICTIONS, "anim_track_evictions") \
+ X(N3DS_ALG_CPU_ANIM_TRACK_VALIDATED, "anim_track_keys_validated") \
+ X(N3DS_ALG_CPU_ANIM_TRACK_CONSTANT, "anim_track_constant_samples") \
+ X(N3DS_ALG_CPU_ANIM_TRACK_INTERVAL_HITS, "anim_track_interval_hits") \
+ X(N3DS_ALG_CPU_ANIM_TRACK_ENDPOINTS, "anim_track_endpoint_decodes") \
+ X(N3DS_ALG_CPU_ANIM_TRACK_SEARCHES, "anim_track_key_searches") \
+ X(N3DS_ALG_CPU_ANIM_TRACK_PEAK, "anim_track_reserved_peak_bytes") \
  X(N3DS_ALG_CPU_ANIM_DEFAULT, "anim_default_pose_calls") \
  X(N3DS_ALG_CPU_ANIM_INTERPOLATE, "anim_interpolate_calls") \
  X(N3DS_ALG_CPU_ANIM_INTERPOLATE_NODES, "anim_interpolate_nodes_calls") \
  X(N3DS_ALG_CPU_ANIM_HIERARCHY, "anim_hierarchy_calls") \
  X(N3DS_ALG_CPU_ANIM_HIERARCHY_NODES, "anim_hierarchy_nodes_calls") \
+ X(N3DS_ALG_CPU_OBJECT_HIERARCHY_LOCAL_HITS, "object_hierarchy_local_hits") \
+ X(N3DS_ALG_CPU_OBJECT_HIERARCHY_WORLD_HITS, "object_hierarchy_world_hits") \
+ X(N3DS_ALG_CPU_OBJECT_HIERARCHY_LOCAL_BUILDS, "object_hierarchy_local_builds") \
+ X(N3DS_ALG_CPU_OBJECT_HIERARCHY_WORLD_BUILDS, "object_hierarchy_world_builds") \
+ X(N3DS_ALG_CPU_OBJECT_HIERARCHY_EVICTIONS, "object_hierarchy_evictions") \
+ X(N3DS_ALG_CPU_OBJECT_HIERARCHY_BYPASS, "object_hierarchy_bypasses") \
+ X(N3DS_ALG_CPU_OBJECT_HIERARCHY_PEAK, "object_hierarchy_reserved_peak_bytes") \
+ X(N3DS_ALG_CPU_OBJECT_HIERARCHY_TICKS, "object_hierarchy_ticks") \
+ X(N3DS_ALG_CPU_INVERSE_BIND_HIT, "model_inverse_bind_reuse_calls") \
+ X(N3DS_ALG_CPU_INVERSE_BIND_MISS, "model_inverse_bind_rebuild_calls") \
+ X(N3DS_ALG_CPU_INVERSE_BIND_AVOIDED, "model_inverse_bind_products_avoided") \
+ X(N3DS_ALG_CPU_INVERSE_BIND_COPY, "model_inverse_bind_copy_bytes") \
+ X(N3DS_ALG_CPU_MIDPOINT_QUAT_REUSE, "midpoint_endpoint_quaternion_reuse") \
+ X(N3DS_ALG_CPU_MIDPOINT_QUAT_BUILD, "midpoint_endpoint_quaternion_build") \
+ X(N3DS_ALG_CPU_MIDPOINT_QUAT_PRESSURE, "midpoint_endpoint_quaternion_allocation_failure") \
  X(N3DS_ALG_CPU_VISIBILITY, "visibility_compute_calls") \
  X(N3DS_ALG_CPU_VIS_CLUSTER, "visibility_cluster_visit_calls") \
  X(N3DS_ALG_CPU_VIS_RECTANGLE, "visibility_rectangle_calls") \
@@ -36,6 +73,16 @@
  X(N3DS_ALG_CPU_BATCH_BYPASS, "bsp_candidate_bypass_calls") \
  X(N3DS_ALG_CPU_INDEX_SCAN, "bsp_triangle_owner_scan_calls") \
  X(N3DS_ALG_CPU_INDEX_COPY, "bsp_visible_index_copy_bytes") \
+ X(N3DS_ALG_CPU_PREPARED_VIEW_ATTEMPT, "prepared_view_attempts") \
+ X(N3DS_ALG_CPU_PREPARED_VIEW_USED, "prepared_view_published") \
+ X(N3DS_ALG_CPU_PREPARED_VIEW_TICKS, "prepared_view_early_ticks") \
+ X(N3DS_ALG_CPU_PREPARED_VIEW_DISCARD_TICKS, "prepared_view_discarded_ticks") \
+ X(N3DS_ALG_CPU_PREPARED_VIEW_WAIT, "prepared_view_remaining_acquire_ticks") \
+ X(N3DS_ALG_CPU_PREPARED_VIEW_DISCARD, "prepared_view_discards") \
+ X(N3DS_ALG_CPU_PREPARED_OBJECT_DISCARD, "prepared_view_object_discards") \
+ X(N3DS_ALG_CPU_PREPARED_VIEW_VERIFIED, "prepared_view_verified") \
+ X(N3DS_ALG_CPU_PREPARED_VIEW_PEAK, "prepared_view_record_peak_bytes") \
+ X(N3DS_ALG_CPU_PREPARED_COPY, "prepared_view_copy_bytes") \
  X(N3DS_ALG_CPU_COLLISION_SPHERE, "collision_model_sphere_calls") \
  X(N3DS_ALG_CPU_COLLISION_POINT, "collision_model_point_calls") \
  X(N3DS_ALG_CPU_COLLISION_VECTOR, "collision_model_vector_calls") \
@@ -44,6 +91,16 @@
  X(N3DS_ALG_CPU_COLLISION_INVERSE, "collision_model_inverse_calls") \
  X(N3DS_ALG_CPU_COLLISION_POINT_XFORM, "collision_model_point_xform_calls") \
  X(N3DS_ALG_CPU_COLLISION_VECTOR_XFORM, "collision_model_vector_xform_calls") \
+ X(N3DS_ALG_CPU_COLLISION_BSP_SPHERE, "collision_bsp_sphere_calls") \
+ X(N3DS_ALG_CPU_COLLISION_BSP_SPHERE_TICKS, "collision_bsp_sphere_ticks") \
+ X(N3DS_ALG_CPU_COLLISION_BSP_PILL, "collision_bsp_pill_calls") \
+ X(N3DS_ALG_CPU_COLLISION_BSP_PILL_TICKS, "collision_bsp_pill_ticks") \
+ X(N3DS_ALG_CPU_COLLISION_FEATURE_COMPARISONS, "collision_feature_linear_comparisons") \
+ X(N3DS_ALG_CPU_COLLISION_FEATURE_PROBES, "collision_feature_table_probes") \
+ X(N3DS_ALG_CPU_COLLISION_FEATURE_SATURATED, "collision_feature_saturated_attempts") \
+ X(N3DS_ALG_CPU_COLLISION_PLANE_COMPARISONS, "collision_active_plane_linear_comparisons") \
+ X(N3DS_ALG_CPU_COLLISION_PLANE_PROBES, "collision_active_plane_lookup_probes") \
+ X(N3DS_ALG_CPU_COLLISION_PLANE_PUSH_PROBES, "collision_active_plane_push_probes") \
  X(N3DS_ALG_CPU_DECODE_HIT, "model_decode_hit_calls") \
  X(N3DS_ALG_CPU_DECODE_MISS, "model_decode_miss_calls") \
  X(N3DS_ALG_CPU_DECODE_VERTICES, "model_decode_batch_vertices_calls") \
@@ -54,6 +111,12 @@
  X(N3DS_ALG_CPU_POSE_EVICT, "model_pose_budget_evict_calls") \
  X(N3DS_ALG_CPU_POSE_FALLBACK, "model_pose_unavailable_calls") \
  X(N3DS_ALG_CPU_SKIN_VERTICES, "model_skin_batch_vertices_calls") \
+ X(N3DS_ALG_CPU_SKIN_NORMAL_REUSE, "model_skin_shared_normal_vertices") \
+ X(N3DS_ALG_CPU_SKIN_LIGHT_AVOIDED, "model_skin_lighting_avoided_vertices") \
+ X(N3DS_ALG_CPU_SKIN_MIDPOINT_REUSE, "model_skin_midpoint_scratch_reuse") \
+ X(N3DS_ALG_CPU_SKIN_MIDPOINT_BUILD, "model_skin_midpoint_scratch_build") \
+ X(N3DS_ALG_CPU_SKIN_MIDPOINT_PRESSURE, "model_skin_midpoint_scratch_allocation_failure") \
+ X(N3DS_ALG_CPU_SKIN_MIDPOINT_PEAK, "model_skin_midpoint_scratch_bytes_peak") \
  X(N3DS_ALG_CPU_POSE_COPY, "model_pose_matrix_copy_bytes") \
  X(N3DS_ALG_CPU_NORMAL_HIT, "model_normal_hit_calls") \
  X(N3DS_ALG_CPU_NORMAL_MISS, "model_normal_miss_calls") \

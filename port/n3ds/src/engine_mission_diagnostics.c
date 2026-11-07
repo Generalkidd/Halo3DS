@@ -3,6 +3,7 @@
 #include "units/units.h"
 #include "items/weapons.h"
 #include "physics/collisions.h"
+#include "engine_allocation_profile.h"
 void n3ds_log(const char *message);
 void __real_free(void *pointer);
 void __real_debug_free(void *pointer,const char *file,long line);
@@ -89,12 +90,18 @@ void n3ds_mission_combat_trace(long unit_index,long time)
 }
 void __wrap_free(void *pointer)
 {
+#ifdef HALO_N3DS_ALLOCATION_PROFILE
+    boolean had_pointer = pointer != NULL;
+#endif
     if(trace && !logging) {
         char message[128]; logging=1;
         snprintf(message,sizeof(message),"MISSION FREE: pointer=%p caller=%p",pointer,__builtin_return_address(0));
         n3ds_log(message); logging=0;
     }
     __real_free(pointer);
+#ifdef HALO_N3DS_ALLOCATION_PROFILE
+    if (had_pointer) n3ds_allocation_profile_heap_event(N3DS_ALLOCATION_FREE, 0, 0);
+#endif
 }
 void __wrap_debug_free(void *pointer,const char *file,long line)
 {

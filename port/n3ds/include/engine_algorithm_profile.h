@@ -43,6 +43,8 @@ void n3ds_algorithm_profile_add_at(const struct n3ds_algorithm_profile_context *
 void n3ds_algorithm_profile_max_at(const struct n3ds_algorithm_profile_context *context,
     enum n3ds_algorithm_metric metric, unsigned long long value);
 void n3ds_algorithm_profile_end_loop(void);
+void n3ds_algorithm_profile_staging_acquire(unsigned int bytes);
+void n3ds_algorithm_profile_staging_release(unsigned int bytes);
 void n3ds_algorithm_profile_finish(void);
 void n3ds_algorithm_profile_stop(void);
 void n3ds_gpu_algorithm_profile_finish(void);
@@ -61,6 +63,8 @@ void n3ds_gpu_algorithm_profile_finish(void);
 #define n3ds_algorithm_profile_add_at(...) ((void)0)
 #define n3ds_algorithm_profile_max_at(...) ((void)0)
 #define n3ds_algorithm_profile_end_loop() ((void)0)
+#define n3ds_algorithm_profile_staging_acquire(...) ((void)0)
+#define n3ds_algorithm_profile_staging_release(...) ((void)0)
 #define n3ds_algorithm_profile_finish() ((void)0)
 #define n3ds_algorithm_profile_stop() ((void)0)
 #define n3ds_gpu_algorithm_profile_finish() ((void)0)

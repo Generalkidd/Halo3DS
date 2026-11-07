@@ -16,10 +16,9 @@ alternative OpenCE declarations and a mixed Arm GNU/Clang compiler setup, rather
 than recovered original Microsoft XDK headers. No diagnostic tolerance or game
 rendering behavior was changed to accommodate an emulator limitation.
 
-The subsequent [algorithm profiling groundwork](ALGORITHM-PROFILING.md)
-freezes this WIP again, adds reference-only comparison selectors and opt-in
-bounded counters, and keeps the working-reference gate open. Algorithm
-candidates and their performance target remain unvalidated and unimplemented.
+The [algorithm profiling work](ALGORITHM-PROFILING.md) freezes this WIP again
+and adds independent experiments and bounded counters. Hardware validation
+remains open. Cooked geometry and the packed GPU layout remain future slices.
 
 The [performance roadmap](PERFORMANCE-ROADMAP.md) governs overall priorities:
 reference measurement, CPU/GPU overlap, retained preparation and geometry work
@@ -93,20 +92,16 @@ containing `PASS` do not demonstrate that this source snapshot passed anything.
 
 ## Independent developer controls
 
-| Build option | Existing path (default, ID 0) | Reserved path (ID 1) |
+| Build option | Reference (ID 0) | Candidate (ID 1) |
 | --- | --- | --- |
 | `--texture-storage` | `legacy`: existing `.ntx` then original map decoder | `candidate-archive`: opt-in RGBA8 `.ntx4` → `.ntx` → map decoder |
-| `--geometry-source` | `runtime`: current decoding/preparation | `cooked`: future exact `.ngm` path with runtime fallback |
-| `--vertex-layout` | `float`: current GPU layouts | `packed`: future exact 44-byte skinned stream |
+| `--geometry-source` | `runtime` | `cooked` uses bounded `.nmg` plans for admitted opaque model parts with runtime fallback |
+| `--vertex-layout` | `float` | `packed` uses the 44-byte weighted stream |
 
-Cooked geometry and packed layouts are **not implemented**. Selecting either
-fails before build output is created; corresponding direct compiler definitions
-also fail closed. The candidate texture selection is now available for the
-[RGBA8-only infrastructure stage](NTX4.md); validation remains pending.
-The controls are separate from texture resolution, cache size, prefetch and
-midpoint presentation. When a stage becomes available, enable that stage's
-implementation and fallback without enabling another stage. Keep baseline
-selection available for rollback.
+`packed-verify` (ID 2) checks reconstructed CPU attributes and is a correctness
+configuration. Each control is separate from texture resolution, cache size,
+prefetch and midpoint presentation. Device colour/depth and timing gates apply
+to candidate promotion. See [cooked geometry](COOKED-MODEL-GEOMETRY.md).
 
 Build/profile output records the selected names and IDs and whether diagnostic
 readback makes the run unsuitable for performance evidence. Any positive

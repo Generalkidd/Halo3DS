@@ -24,11 +24,20 @@ static struct bsp_merged_geometry bsp_merged[BSP_BATCH_SLOTS];
 static unsigned int bsp_packet_count,bsp_merged_count,bsp_merged_bytes,bsp_merge_attempt_frame;
 static unsigned int bsp_merged_groups,bsp_merged_packets_saved,bsp_merged_draws_saved;
 
-static int bsp_packet_key_equal(const struct bsp_draw_packet *a,const struct bsp_draw_packet *b)
+static int bsp_packet_authored_equal(const struct bsp_draw_packet *a,const struct bsp_draw_packet *b)
 {
     return a->shader==b->shader && a->permutation==b->permutation &&
-        a->lightmap_group==b->lightmap_group && a->lightmap_index==b->lightmap_index &&
-        a->lightmap==b->lightmap && a->detail==b->detail && a->alpha==b->alpha &&
+        a->lightmap_group==b->lightmap_group && a->lightmap_index==b->lightmap_index;
+}
+static int bsp_packet_key_equal(const struct bsp_draw_packet *a,const struct bsp_draw_packet *b)
+{
+#if HALO_N3DS_ALGO_BSP_RESOLVED_BATCH == N3DS_ALGORITHM_REFERENCE
+    if(!bsp_packet_authored_equal(a,b)) return 0;
+#endif
+    /* Diffuse scope fixes view, program, topology, cull, blend, depth,
+     * stencil and sampler policy. These values describe all remaining
+     * emitted state for eligible packets, including failed texture binds. */
+    return a->lightmap==b->lightmap && a->detail==b->detail && a->alpha==b->alpha &&
         a->material==b->material && !memcmp(a->scale,b->scale,sizeof(a->scale)) &&
         !memcmp(a->textures,b->textures,sizeof(a->textures));
 }
@@ -129,6 +138,10 @@ static void bsp_batch_submit(const struct bsp_draw_packet *packet)
      * resources resident until the regular frame has finished. */
     if(bsp_packet_count && !bsp_packet_key_equal(bsp_packets,packet)) bsp_batch_flush();
     if(n3ds_presentation_midpoint_rejected()) return;
+#if HALO_N3DS_ALGO_BSP_RESOLVED_BATCH != N3DS_ALGORITHM_REFERENCE && defined(HALO_N3DS_ALGORITHM_PROFILE)
+    if(bsp_packet_count && !bsp_packet_authored_equal(bsp_packets,packet))
+        n3ds_algorithm_profile_add(N3DS_ALG_GPU_BSP_RESOLVED_ADJACENT,1);
+#endif
     bsp_packets[bsp_packet_count++]=*packet;
     if(bsp_packet_count==BSP_BATCH_PACKETS) bsp_batch_flush();
 }

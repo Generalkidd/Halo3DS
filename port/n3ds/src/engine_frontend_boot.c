@@ -16,8 +16,11 @@
 #include "input/input.h"
 #include "input/input_abstraction.h"
 #include "engine_input.h"
+#include "engine_graphics_options.h"
 #include "engine_renderer.h"
+#include "engine_renderer_features.h"
 #include "engine_algorithm_profile.h"
+#include "engine_action_replay.h"
 #include "engine_dependency_trace.h"
 #include "engine_models.h"
 #include "engine_textures.h"
@@ -37,6 +40,44 @@
 #include "engine_cache.h"
 #include "cache_reader.h"
 #include "physics/collision_usage.h"
+void n3ds_log(const char *);
+#if HALO_N3DS_TEXTURE_COMPARE_FIXTURE
+enum { TEXTURE_COMPARE_LOOPS=240, TEXTURE_COMPARE_REQUEST_LOOP=31 };
+#if HALO_N3DS_TEXTURE_COMPARE_FIXTURE == 1
+int n3ds_gpu_texture_compare_sampling(void);
+int n3ds_gpu_texture_compare_capture(unsigned int stage);
+#else
+long long n3ds_engine_tick_frequency(void);
+static struct {
+    long long start,work_end,pace_end;
+    long tick;
+    int campaign;
+} texture_compare_loops[TEXTURE_COMPARE_LOOPS];
+static long long texture_compare_entry_ticks;
+static unsigned long long texture_compare_us(long long ticks)
+{
+    return (unsigned long long)(ticks*1000000/n3ds_engine_tick_frequency());
+}
+static int texture_compare_export(void)
+{
+    extern FILE *texture_compare_fopen(const char *,const char *) __asm__("fopen");
+    FILE *file=texture_compare_fopen("sdmc:/halo-texture-compare.csv","wb");
+    if(!file) return 0;
+    int good=fputs("loop,campaign,tick,work_us,interval_us\n",file)>=0;
+    for(unsigned int i=0;good && i<TEXTURE_COMPARE_LOOPS;++i) {
+        long long next=i+1<TEXTURE_COMPARE_LOOPS?texture_compare_loops[i+1].start:texture_compare_loops[i].pace_end;
+        good=fprintf(file,"%u,%d,%ld,%llu,%llu\n",i+1,texture_compare_loops[i].campaign,
+            texture_compare_loops[i].tick,texture_compare_us(texture_compare_loops[i].work_end-texture_compare_loops[i].start),
+            texture_compare_us(next-texture_compare_loops[i].start))>0;
+    }
+    if(fclose(file) || !good || !texture_compare_entry_ticks) return 0;
+    char message[128];
+    snprintf(message,sizeof(message),"TEXTURE COMPARE ENTRY: elapsed_us=%llu",texture_compare_us(texture_compare_entry_ticks));
+    n3ds_log(message);
+    return 1;
+}
+#endif
+#endif
 #ifdef HALO_N3DS_MAP_CYCLE_TEST
 #include "tag_files/tag_groups.h"
 static const char *native_cycle_maps[]={"a10","a30","a50","b30","b40","c10","c20","c40","d20","d40"};
@@ -51,7 +92,6 @@ static const char *native_cycle_maps[]={"a10","a30","a50","b30","b40","c10","c20
 #include "tag_files/tag_groups.h"
 #include "items/weapons.h"
 #endif
-void n3ds_log(const char *);
 /* Defined only by the opt-in controller fixture. Ordinary builds retain the
  * original clock-based local random seed and do not link the fixture. */
 void __attribute__((weak)) n3ds_frontend_fixture_seed(void) {}
@@ -79,6 +119,12 @@ int n3ds_engine_mission_render(long,long,long long);
 #endif
 #define CHECK(e) do {if(!(e)){n3ds_log("FRONTEND FAIL: " #e);return 1;}}while(0)
 static long current_frame;
+#if HALO_N3DS_TEXTURE_COMPARE_FIXTURE
+long n3ds_texture_compare_menu_milliseconds(void)
+{
+    return current_frame*1000/30;
+}
+#endif
 static int empty_sprite_tests(void)
 {
     struct build_sprite_data data={0};struct shader_effect_definition shader={0};
@@ -118,7 +164,14 @@ void n3ds_frontend_trace(const char *stage)
 #include "engine_frame_pacing.inl"
 int halo_engine_boot(void)
 {
+#if HALO_N3DS_TEXTURE_LOD_FIXTURE
+    extern int n3ds_texture_lod_fixture(void);
+    return n3ds_texture_lod_fixture();
+#endif
     char message[256];long frame;
+#if HALO_N3DS_TEXTURE_COMPARE_FIXTURE == 1
+    int texture_compare_campaign_captured=0;
+#endif
 #if FRONTEND_TRACE_FIXTURE
     struct native_input_sample prior={0};
 #endif
@@ -137,6 +190,9 @@ int halo_engine_boot(void)
     n3ds_log("STARTUP: PASS packed animation translations/scales at all four byte alignments, default/exact/interpolated frames");
     n3ds_log("STARTUP: game state initialize");game_state_initialize();
     n3ds_log("STARTUP: rasterizer initialize");CHECK(rasterizer_initialize());
+#if HALO_N3DS_TEXTURE_COMPARE_FIXTURE == 1
+    CHECK(!n3ds_gpu_texture_compare_sampling());
+#endif
     if(HALO_N3DS_MISSION_TICKS) {
         extern void n3ds_visibility_verify(int enabled);
         n3ds_visibility_verify(1);
@@ -151,14 +207,18 @@ int halo_engine_boot(void)
     n3ds_log("STARTUP: touch aiming checks");CHECK(!halo_engine_touch_aim_tests());
     CHECK(!halo_engine_model_controls_tests());
     n3ds_log("STARTUP: input initialize");CHECK(input_initialize());
+    n3ds_graphics_options_initialize();
     n3ds_log("STARTUP: console initialize");console_initialize();
     n3ds_log("STARTUP: sprite allocation checks");
     CHECK(!empty_sprite_tests());
     int original_model=n3ds_input_platform_original_model();
+#if HALO_N3DS_TEXTURE_COMPARE_FIXTURE
+    CHECK(!original_model);
+#endif
     CHECK(n3ds_engine_texture_resolution(original_model?32:64));
     n3ds_log(original_model?
         "PERFORMANCE PROFILE: original; world 320x192 adaptive/RGB565, textures32, LOD gameplay1/cinematic1/weapon2/distant0, foliage1/4-1/6, base-lit materials, particles48/draw64, emitter cap12, sprite layers2, radar16; full-rate controls/HUD":
-        "PERFORMANCE PROFILE: New; world textures64, LOD gameplay3/closeup cinematics/distant1-2, cosmetic particles144/draw192, dense emitter cap32, large sprite layers8, radar32; full-rate controls/HUD");
+        "PERFORMANCE PROFILE: New; LOD gameplay3/closeup cinematics/distant1-2, cosmetic particles144/draw192, dense emitter cap32, large sprite layers8, radar32; full-rate controls/HUD");
     if(HALO_N3DS_MISSION_TICKS) {
         CHECK(!n3ds_gpu_plasma_lut_tests());
         CHECK(!n3ds_gpu_texture_plasma_tests());
@@ -190,14 +250,17 @@ int halo_engine_boot(void)
 #endif
     n3ds_gpu_loading_pulse(0,1);
     if(HALO_N3DS_MISSION_TICKS) CHECK(!n3ds_gpu_loading_capture(0));
+    if(HALO_N3DS_MISSION_TICKS || N3DS_RENDERER_ALGORITHM_VERIFICATION) {
+        CHECK(n3ds_model_decode_cache_tests());
+        CHECK(n3ds_model_skin_cache_tests());
+        n3ds_log("PASS: model CPU cache regressions");
+    }
     if(HALO_N3DS_MISSION_TICKS) {
         extern int n3ds_gpu_model_storage_tests(void);
         extern int halo_engine_relocation_tests(void),n3ds_gpu_sensor_profile_tests(void);
         extern int n3ds_audio_codec_reference_tests(void);
         CHECK(n3ds_audio_codec_reference_tests());
         n3ds_log("PASS: ADPCM lookup matches scalar PCM for all indices, mono/stereo and clipping");
-        CHECK(n3ds_model_decode_cache_tests());
-        CHECK(n3ds_model_skin_cache_tests());
         CHECK(n3ds_model_gpu_cache_tests());
         n3ds_log("PASS: model cache regressions completed before loading maps");
         CHECK(!halo_engine_relocation_tests());
@@ -219,6 +282,9 @@ int halo_engine_boot(void)
     n3ds_log("STARTUP: game initialize");
     if(n3ds_frontend_fixture_seed) n3ds_frontend_fixture_seed();
     game_initialize();
+#if HALO_N3DS_TEXTURE_COMPARE_FIXTURE
+    *get_global_local_random_seed_address()=0x43544558u;
+#endif
     n3ds_log("FRONTEND: game initialized; loading original main menu");
     n3ds_log("STARTUP: main menu load");
     n3ds_main_frontend_initialize();
@@ -249,9 +315,19 @@ int halo_engine_boot(void)
     n3ds_log("STARTUP: PASS script stack alignment, nested frames, floating-point values and re-entry");
     n3ds_log("STARTUP: main menu ready; entering frame loop");
     for(frame=0;(!HALO_N3DS_MISSION_TICKS || frame<HALO_N3DS_MISSION_TICKS) &&
-            (!HALO_N3DS_PROFILE_FRAMES || frame<HALO_N3DS_PROFILE_FRAMES) && n3ds_engine_app_running();++frame) {
+            (!HALO_N3DS_PROFILE_FRAMES || frame<HALO_N3DS_PROFILE_FRAMES) &&
+#if HALO_N3DS_TEXTURE_COMPARE_FIXTURE
+            frame<TEXTURE_COMPARE_LOOPS &&
+#endif
+#if HALO_N3DS_ACTION_REPLAY_FIXTURE_TICKS
+            frame<HALO_N3DS_ACTION_REPLAY_FIXTURE_TICKS+180 &&
+#endif
+            !n3ds_action_replay_should_exit() && n3ds_engine_app_running();++frame) {
         struct native_input_sample sample;
         long long start=n3ds_engine_ticks();long local,player,unit=NONE;
+#if HALO_N3DS_TEXTURE_COMPARE_FIXTURE == 2
+        texture_compare_loops[frame].start=start;
+#endif
         n3ds_algorithm_profile_begin_loop((unsigned long long)frame+1,game_time_get(),
             n3ds_engine_cache_generation(),global_structure_bsp_index_get(),game_in_progress() &&
             !main_menu_is_active() && !cinematic_in_progress() && !game_time_get_paused() && !ui_widgets_active());
@@ -289,9 +365,29 @@ int halo_engine_boot(void)
             #endif
         }
         #endif
+#if HALO_N3DS_ACTION_REPLAY_FIXTURE_TICKS
+        if(frame==30) {
+            CHECK(main_menu_is_active());
+            /* The same fixture starting seed is installed before either
+             * campaign is created. Replay never restores a per-tick seed. */
+            *get_global_local_random_seed_address()=0x48524150u;
+            main_set_map_name("levels\\a10\\a10");
+        }
+#endif
+#if HALO_N3DS_TEXTURE_COMPARE_FIXTURE
+        if(frame+1==TEXTURE_COMPARE_REQUEST_LOOP) {
+            CHECK(main_menu_is_active());
+            *get_global_local_random_seed_address()=0x43544558u;
+            main_set_map_name("levels\\a10\\a10");
+        }
+#endif
         n3ds_trace_event(N3DS_TRACE_FRAME_SERVICES_BEGIN,0,0);
         n3ds_main_frontend_services();
         n3ds_trace_event(N3DS_TRACE_FRAME_SERVICES_END,0,0);
+        if(n3ds_action_replay_should_exit()) {
+            n3ds_trace_end_loop();
+            break;
+        }
         n3ds_algorithm_profile_context(game_time_get(),n3ds_engine_cache_generation(),global_structure_bsp_index_get(),0);
         n3ds_trace_tick(game_time_get());
         long long services_end=n3ds_engine_ticks();
@@ -303,6 +399,10 @@ int halo_engine_boot(void)
             n3ds_trace_end_loop();
             break;
         }
+        if(n3ds_action_replay_owns_input())memset(&sample,0,sizeof(sample));
+#if HALO_N3DS_TEXTURE_COMPARE_FIXTURE || HALO_N3DS_ACTION_REPLAY_FIXTURE_TICKS
+        memset(&sample,0,sizeof(sample));
+#endif
         n3ds_engine_input_sample(&sample);input_update();input_abstraction_update();
 #if FRONTEND_TRACE_FIXTURE
         if(frame%30==0 || memcmp(&sample,&prior,sizeof(sample))) {
@@ -314,6 +414,11 @@ int halo_engine_boot(void)
         long long simulation_start=n3ds_engine_ticks();
         if(game_in_progress()) {
             player_control_update(1.f/30.f);game_time_update(1.f/30.f);
+            if(n3ds_action_replay_should_exit()) {
+                input_frame_end();
+                n3ds_trace_end_loop();
+                break;
+            }
             director_update(1.f/30.f);observer_update(1.f/30.f);
             n3ds_main_mission_save_step(FALSE);
         }
@@ -435,6 +540,25 @@ int halo_engine_boot(void)
         }
         #endif
         CHECK(!n3ds_engine_mission_render(unit,game_time_get(),start));
+#if HALO_N3DS_TEXTURE_COMPARE_FIXTURE
+        const struct n3ds_cache_view *comparison_map=n3ds_engine_cache_view(0);
+        int comparison_campaign=comparison_map && !strcmp(comparison_map->header.name,"a10") &&
+            !main_menu_is_active() && game_in_progress();
+#if HALO_N3DS_TEXTURE_COMPARE_FIXTURE == 1
+        if(frame+1==TEXTURE_COMPARE_REQUEST_LOOP-1) {
+            CHECK(main_menu_is_active());
+            CHECK(!n3ds_gpu_texture_compare_capture(0));
+        }
+        if(comparison_campaign && !texture_compare_campaign_captured && game_time_get()>=90) {
+            CHECK(!n3ds_gpu_texture_compare_capture(1));
+            texture_compare_campaign_captured=1;
+            snprintf(message,sizeof(message),"TEXTURE COMPARE CAPTURE: a10 tick=%ld",game_time_get());n3ds_log(message);
+        }
+#else
+        if(comparison_campaign && !texture_compare_entry_ticks)
+            texture_compare_entry_ticks=n3ds_engine_ticks()-texture_compare_loops[TEXTURE_COMPARE_REQUEST_LOOP-1].start;
+#endif
+#endif
         n3ds_algorithm_profile_context(game_time_get(),n3ds_engine_cache_generation(),global_structure_bsp_index_get(),0);
         #if HALO_N3DS_MAW_CUTSCENE_TEST == 2
         {
@@ -488,13 +612,30 @@ int halo_engine_boot(void)
         n3ds_engine_texture_prefetch_kick(!cinematic_in_progress() && !ui_widgets_active());
 #endif
         const long long pacing_stages[5]={services_end,simulation_start,simulation_end,audio_end,n3ds_engine_ticks()};
+#if HALO_N3DS_TEXTURE_COMPARE_FIXTURE == 2
+        texture_compare_loops[frame].work_end=pacing_stages[4];
+        texture_compare_loops[frame].tick=game_time_get();
+        texture_compare_loops[frame].campaign=comparison_campaign;
+#endif
         frame_pacing_observe(start,pacing_stages,!main_menu_is_active() && !cinematic_in_progress() &&
             !game_time_get_paused() && !ui_widgets_active());
         n3ds_gpu_frame_work((pacing_stages[4]-start)*(1000.f/n3ds_engine_tick_frequency()));
         n3ds_engine_pace_frame(start);
+#if HALO_N3DS_TEXTURE_COMPARE_FIXTURE == 2
+        texture_compare_loops[frame].pace_end=n3ds_engine_ticks();
+#endif
         n3ds_algorithm_profile_end_loop();
         n3ds_trace_end_loop();
     }
+#if HALO_N3DS_TEXTURE_COMPARE_FIXTURE
+    CHECK(frame==TEXTURE_COMPARE_LOOPS);
+#if HALO_N3DS_TEXTURE_COMPARE_FIXTURE == 1
+    CHECK(texture_compare_campaign_captured);
+#else
+    CHECK(texture_compare_export());
+#endif
+    n3ds_log("TEXTURE COMPARE FIXTURE: pass");
+#endif
     #ifdef HALO_N3DS_PLASMA_SHIELD_TEST
     {
         extern unsigned int n3ds_plasma_test_draws(void);

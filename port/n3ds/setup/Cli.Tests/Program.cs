@@ -25,8 +25,34 @@ try
     Run(2, "verify", "--source", root, "--game", "unexpected");
     Run(2, "update", "--source", root);
     Run(2, "verify", "--source", root, "--quiet", "--quiet");
+    Check(Run(0, "texture-compare", "--help").Output.Contains("lz4hc"), "Texture comparison help missing");
+    string archive = Path.Combine(root, "test.ntx4");
+    Run(2, "texture-compare", "--map", root, "--output", archive);
+    Run(2, "texture-compare", "--map", root, "--output", archive, "--variant", "etc1");
+    Run(2, "texture-compare", "--map", root, "--output", archive, "--variant", "raw", "--lz4-library", root);
+    Run(2, "update", "--variant", "raw");
+    Check(Run(0, "texture-lod", "--help").Output.Contains(".ntxm"), "Texture LOD help missing");
+    Run(2, "texture-lod", "--map", root);
+    Run(2, "texture-lod", "--map", root, "--output", archive, "--variant", "raw");
     Check(!Directory.EnumerateFileSystemEntries(root).Any(), "Usage errors created files");
     Pass("help and invalid arguments without writes");
+
+    string missingMap = Path.Combine(root, "ui.map");
+    Run(1, "texture-compare", "--map", missingMap, "--output", archive, "--variant", "raw");
+    Check(!File.Exists(archive), "Failed comparison created an archive");
+    File.WriteAllText(archive, "previous archive");
+    Run(1, "texture-compare", "--map", missingMap, "--output", archive, "--variant", "compact");
+    Check(File.ReadAllText(archive) == "previous archive", "Comparison replaced an existing archive");
+    Pass("texture comparison rejects missing input and preserves existing output");
+
+    string lod = Path.Combine(root, "test.ntxm");
+    string b30 = Path.Combine(root, "b30.map");
+    Run(1, "texture-lod", "--map", b30, "--output", lod);
+    Check(!File.Exists(lod), "Failed texture LOD fixture created a pack");
+    File.WriteAllText(lod, "previous fixture");
+    Run(1, "texture-lod", "--map", b30, "--output", lod);
+    Check(File.ReadAllText(lod) == "previous fixture", "Texture LOD cooker replaced an existing fixture");
+    Pass("texture LOD fixture rejects missing input and preserves existing output");
 
     string dest = Path.Combine(root, "output with spaces"); Directory.CreateDirectory(dest);
     string exe = Path.Combine(root, "test build.3dsx");

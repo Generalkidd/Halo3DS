@@ -8,6 +8,7 @@
 #include "shaders/shader_definitions.h"
 #include "tag_files/tag_groups.h"
 #include "engine_models.h"
+#include "engine_model_palette.h"
 #include "engine_chicago.h"
 #include "engine_dynamic_geometry.h"
 #include "engine_cache.h"
@@ -21,6 +22,14 @@
 #include "rasterizer/rasterizer_debug_options.h"
 #include "rasterizer/rasterizer_frame_statistics.h"
 #include "math/periodic_functions.h"
+#if HALO_N3DS_GEOMETRY_SOURCE == N3DS_GEOMETRY_SOURCE_COOKED
+#include "crc.h"
+/* Optional map geometry plans use the native SD path. */
+#undef fopen
+#endif
+
+#define N3DS_MODEL_SKIN_VARIANT (HALO_N3DS_ALGO_SHARED_SKINNING != N3DS_ALGORITHM_REFERENCE || \
+    HALO_N3DS_ALGO_RETAINED_SKIN != N3DS_ALGORITHM_REFERENCE)
 
 static int models_active, model_active, first_person_active;
 static int scenery_batch_allowed;
@@ -51,6 +60,15 @@ void n3ds_model_material_profile_read(long long out[12])
 {memcpy(out,material_profile,sizeof(material_profile));memset(material_profile,0,sizeof(material_profile));}
 #endif
 void n3ds_engine_model_counters(struct native_model_counters *result) { assert(result); *result=counters; }
+#if HALO_N3DS_ALGO_MIDPOINT_PARTICLES != N3DS_ALGORITHM_REFERENCE
+/* Count only immediately emitted ordinary colour packets. A scene batch
+ * flush may emit another object's deferred geometry during this draw. */
+static unsigned int presentation_model_draw_serial;
+unsigned int n3ds_presentation_model_draw_serial(void)
+{
+    return presentation_model_draw_serial;
+}
+#endif
 static struct rasterizer_model_begin_parameters parameters;
 static struct native_model_lighting native_lighting;
 static float lighting_channel(float value) {return isfinite(value)?PIN(value,0.f,1.f):0;}
@@ -315,6 +333,13 @@ struct cached_pose {
     real_vector2d uv_scale;
     unsigned int bytes,bone_count,stamp,owner;
     int valid;
+#if HALO_N3DS_ALGO_RETAINED_SKIN != N3DS_ALGORITHM_REFERENCE
+    real_vector3d *raw_normals;
+    unsigned int raw_bytes;
+#endif
+#if N3DS_MODEL_SKIN_VARIANT
+    int has_lighting;
+#endif
 };
 static struct decoded_stream {
     const struct model_vertex_compressed *address;
@@ -376,6 +401,12 @@ static int model_pose_matrices_equal(const struct decoded_stream *stream,const r
 static unsigned int decoded_bytes,decoded_hits,decoded_misses,decoded_next;
 static unsigned long long decoded_revision;
 static unsigned int pose_bytes,pose_hits,pose_misses,pose_clock,pose_evictions;
+#if HALO_N3DS_ALGO_RETAINED_SKIN != N3DS_ALGORITHM_REFERENCE
+static unsigned int retained_normal_bytes;
+#endif
+#if N3DS_MODEL_SKIN_VARIANT
+static void midpoint_skin_clear(void);
+#endif
 static unsigned int upload_hits,upload_misses;
 static unsigned long long upload_saved_bytes;
 /* Separate CPU ownership prevents an optional normal lookup from invalidating
@@ -409,6 +440,10 @@ static void scenery_mesh_release(void);
 static void model_compact_release(void);
 static void pose_release(struct cached_pose *p)
 {
+#if HALO_N3DS_ALGO_RETAINED_SKIN != N3DS_ALGORITHM_REFERENCE
+    free(p->raw_normals);
+    retained_normal_bytes-=p->raw_bytes;
+#endif
     free(p->posed);free(p->bones);pose_bytes-=p->bytes;memset(p,0,sizeof(*p));
 }
 static void decode_stream_release(struct decoded_stream *s)
@@ -451,6 +486,9 @@ void n3ds_model_decode_cache_flush(void)
     }
     normal_poses_release();
     for(unsigned int i=0;i<DECODE_STREAMS;++i) decode_stream_release(decoded_streams+i);
+#if N3DS_MODEL_SKIN_VARIANT
+    midpoint_skin_clear();
+#endif
     scenery_batch_release();model_compact_release();merged_models_release();scenery_mesh_release();
     decoded_hits=decoded_misses=decoded_next=0;memset(decoded_hints,0,sizeof(decoded_hints));last_decoded=NULL;
     pose_hits=pose_misses=pose_clock=pose_evictions=0;
@@ -458,18 +496,17 @@ void n3ds_model_decode_cache_flush(void)
 /* Returned storage is only valid until the next stream lookup or map unload.
  * Callers consume it immediately. Mutable sources require an exact byte match;
  * allocation/budget failure leaves the checked per-vertex path available. */
-struct model_decode_range {
-    const struct model_vertex_compressed *input;
-    struct model_vertex_uncompressed *output;
-};
 static int decode_vertex_range(void *context,unsigned int begin,unsigned int end)
 {
-    struct model_decode_range *r=context;
+    struct n3ds_model_decode_range *r=context;
     for(unsigned int i=begin;i<end;++i) if(!n3ds_model_decode_vertex(r->input+i,r->output+i)) return 0;
     return 1;
 }
 static const struct model_vertex_uncompressed *decode_stream(const void *data,unsigned int count,int immutable)
 {
+#if HALO_N3DS_ALGO_DEFERRED_DECODE != N3DS_ALGORITHM_REFERENCE
+    unsigned int first_worker_vertex=0, generation=0;
+#endif
     if(!data || !count || count>65535) return NULL;
     unsigned int source_bytes=count*sizeof(struct model_vertex_compressed);
     unsigned int vertex_bytes=count*sizeof(struct model_vertex_uncompressed);
@@ -510,9 +547,18 @@ static const struct model_vertex_uncompressed *decode_stream(const void *data,un
     s->uploaded=NULL;
     s->immutable=immutable;
     for(unsigned int i=0;i<STREAM_POSES;++i) s->poses[i].valid=0;
-    struct model_decode_range decode={data,s->vertices};
+    struct n3ds_model_decode_range decode={data,s->vertices};
     /* Record on the submitting owner, never inside the shared range worker. */
     n3ds_algorithm_profile_add(N3DS_ALG_CPU_DECODE_VERTICES,count);
+#if HALO_N3DS_ALGO_DEFERRED_DECODE != N3DS_ALGORITHM_REFERENCE
+    /* The main owner cannot release this source or cache slot before the
+     * join. The worker only writes the unpublished tail of the vertex array. */
+    generation=n3ds_engine_cache_generation();
+    first_worker_vertex=n3ds_parallel_decode_begin(decode_vertex_range,&decode,count,256);
+    if(first_worker_vertex) {
+        if(!decode_vertex_range(&decode,0,first_worker_vertex)) goto failed;
+    } else
+#endif
     if(!n3ds_parallel_range(decode_vertex_range,&decode,count,256,1)) goto failed;
     /* Accept only exactly rigid streams, including two weights on one bone.
      * Mutable source changes rebuild both the classification and local stream. */
@@ -521,7 +567,17 @@ static const struct model_vertex_uncompressed *decode_stream(const void *data,un
     s->uv_bounds[0]=s->uv_bounds[1]=1e30f;s->uv_bounds[2]=s->uv_bounds[3]=-1e30f;
     byte remap[64];memset(remap,255,sizeof(remap));int gpu_valid=1;
     for(unsigned int i=0;i<count;++i) {
+#if HALO_N3DS_ALGO_DEFERRED_DECODE != N3DS_ALGORITHM_REFERENCE
+        if(first_worker_vertex && i==first_worker_vertex) {
+            first_worker_vertex=0;
+            if(!n3ds_parallel_decode_end(0) || generation!=n3ds_engine_cache_generation()) goto failed;
+        }
+#endif
         const struct model_vertex_uncompressed *v=s->vertices+i;
+#if HALO_N3DS_ALGO_DEFERRED_DECODE == N3DS_ALGORITHM_VERIFY
+        struct model_vertex_uncompressed reference;
+        assert(n3ds_model_decode_vertex(decode.input+i,&reference) && !memcmp(v,&reference,sizeof(reference)));
+#endif
         for(int axis=0;axis<3;++axis) if(!isfinite(v->position.n[axis]) || !isfinite(v->normal.n[axis])) goto failed;
         for(int axis=0;axis<2;++axis) {
             float uv=v->texcoord.n[axis];
@@ -546,7 +602,7 @@ static const struct model_vertex_uncompressed *decode_stream(const void *data,un
     }
     if(!gpu_valid) s->gpu_nodes=0;
     /* A stable identity palette lets neighboring parts share GPU bone rows.
-     * High-index bones retain the compact palette (28-register budget). */
+     * High-index bones still require a compact palette. */
     if(gpu_valid && s->rigid_node<0 && s->gpu_nodes) {
         unsigned int highest=0;for(unsigned int n=0;n<s->gpu_nodes;++n)highest=MAX(highest,s->palette[n]);
         if(highest<NATIVE_GPU_MODEL_BONES) {
@@ -554,6 +610,14 @@ static const struct model_vertex_uncompressed *decode_stream(const void *data,un
             s->identity_palette=1;
             for(unsigned int n=0;n<s->gpu_nodes;++n) {s->palette[n]=n;remap[n]=n;}
         }
+#if HALO_N3DS_ALGO_STABLE_PALETTE != N3DS_ALGORITHM_REFERENCE
+        else {
+            unsigned int changed=n3ds_model_order_compact_palette(s->palette,remap);
+            n3ds_algorithm_profile_add(N3DS_ALGORITHM_GPU_COMPACT_PALETTES_ORDERED,1);
+            n3ds_algorithm_profile_add(N3DS_ALGORITHM_GPU_COMPACT_PALETTE_SLOTS_CHANGED,changed);
+            (void)changed;
+        }
+#endif
     }
     for(unsigned int n=0;n<s->gpu_nodes;++n)
         s->required_nodes=MAX(s->required_nodes,(unsigned int)s->palette[n]+1);
@@ -575,7 +639,22 @@ static const struct model_vertex_uncompressed *decode_stream(const void *data,un
         const struct model_vertex_uncompressed *v=s->vertices+i;
         struct native_skin_vertex *out=(struct native_skin_vertex *)s->local+i;
         memcpy(out->position,&v->position,12);memcpy(out->normal,&v->normal,12);memcpy(out->uv,&v->texcoord,8);
-        for(int k=0;k<2;++k) {out->bones[k]=v->node_weights[k]?remap[v->nodes[k]]*3:0;out->bones[k+2]=v->node_weights[k];}
+        n3ds_skin_vertex_set_bones(out,v->node_weights[0]?remap[v->nodes[0]]*3:0,
+            v->node_weights[1]?remap[v->nodes[1]]*3:0,v->node_weights[0],v->node_weights[1]);
+#if HALO_N3DS_ALGO_STABLE_PALETTE == N3DS_ALGORITHM_VERIFY
+        float influences[4];
+        n3ds_skin_vertex_read_bones(out,influences);
+        assert(!memcmp(influences+2,v->node_weights,2*sizeof(float)));
+        for(int k=0;k<2;++k) {
+            unsigned int row=(unsigned int)influences[k];
+            assert(row%3==0 && row/3<s->gpu_nodes);
+            assert(v->node_weights[k]?s->palette[row/3]==v->nodes[k]:!row);
+        }
+#endif
+    }
+    if(s->gpu_nodes && s->rigid_node<0) {
+        n3ds_algorithm_profile_add(N3DS_ALGORITHM_GPU_WEIGHTED_VERTICES,count);
+        n3ds_algorithm_profile_add(N3DS_ALGORITHM_GPU_WEIGHTED_STREAM_BYTES,local_bytes);
     }
     if(s->source) {
         memcpy(s->source,data,source_bytes);
@@ -583,6 +662,9 @@ static const struct model_vertex_uncompressed *decode_stream(const void *data,un
     }
     s->revision=++decoded_revision;s->valid=1;return s->vertices;
 failed:
+#if HALO_N3DS_ALGO_DEFERRED_DECODE != N3DS_ALGORITHM_REFERENCE
+    if(first_worker_vertex) n3ds_parallel_decode_end(1);
+#endif
     n3ds_algorithm_profile_add(N3DS_ALG_CPU_DECODE_FAILURE,1);
     decode_stream_release(s);
     return NULL;
@@ -621,12 +703,41 @@ int n3ds_model_decode_cache_tests(void)
     }
     const struct model_vertex_uncompressed *again=n3ds_model_decode_stream(evict,1);
     if(!again || again->position.x!=0 || decoded_bytes>DECODE_BYTES) return 0;
+#if HALO_N3DS_ALGO_DEFERRED_DECODE != N3DS_ALGORITHM_REFERENCE
+    /* Reject both an owner-prefix failure and a worker-tail failure, then
+     * immediately reuse the slot. A leaked in-flight job cannot pass this. */
+    struct model_vertex_compressed split[257]={0};
+    const unsigned int failure_indices[]={0,256};
+    for(unsigned int j=0;j<NUMBEROF(failure_indices);++j) {
+        unsigned int invalid=failure_indices[j];
+        split[invalid].nodes[0]=1;
+        if(n3ds_model_decode_stream(split,NUMBEROF(split))) return 0;
+        split[invalid].nodes[0]=0;
+        const struct model_vertex_uncompressed *valid=n3ds_model_decode_stream(split,NUMBEROF(split));
+        if(!valid || !n3ds_model_decode_vertex(split+256,&expected) ||
+           memcmp(valid+256,&expected,sizeof(expected))) return 0;
+    }
+#endif
     n3ds_model_decode_cache_flush();return 1;
 }
 
-int n3ds_model_skin_vertex(const struct model_vertex_uncompressed *v,
+static int skin_attributes(const struct model_vertex_uncompressed *v, const real_vector2d *scale,
+    real_vector3d normal, int lighting, struct native_render_vertex *result)
+{
+    if (lighting) {
+        real length=sqrtf(normal.i*normal.i+normal.j*normal.j+normal.k*normal.k);
+        real light=.3f;
+        if (length>.00001f) light+=.7f*fabsf((normal.i*.3f+normal.j*.4f+normal.k*.8660254f)/length);
+        result->color[0]=light*.72f; result->color[1]=light*.82f; result->color[2]=light*.9f;
+    } else memset(result->color,0,sizeof(result->color));
+    result->uv[0]=v->texcoord.x*scale->i; result->uv[1]=v->texcoord.y*scale->j;
+    return isfinite(result->uv[0]) && isfinite(result->uv[1]);
+}
+
+static int skin_vertex(const struct model_vertex_uncompressed *v,
     const struct rasterizer_model_skinning *skin, const real_vector2d *scale,
-    struct native_render_vertex *output)
+    const real_vector3d *shared_normal, int lighting, struct native_render_vertex *output,
+    real_vector3d *raw_normal)
 {
     real_point3d point={0}; real_vector3d normal={0};
     struct native_render_vertex result;
@@ -640,18 +751,25 @@ int n3ds_model_skin_vertex(const struct model_vertex_uncompressed *v,
         if (!v->node_weights[i]) continue; /* An unused bone may carry a sentinel. */
         if (v->nodes[i]<0 || v->nodes[i]>=skin->node_matrix_count) return 0;
         matrix4x3_transform_point(skin->node_matrices+v->nodes[i],&v->position,&p);
-        matrix4x3_transform_vector(skin->node_matrices+v->nodes[i],&v->normal,&n);
-        for (j=0;j<3;++j) { point.n[j]+=p.n[j]*v->node_weights[i]; normal.n[j]+=n.n[j]*v->node_weights[i]; }
+        if (!shared_normal) matrix4x3_transform_vector(skin->node_matrices+v->nodes[i],&v->normal,&n);
+        for (j=0;j<3;++j) {
+            point.n[j]+=p.n[j]*v->node_weights[i];
+            if (!shared_normal) normal.n[j]+=n.n[j]*v->node_weights[i];
+        }
     }
+    if (shared_normal) normal=*shared_normal;
     for (j=0;j<3;++j) if (!isfinite(point.n[j]) || !isfinite(normal.n[j])) return 0;
-    real length=sqrtf(normal.i*normal.i+normal.j*normal.j+normal.k*normal.k);
-    real light=.3f;
-    if (length>.00001f) light+=.7f*fabsf((normal.i*.3f+normal.j*.4f+normal.k*.8660254f)/length);
     memcpy(result.position,&point,12);
-    result.color[0]=light*.72f; result.color[1]=light*.82f; result.color[2]=light*.9f;
-    result.uv[0]=v->texcoord.x*scale->i; result.uv[1]=v->texcoord.y*scale->j;
-    if (!isfinite(result.uv[0]) || !isfinite(result.uv[1])) return 0;
+    if (!skin_attributes(v,scale,normal,lighting,&result)) return 0;
+    if (raw_normal) *raw_normal=normal;
     *output=result; return 1;
+}
+
+int n3ds_model_skin_vertex(const struct model_vertex_uncompressed *v,
+    const struct rasterizer_model_skinning *skin, const real_vector2d *scale,
+    struct native_render_vertex *output)
+{
+    return skin_vertex(v,skin,scale,NULL,1,output,NULL);
 }
 /* Only the result of the pure skin/lighting/UV conversion is retained. Owners
  * still apply sky colors, bind current materials, and submit every draw. */
@@ -660,15 +778,56 @@ struct model_skin_range {
     const struct rasterizer_model_skinning *skin;
     const real_vector2d *scale;
     struct native_render_vertex *output;
+#if N3DS_MODEL_SKIN_VARIANT
+    const real_vector3d *normals;
+    int lighting;
+#endif
+#if HALO_N3DS_ALGO_RETAINED_SKIN != N3DS_ALGORITHM_REFERENCE
+    real_vector3d *raw_output;
+#endif
 };
 static int skin_vertex_range(void *context,unsigned int begin,unsigned int end)
 {
     struct model_skin_range *r=context;
-    for(unsigned int i=begin;i<end;++i) if(!n3ds_model_skin_vertex(r->input+i,r->skin,r->scale,r->output+i)) return 0;
+    for(unsigned int i=begin;i<end;++i) {
+#if N3DS_MODEL_SKIN_VARIANT
+        const real_vector3d *normal=r->normals?r->normals+i:NULL;
+        real_vector3d *raw_output=NULL;
+#if HALO_N3DS_ALGO_RETAINED_SKIN != N3DS_ALGORITHM_REFERENCE
+        if(r->raw_output)raw_output=r->raw_output+i;
+#endif
+        int ok=skin_vertex(r->input+i,r->skin,r->scale,normal,r->lighting,r->output+i,raw_output);
+#if HALO_N3DS_ALGO_SHARED_SKINNING == N3DS_ALGORITHM_VERIFY || HALO_N3DS_ALGO_RETAINED_SKIN == N3DS_ALGORITHM_VERIFY
+        struct native_render_vertex expected;
+        real_vector3d expected_normal;
+        int reference=skin_vertex(r->input+i,r->skin,r->scale,NULL,1,&expected,&expected_normal);
+        assert(ok==reference);
+        if(ok) {
+            assert(!memcmp(expected.position,r->output[i].position,sizeof(expected.position)));
+            assert(!memcmp(expected.uv,r->output[i].uv,sizeof(expected.uv)));
+            if(r->lighting) assert(!memcmp(expected.color,r->output[i].color,sizeof(expected.color)));
+            if(normal) assert(!memcmp(normal,&expected_normal,sizeof(*normal)));
+            if(raw_output) assert(!memcmp(raw_output,&expected_normal,sizeof(*raw_output)));
+        }
+#endif
+        if(!ok)return 0;
+#else
+        if(!n3ds_model_skin_vertex(r->input+i,r->skin,r->scale,r->output+i))return 0;
+#endif
+    }
     return 1;
 }
+
+#if N3DS_MODEL_SKIN_VARIANT
+#include "engine_model_midpoint_skin.inl"
+#endif
+
 static const struct native_render_vertex *skin_stream(const struct model_vertex_uncompressed *v,
-    unsigned int count,const struct rasterizer_model_skinning *skin,const real_vector2d *scale,unsigned int owner)
+    unsigned int count,const struct rasterizer_model_skinning *skin,const real_vector2d *scale,unsigned int owner
+#if N3DS_MODEL_SKIN_VARIANT
+    ,const real_vector3d *normals,int lighting,int midpoint
+#endif
+    )
 {
     if(!v || !skin || !scale || !skin->node_matrices || skin->node_matrix_count<=0 || skin->node_matrix_count>64) return NULL;
     struct decoded_stream *s=find_decoded_vertices(v,count);
@@ -684,16 +843,51 @@ static const struct native_render_vertex *skin_stream(const struct model_vertex_
         struct cached_pose *candidate=s->poses+i;
         if(candidate->bytes && candidate->owner==owner) {
             if(candidate->valid && candidate->bone_count==nodes && !memcmp(&candidate->uv_scale,scale,sizeof(*scale)) &&
+#if N3DS_MODEL_SKIN_VARIANT
+               (!lighting || candidate->has_lighting) &&
+#endif
                model_pose_matrices_equal(s,candidate->bones,skin->node_matrices,nodes,0)) {
                 n3ds_algorithm_profile_add(N3DS_ALG_CPU_POSE_HIT,1);
                 ++pose_hits;candidate->stamp=pose_clock;return candidate->posed;
             }
+#if HALO_N3DS_ALGO_RETAINED_SKIN != N3DS_ALGORITHM_REFERENCE
+            /* Positions and raw normals depend on the consumed pose. The
+             * current material can derive new attributes without reposing. */
+            if(!midpoint && candidate->raw_normals && candidate->valid && candidate->bone_count==nodes &&
+               model_pose_matrices_equal(s,candidate->bones,skin->node_matrices,nodes,0)) {
+                candidate->valid=0;
+                for(unsigned int j=0;j<count;++j) {
+                    struct native_render_vertex *out=candidate->posed+j;
+                    if(!skin_attributes(v+j,scale,candidate->raw_normals[j],lighting,out))return NULL;
+#if HALO_N3DS_ALGO_RETAINED_SKIN == N3DS_ALGORITHM_VERIFY
+                    struct native_render_vertex expected;
+                    assert(skin_vertex(v+j,skin,scale,NULL,lighting,&expected,NULL) &&
+                           !memcmp(out,&expected,sizeof(expected)));
+#endif
+                }
+                candidate->uv_scale=*scale;
+                candidate->has_lighting=lighting;
+                candidate->stamp=pose_clock;
+                candidate->valid=1;
+                ++pose_hits;
+                n3ds_algorithm_profile_add(N3DS_ALG_CPU_POSE_HIT,1);
+                n3ds_algorithm_profile_add(N3DS_ALG_CPU_RETAINED_SKIN_REUSE,count);
+                return candidate->posed;
+            }
+#endif
             p=candidate;break;
         }
         if(!p || (!candidate->valid && p->valid) || (candidate->valid==p->valid && pose_clock-candidate->stamp>pose_clock-p->stamp)) p=candidate;
     }
-    ++pose_misses;p->valid=0;
+    ++pose_misses;
     n3ds_algorithm_profile_add(N3DS_ALG_CPU_POSE_MISS,1);
+#if N3DS_MODEL_SKIN_VARIANT
+    if(midpoint) {
+        struct model_skin_range range={v,skin,scale,NULL,normals,lighting};
+        return skin_midpoint_stream(s,&range,owner);
+    }
+#endif
+    p->valid=0;
     if(!p->posed || p->bone_count!=nodes) {
         pose_release(p);
         unsigned int bytes=count*sizeof(*p->posed)+matrices;
@@ -715,9 +909,33 @@ static const struct native_render_vertex *skin_stream(const struct model_vertex_
         p->bytes=bytes;pose_bytes+=bytes;p->bone_count=nodes;
     }
     p->stamp=pose_clock;p->owner=owner;
-    struct model_skin_range range={v,skin,scale,p->posed};
+    struct model_skin_range range={v,skin,scale,p->posed
+#if N3DS_MODEL_SKIN_VARIANT
+        ,normals,lighting
+#endif
+    };
+#if HALO_N3DS_ALGO_RETAINED_SKIN != N3DS_ALGORITHM_REFERENCE
+    if(!p->raw_normals) {
+        extern int n3ds_input_platform_original_model(void);
+        unsigned int budget=n3ds_input_platform_original_model()?128*1024:512*1024;
+        unsigned int bytes=count*sizeof(*p->raw_normals);
+        if(retained_normal_bytes<=budget && bytes<=budget-retained_normal_bytes)
+            p->raw_normals=(malloc)(bytes);
+        if(p->raw_normals) {
+            p->raw_bytes=bytes;
+            retained_normal_bytes+=bytes;
+        } else n3ds_algorithm_profile_add(N3DS_ALG_CPU_RETAINED_SKIN_BYPASS,1);
+    }
+    range.raw_output=p->raw_normals;
+    n3ds_algorithm_profile_max(N3DS_ALG_CPU_RETAINED_SKIN_PEAK,retained_normal_bytes);
+#endif
     n3ds_algorithm_profile_add(N3DS_ALG_CPU_SKIN_VERTICES,count);
     if(!n3ds_parallel_range(skin_vertex_range,&range,count,256,2)) return NULL;
+#if N3DS_MODEL_SKIN_VARIANT
+    p->has_lighting=lighting;
+    if(normals)n3ds_algorithm_profile_add(N3DS_ALG_CPU_SKIN_NORMAL_REUSE,count);
+    if(!lighting)n3ds_algorithm_profile_add(N3DS_ALG_CPU_SKIN_LIGHT_AVOIDED,count);
+#endif
     memcpy(p->bones,skin->node_matrices,matrices);p->uv_scale=*scale;p->valid=1;
     n3ds_algorithm_profile_add(N3DS_ALG_CPU_POSE_COPY,matrices);
     return p->posed;
@@ -726,11 +944,29 @@ const struct native_render_vertex *n3ds_model_skin_stream(const struct model_ver
     unsigned int count,const struct rasterizer_model_skinning *skin,const real_vector2d *scale,unsigned int owner)
 {
     MODEL_PROFILE_START();
-    const struct native_render_vertex *result=skin_stream(v,count,skin,scale,owner);
+    const struct native_render_vertex *result=skin_stream(v,count,skin,scale,owner
+#if N3DS_MODEL_SKIN_VARIANT
+        ,NULL,1,n3ds_presentation_midpoint_active()
+#endif
+    );
     MODEL_PROFILE_END(1);
     if(!result)n3ds_algorithm_profile_add(N3DS_ALG_CPU_POSE_FALLBACK,1);
     return result;
 }
+
+#if HALO_N3DS_ALGO_SHARED_SKINNING != N3DS_ALGORITHM_REFERENCE
+const struct native_render_vertex *n3ds_model_unlit_skin_stream(const struct model_vertex_uncompressed *v,
+    unsigned int count,const struct rasterizer_model_skinning *skin,const real_vector2d *scale,
+    unsigned int owner,const real_vector3d **normals)
+{
+    *normals=n3ds_model_normal_stream(v,count,skin,owner);
+    MODEL_PROFILE_START();
+    const struct native_render_vertex *pose=skin_stream(v,count,skin,scale,owner,*normals,0,n3ds_presentation_midpoint_active());
+    MODEL_PROFILE_END(1);
+    if(!pose)n3ds_algorithm_profile_add(N3DS_ALG_CPU_POSE_FALLBACK,1);
+    return pose;
+}
+#endif
 const real_vector3d *n3ds_model_normal_stream(const struct model_vertex_uncompressed *v,
     unsigned int count,const struct rasterizer_model_skinning *skin,unsigned int owner)
 {
@@ -790,6 +1026,27 @@ const real_vector3d *n3ds_model_normal_stream(const struct model_vertex_uncompre
     }
     slot->valid=0;
     slot->bones=(void *)((byte *)slot->normals+normal_bytes);
+#if HALO_N3DS_ALGO_RETAINED_SKIN != N3DS_ALGORITHM_REFERENCE
+    const real_vector3d *retained=NULL;
+    for(unsigned int i=0;i<STREAM_POSES;++i) {
+        const struct cached_pose *pose=stream->poses+i;
+        if(pose->valid && pose->owner==owner && pose->bone_count==nodes && pose->raw_normals &&
+           model_pose_matrices_equal(stream,pose->bones,skin->node_matrices,nodes,1)) {
+            retained=pose->raw_normals;
+            break;
+        }
+    }
+    if(retained) {
+        /* The normal-stream consumer retains a frame-owned copy. A later
+         * pose eviction cannot invalidate that consumer's borrowed pointer. */
+        memcpy(slot->normals,retained,normal_bytes);
+        n3ds_algorithm_profile_add(N3DS_ALG_CPU_RETAINED_NORMAL_COPY,normal_bytes);
+    }
+#if HALO_N3DS_ALGO_RETAINED_SKIN != N3DS_ALGORITHM_VERIFY
+    else
+#endif
+#endif
+    {
     n3ds_algorithm_profile_add(N3DS_ALG_CPU_NORMAL_VERTICES,count);
     for(unsigned int i=0;i<count;++i) {
         real_vector3d normal={0};
@@ -802,7 +1059,11 @@ const real_vector3d *n3ds_model_normal_stream(const struct model_vertex_uncompre
             for(int c=0;c<3;++c)normal.n[c]+=n.n[c]*v[i].node_weights[k];
         }
         for(int c=0;c<3;++c)if(!isfinite(normal.n[c]))return NULL;
+#if HALO_N3DS_ALGO_RETAINED_SKIN == N3DS_ALGORITHM_VERIFY
+        if(retained)assert(!memcmp(&normal,retained+i,sizeof(normal)));
+#endif
         slot->normals[i]=normal;
+    }
     }
     memcpy(slot->bones,skin->node_matrices,matrices);
     n3ds_algorithm_profile_add(N3DS_ALG_CPU_NORMAL_COPY,matrices);
@@ -894,7 +1155,31 @@ int n3ds_model_skin_cache_tests(void)
     }
     const struct model_vertex_uncompressed *v=n3ds_model_decode_stream(raw,16);
     skin.node_matrix_count=1;if(n3ds_model_skin_stream(v,16,&skin,&uv,0)) return 0;
-    skin.node_matrix_count=2;if(!n3ds_model_skin_stream(v,16,&skin,&uv,0)) return 0;
+    skin.node_matrix_count=2;
+    const struct native_render_vertex *regular=n3ds_model_skin_stream(v,16,&skin,&uv,0);
+    if(!regular)return 0;
+#if N3DS_MODEL_SKIN_VARIANT
+    struct native_render_vertex saved_regular[16];
+    memcpy(saved_regular,regular,sizeof(saved_regular));
+    unsigned int regular_bytes=pose_bytes;
+    float x=bones[0].position.x;
+    bones[0].position.x=x+1.f;
+    for(int lighting=0;lighting<=1;++lighting) {
+        const struct native_render_vertex *scratch=skin_stream(v,16,&skin,&uv,0,NULL,lighting,1);
+        if(!scratch || scratch==regular || memcmp(saved_regular,regular,sizeof(saved_regular)) ||
+           pose_bytes!=regular_bytes || skin_stream(v,16,&skin,&uv,0,NULL,lighting,1)!=scratch)return 0;
+        for(unsigned int i=0;i<NUMBEROF(saved_regular);++i) {
+            struct native_render_vertex expected;
+            if(!n3ds_model_skin_vertex(v+i,&skin,&uv,&expected) ||
+               memcmp(expected.position,scratch[i].position,sizeof(expected.position)) ||
+               memcmp(expected.uv,scratch[i].uv,sizeof(expected.uv)) ||
+               (lighting && memcmp(expected.color,scratch[i].color,sizeof(expected.color))))return 0;
+        }
+    }
+    bones[0].position.x=x;
+    if(n3ds_model_skin_stream(v,16,&skin,&uv,0)!=regular)return 0;
+    n3ds_log("PASS: lit and unlit midpoint skinning preserve regular pose storage");
+#endif
     raw[0].node_weight=-1;if(n3ds_model_decode_stream(raw,16)) return 0;
     if(n3ds_model_skin_stream(v,16,&skin,&uv,0)) return 0;
     n3ds_model_decode_cache_flush();return multipose_tests();
@@ -1150,8 +1435,14 @@ const struct native_render_vertex *n3ds_model_rigid_stream(
     }
     return gpu_stream_upload(s);
 }
+#if HALO_N3DS_ALGO_MODEL_COMPACT != N3DS_ALGORITHM_REFERENCE
+static int model_compact_remap_tests(void);
+#endif
 int n3ds_model_gpu_cache_tests(void)
 {
+#if HALO_N3DS_ALGO_MODEL_COMPACT != N3DS_ALGORITHM_REFERENCE
+    if(!model_compact_remap_tests())return 0;
+#endif
     /* Transparent sorting changes the pose source independently of opaque
      * packet begin/end. Returning to the opaque packet must restore its rows. */
     struct rasterizer_model_skinning saved_skin=parameters.skinning;
@@ -1173,8 +1464,12 @@ int n3ds_model_gpu_cache_tests(void)
     raw[25].node_weight=16384;raw[25].nodes[0]=62*3;raw[25].nodes[1]=63*3;
     v=n3ds_model_decode_stream(raw,NATIVE_GPU_MODEL_BONES+1);s=gpu_stream(v,NATIVE_GPU_MODEL_BONES+1,64);
     if(!s || s->rigid_node!=-1 || s->gpu_nodes!=3 || s->palette[1]!=62 || s->palette[2]!=63 || gpu_stream(v,NATIVE_GPU_MODEL_BONES+1,63)) return 0;
-    const struct native_skin_vertex *packed=(const void *)s->local;
-    if(packed[25].bones[0]!=3 || packed[25].bones[1]!=6 || packed[25].bones[2]!=v[25].node_weights[0] || packed[0].bones[1]!=0) return 0;
+    const struct native_skin_vertex *weighted=(const void *)s->local;
+    float influences[4];
+    n3ds_skin_vertex_read_bones(weighted+25,influences);
+    if(influences[0]!=3 || influences[1]!=6 || influences[2]!=v[25].node_weights[0]) return 0;
+    n3ds_skin_vertex_read_bones(weighted,influences);
+    if(influences[1]!=0) return 0;
     for(int i=0;i<NATIVE_GPU_MODEL_BONES+1;++i) {raw[i].nodes[0]=i*3;raw[i].nodes[1]=253;raw[i].node_weight=32767;}
     v=n3ds_model_decode_stream(raw,NATIVE_GPU_MODEL_BONES);s=gpu_stream(v,NATIVE_GPU_MODEL_BONES,64);if(!s || s->gpu_nodes!=NATIVE_GPU_MODEL_BONES) return 0;
     v=n3ds_model_decode_stream(raw,NATIVE_GPU_MODEL_BONES+1);if(gpu_stream(v,NATIVE_GPU_MODEL_BONES+1,64)) return 0;
@@ -1412,15 +1707,17 @@ void _rasterizer_model_draw(struct shader *shader, short permutation,
         /* Opaque depth-writing packets can pass queued scenery. Preserve
          * ordered boundaries for weapon overlays, skies and decals. */
         if(sky || decal || first_person_active || parameters.effect.type)scenery_batch_flush();
+        int drew;
         if(compact) {
-            assert(n3ds_gpu_model_compact_draw_resident(compact->vertices,compact->indices,index_count,
-                rows,nodes,uv_scale.n,two_sided,rigid->rigid_node<0,&native_material));
+            drew=n3ds_gpu_model_compact_draw_resident(compact->vertices,compact->indices,index_count,
+                rows,nodes,uv_scale.n,two_sided,rigid->rigid_node<0,&native_material);
         } else {
             draw_indices=model_indices_submit(draw_indices,index_count,index_owner,dynamic_vertices==NONE);
             gpu=gpu_stream_upload(rigid);assert(gpu);
-            if(rigid->rigid_node>=0) {assert(n3ds_gpu_model_rigid_draw(gpu,draw_indices,index_count,rows,uv_scale.n,sky,decal,two_sided,&native_material));}
-            else {assert(n3ds_gpu_model_skin_draw((const void *)gpu,draw_indices,index_count,rows,nodes,uv_scale.n,sky,decal,two_sided,&native_material));}
+            if(rigid->rigid_node>=0) drew=n3ds_gpu_model_rigid_draw(gpu,draw_indices,index_count,rows,uv_scale.n,sky,decal,two_sided,&native_material);
+            else drew=n3ds_gpu_model_skin_draw((const void *)gpu,draw_indices,index_count,rows,nodes,uv_scale.n,sky,decal,two_sided,&native_material);
         }
+        assert(drew);
 #ifdef HALO_N3DS_RENDERER_TESTS
         unsigned int reflective=native_material.reflection && native_material.multipurpose;
         ++material_profile[reflective][0];
@@ -1428,6 +1725,9 @@ void _rasterizer_model_draw(struct shader *shader, short permutation,
             material_stamps[4]=n3ds_engine_ticks();++material_profile[reflective][1];
             for(int k=0;k<4;++k) material_profile[reflective][k+2]+=material_stamps[k+1]-material_stamps[k];
         }
+#endif
+#if HALO_N3DS_ALGO_MIDPOINT_PARTICLES != N3DS_ALGORITHM_REFERENCE
+        if(drew && !decal && n3ds_presentation_midpoint_active()) ++presentation_model_draw_serial;
 #endif
         ++counters.parts;counters.triangles+=(unsigned int)index_count/3;return;
     }
@@ -1476,7 +1776,11 @@ void _rasterizer_model_draw(struct shader *shader, short permutation,
     }
     if(!texture_bound) n3ds_gpu_texture_bind(0,NULL);
     if(!texture_bound) native_material.alpha_test=0;
-    assert(n3ds_gpu_model_cpu_relative_draw(gpu,draw_indices,index_count,!!(parameters.geometry_flags&(1u<<4)),0,!!(material_flags&((1u<<1)|(1u<<5))),&native_material));
+    int drew=n3ds_gpu_model_cpu_relative_draw(gpu,draw_indices,index_count,!!(parameters.geometry_flags&(1u<<4)),0,!!(material_flags&((1u<<1)|(1u<<5))),&native_material);
+    assert(drew);
+#if HALO_N3DS_ALGO_MIDPOINT_PARTICLES != N3DS_ALGORITHM_REFERENCE
+    if(drew && n3ds_presentation_midpoint_active()) ++presentation_model_draw_serial;
+#endif
     ++counters.parts; counters.triangles+=(unsigned int)index_count/3;
 }
 

@@ -1,6 +1,14 @@
 #ifndef HALO_N3DS_ENGINE_INPUT_H
 #define HALO_N3DS_ENGINE_INPUT_H
 float n3ds_input_touch_look_scale(int component);
+union point2d;
+enum { NATIVE_AIM_X=1, NATIVE_AIM_Y=2, NATIVE_AIM_BOTH=NATIVE_AIM_X|NATIVE_AIM_Y };
+/* Split layouts keep the original movement vector alongside the tuned look
+ * vector. Touch stays separate so neither its input nor aim tuning affects movement. */
+void n3ds_input_player_aim(unsigned int cstick_look_axes,union point2d *right,
+    union point2d *look,union point2d *touch);
+/* A legacy stick snap can remove a C-stick component before touch is added. */
+void n3ds_input_resolve_aim_sources(unsigned int cstick_look_axes);
 /* Fixed-width boundary between the original engine and libctru. These are HID
  * bit positions, checked against libctru when compiling the platform adapter. */
 enum {
@@ -18,12 +26,17 @@ struct native_input_sample {
 _Static_assert(sizeof(struct native_input_sample)==16, "Native input sample ABI");
 int n3ds_input_platform_initialize(void);
 int n3ds_input_platform_original_model(void);
-/* Menus retain D-pad navigation; gameplay may consume Up/Down for actions. */
+/* Menus retain D-pad navigation. Held remappable buttons must be released
+ * when switching between menu and gameplay actions. */
 void n3ds_input_gameplay_controls(int enabled);
+int n3ds_input_gameplay_controls_active(void);
 void n3ds_input_platform_dispose(void);
 void n3ds_input_platform_poll(struct native_input_sample *sample);
 /* Used by the hardware polling path and deterministic input sequence tests. */
 void n3ds_engine_input_sample(const struct native_input_sample *sample);
+#ifdef HALO_N3DS_GPU_PROBE
+unsigned int n3ds_input_last_held(void);
+#endif
 enum { NATIVE_TOUCH_GRENADE=1, NATIVE_TOUCH_FLASHLIGHT=2, NATIVE_TOUCH_AIM=4,
        NATIVE_TOUCH_AIM_BOTTOM=176 };
 /* The handler gates touches against live gameplay. AIM is queried throughout

@@ -6,6 +6,7 @@
 #include <stdlib.h>
 void n3ds_log(const char *message);
 #include "engine_renderer.h"
+#include "engine_gpu_model_layout.h"
 #include "engine_textures.h"
 #include "engine_text.h"
 #include "engine_widgets.h"
@@ -93,11 +94,8 @@ int n3ds_gpu_chicago_initialize(void)
     AttrInfo_Init(&chicago_attributes);AttrInfo_AddLoader(&chicago_attributes,0,GPU_FLOAT,3);
     for(int i=1;i<4;++i) AttrInfo_AddLoader(&chicago_attributes,i,GPU_FLOAT,2);
     AttrInfo_AddLoader(&chicago_attributes,4,GPU_FLOAT,4);
-    for(int i=0;i<2;++i) {
-        C3D_AttrInfo *a=&transform_attributes[i];AttrInfo_Init(a);
-        AttrInfo_AddLoader(a,0,GPU_FLOAT,3);AttrInfo_AddLoader(a,1,GPU_FLOAT,3);AttrInfo_AddLoader(a,2,GPU_FLOAT,2);
-        if(i) AttrInfo_AddLoader(a,3,GPU_FLOAT,4);
-    }
+    n3ds_gpu_model_attributes_initialize(&transform_attributes[0],0);
+    n3ds_gpu_model_attributes_initialize(&transform_attributes[1],1);
     shader=DVLB_ParseFile((u32 *)engine_chicago_shader,sizeof(engine_chicago_shader));
     stream=linearAlloc(VERTICES*sizeof(*stream));
     if(!shader || !stream) goto fail;
@@ -593,7 +591,8 @@ static int chicago_draw(const struct native_chicago_material *m,
         if(!n3ds_gpu_texture_bind_sampler(i,textures[i],flags)) return 0;
     }
     int result=gpu_vertices?n3ds_gpu_indexed_draw(gpu_vertices,indices,index_count,
-        skinned?sizeof(struct native_skin_vertex):sizeof(struct native_render_vertex),skinned?4:3,skinned?0x3210:0x210):
+        skinned?sizeof(struct native_skin_vertex):sizeof(struct native_render_vertex),
+        skinned?N3DS_SKIN_ATTRIBUTES:3,skinned?N3DS_SKIN_PERMUTATION:0x210):
         n3ds_gpu_indexed_draw(vertices,indices,index_count,sizeof(*vertices),5,0x43210);
     for(int i=0;i<m->maps && !m->vertex_color;++i) n3ds_gpu_texture_bind(i,textures[i]);
     n3ds_gpu_world_state_restore();

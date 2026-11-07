@@ -262,6 +262,10 @@ static int texture_descriptor_format(const struct native_texture_descriptor *des
     /* Stable engine format IDs must never be cast to libctru's GPU enum. */
     switch(descriptor->format) {
         case NATIVE_TEXTURE_FORMAT_RGBA8: *format=GPU_RGBA8;return 1;
+        case NATIVE_TEXTURE_FORMAT_RGB8: *format=GPU_RGB8;return 1;
+#ifdef HALO_N3DS_TEXTURE_COMPARE
+        case NATIVE_TEXTURE_FORMAT_LA8: *format=GPU_LA8;return 1;
+#endif
         default: return 0;
     }
 }
@@ -270,7 +274,14 @@ static int texture_descriptor_matches(C3D_Tex *texture,const struct native_textu
     GPU_TEXCOLOR format;
     if(!texture || !texture_descriptor_format(descriptor,&format) || texture->fmt!=format ||
        texture->width!=descriptor->width || texture->height!=descriptor->height ||
-       texture->size!=descriptor->face[0].bytes || texture->maxLevel || texture->minLevel) return 0;
+       texture->maxLevel!=descriptor->levels-1 || texture->minLevel) return 0;
+    unsigned int image_bytes=texture->size;
+    if(texture->maxLevel) {
+        unsigned int base_bytes=n3ds_texture_mip_bytes(descriptor->width,descriptor->height,1,descriptor->format);
+        if(!base_bytes || image_bytes!=base_bytes) return 0;
+        image_bytes=C3D_TexCalcTotalSize(image_bytes,texture->maxLevel);
+    }
+    if(image_bytes!=descriptor->face[0].bytes) return 0;
     if(descriptor->faces==6) {
         if(C3D_TexGetType(texture)!=GPU_TEX_CUBE_MAP || !texture->cube) return 0;
         for(unsigned int i=0;i<6;++i) if(!texture->cube->data[i]) return 0;
@@ -290,15 +301,24 @@ void *n3ds_gpu_texture_reserve_descriptor(const struct native_texture_descriptor
     if(cube) {
         C3D_TexCube *faces=(C3D_TexCube *)(texture+1);
         if(!C3D_TexInitWithParams(texture,faces,(C3D_TexInitParams){width,height,0,format,GPU_TEX_CUBE_MAP,false})) {free(texture);return NULL;}
-    } else {
+    }
+    else if(descriptor->levels>1) {
+        C3D_TexInitParams params={width,height,descriptor->levels-1,format,GPU_TEX_2D,false};
+        if(!C3D_TexInitWithParams(texture,NULL,params)) {free(texture);return NULL;}
+    }
+    else {
         if(!C3D_TexInit(texture,width,height,format)) {free(texture);return NULL;}
     }
-    if(!texture_descriptor_matches(texture,descriptor)) {C3D_TexDelete(texture);free(texture);return NULL;}
+    if(!texture_descriptor_matches(texture,descriptor) ||
+       (descriptor->levels>1 && linearGetSize(texture->data)<descriptor->resident_bytes)) {
+        C3D_TexDelete(texture);free(texture);return NULL;
+    }
     for(unsigned int i=0;i<descriptor->faces;++i) {
         spans[i].data=cube?texture->cube->data[i]:texture->data;
         spans[i].bytes=descriptor->face[i].bytes;
     }
     C3D_TexSetFilter(texture,GPU_LINEAR,GPU_LINEAR);
+    if(descriptor->levels>1) C3D_TexSetFilterMipmap(texture,GPU_LINEAR);
     C3D_TexSetWrap(texture,cube?GPU_CLAMP_TO_EDGE:GPU_REPEAT,cube?GPU_CLAMP_TO_EDGE:GPU_REPEAT);
     return texture;
 }
@@ -327,6 +347,9 @@ int n3ds_gpu_texture_finalize_descriptor(void *resource,const struct native_text
     }
     return 1;
 }
+#if HALO_N3DS_TEXTURE_LOD_FIXTURE
+#include "engine_texture_lod_fixture.inl"
+#endif
 int n3ds_gpu_texture_finalize(void *resource)
 {
     C3D_Tex *texture=resource;

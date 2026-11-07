@@ -8,21 +8,59 @@ static int world_scale_fixed;
 static unsigned int scale_frames;
 #include "engine_screen_effect.inl"
 #include "engine_resolution_policy.inl"
+#include "engine_world_resolution.h"
 static struct resolution_policy scale_policy;
 static float scale_work_previous,scale_wait_previous;
 static int scale_sample_ready;
-static const unsigned short scale_widths[]={400,320,256,200};
-static const unsigned short scale_heights[]={240,192,152,120};
+/* The adaptive policy uses the first four levels in this order. 280x168 is
+ * a manual preset between 320x192 and 200x120, with the exact LCD aspect. */
+enum { WORLD_SCALE_400, WORLD_SCALE_320, WORLD_SCALE_256, WORLD_SCALE_200, WORLD_SCALE_280, WORLD_SCALE_COUNT };
+static const unsigned short scale_widths[WORLD_SCALE_COUNT]={400,320,256,200,280};
+static const unsigned short scale_heights[WORLD_SCALE_COUNT]={240,192,152,120,168};
+static enum n3ds_world_resolution world_resolution_requested,world_resolution_active;
 #if defined(HALO_N3DS_FIXED_WORLD_WIDTH) && HALO_N3DS_FIXED_WORLD_WIDTH!=400 && HALO_N3DS_FIXED_WORLD_WIDTH!=320
 #error "HALO_N3DS_FIXED_WORLD_WIDTH must be 400 or 320"
 #endif
+void n3ds_gpu_world_resolution_request(enum n3ds_world_resolution mode)
+{
+ if((unsigned int)mode<N3DS_WORLD_RESOLUTION_COUNT)world_resolution_requested=mode;
+}
+int n3ds_gpu_world_resolution_available(void)
+{
+#if defined(HALO_N3DS_WORLD_SCALE_TEST) || defined(HALO_N3DS_RENDERER_TESTS)
+ return 0;
+#else
+ if(diagnostic_mode)return 0;
+#ifdef HALO_N3DS_FIXED_WORLD_WIDTH
+ if(!n3ds_input_platform_original_model())return 0;
+#endif
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+ if(n3ds_platform_is_new_2ds_xl())return 0;
+#endif
+ return 1;
+#endif
+}
 void n3ds_gpu_world_budget(int enabled)
 {
- if(world_budget_enabled!=!!enabled){
+ enum n3ds_world_resolution selection=enabled && n3ds_gpu_world_resolution_available()?
+     world_resolution_requested:N3DS_WORLD_RESOLUTION_AUTO;
+ if(world_budget_enabled!=!!enabled || world_resolution_active!=selection){
   world_budget_enabled=!!enabled;memset(&scale_policy,0,sizeof(scale_policy));
+  world_resolution_active=selection;
   int original=enabled && n3ds_input_platform_original_model();
-  world_scale=original?1:0;
+  world_scale=original?WORLD_SCALE_320:WORLD_SCALE_400;
   world_scale_fixed=0;
+  if(selection!=N3DS_WORLD_RESOLUTION_AUTO) {
+   static const unsigned char levels[N3DS_WORLD_RESOLUTION_COUNT]={
+    [N3DS_WORLD_RESOLUTION_400]=WORLD_SCALE_400,[N3DS_WORLD_RESOLUTION_320]=WORLD_SCALE_320,
+    [N3DS_WORLD_RESOLUTION_280]=WORLD_SCALE_280,[N3DS_WORLD_RESOLUTION_200]=WORLD_SCALE_200
+   };
+   world_scale=levels[selection];world_scale_fixed=1;
+   char message[128];
+   snprintf(message,sizeof(message),"WORLD PIXEL BUDGET: manual %ux%u; HUD/menu full resolution",
+       scale_widths[world_scale],scale_heights[world_scale]);
+   n3ds_log(message);
+  }
 #if defined(HALO_N3DS_PRESENT_INTERPOLATION) && !defined(HALO_N3DS_WORLD_SCALE_TEST) && !defined(HALO_N3DS_RENDERER_TESTS)
   if (enabled && n3ds_platform_is_new_2ds_xl() && !diagnostic_mode) {
    /* Hold native quality on both midpoint and one-view fallback frames. */
@@ -42,15 +80,25 @@ void n3ds_gpu_world_budget(int enabled)
   }
 #endif
   scale_policy.level=world_scale;scale_sample_ready=0;
-  if(original)n3ds_log("WORLD PIXEL BUDGET: Original baseline 320x192; adaptive 256x152/200x120, HUD/menu full resolution");
+  if(original && !world_scale_fixed)n3ds_log("WORLD PIXEL BUDGET: Original baseline 320x192; adaptive 256x152/200x120, HUD/menu full resolution");
+  else if(enabled && !world_scale_fixed)n3ds_log("WORLD PIXEL BUDGET: New baseline 400x240; adaptive world, HUD/menu full resolution");
  }
 }
 void n3ds_gpu_frame_work(float milliseconds)
 {scale_work_previous=milliseconds;scale_wait_previous=n3ds_gpu_frame_wait_ticks()*(1000.f/268123480.f);scale_sample_ready=1;}
-int n3ds_gpu_world_pressure(void){return world_budget_enabled && !world_scale_fixed?world_scale:0;}
+int n3ds_gpu_world_pressure(void)
+{
+ if(!world_budget_enabled)return 0;
+ /* A manual viewport must not re-enable expensive Original-model materials. */
+ if(world_resolution_active!=N3DS_WORLD_RESOLUTION_AUTO)return n3ds_input_platform_original_model();
+ return world_scale_fixed?0:world_scale;
+}
 float n3ds_gpu_world_pixel_scale(void)
 {
- /* Fixed-width comparisons keep projected model size at the native baseline. */
+ /* Manual presets preserve the model family's normal baseline detail.
+  * Fixed-width developer comparisons preserve full projected detail. */
+ if(world_resolution_active!=N3DS_WORLD_RESOLUTION_AUTO)
+  return n3ds_input_platform_original_model()?.8f:1.f;
  if(!world_budget_enabled || world_scale_fixed || world_scale_failed[eye_right])return 1.f;
  return scale_widths[world_scale]/400.f;
 }
@@ -82,7 +130,31 @@ static unsigned int world_clear_color(unsigned int rgba)
 }
 static void world_target_bind(void)
 {
- C3D_FrameDrawOn(bottom_selected?bottom_target:world_target());
+ C3D_RenderTarget *draw_target=bottom_selected?bottom_target:world_target();
+#ifdef HALO_N3DS_FRAMEBUFFER_REUSE
+ /* The direct top target's framebuffer description stays fixed for the
+  * frame. Reinstalling it makes Citro3D flush and invalidate the GPU's
+  * framebuffer cache on the next draw. Keep FrameDrawOn's used flag
+  * and viewport/scissor reset even when the framebuffer is already set. */
+ int direct_top=draw_target==target && !stereo_level && !eye_right &&
+    world_budget_enabled && world_scale_fixed && !world_scale &&
+    !world_low_active && !screen_effect_active;
+ int reuse=direct_top && direct_top_bound;
+#ifdef HALO_N3DS_GPU_PROBE
+ reuse=reuse && gpu_probe_framebuffer_reuse();
+#endif
+ if(reuse) {
+  draw_target->used=true;
+  C3D_SetViewport(0,0,draw_target->frameBuf.width,draw_target->frameBuf.height);
+ } else {
+  direct_top_bound=C3D_FrameDrawOn(draw_target) && direct_top;
+ }
+#ifdef HALO_N3DS_GPU_PROBE
+ gpu_probe_framebuffer_bind(reuse);
+#endif
+#else
+ C3D_FrameDrawOn(draw_target);
+#endif
  if(world_low_active && !bottom_selected)C3D_SetViewport(0,0,scale_heights[world_scale],scale_widths[world_scale]);
 }
 void n3ds_gpu_world_view_begin(void)
@@ -108,6 +180,7 @@ void n3ds_gpu_world_resolve(void)
  if(!world_low_active)return;
  /* Commit the world segment with cache flush flags before sampling its color
   * attachment. FrameEnd starts the ordered queue; this never waits on it. */
+ n3ds_gpu_framebuffer_invalidate();
  C3D_FrameSplit(GX_CMDLIST_FLUSH);
  world_low_active=0;C3D_FrameDrawOn(display_target());native_light_env_bind(NULL);
  void *saved=n3ds_gpu_texture_bound(0);C3D_Tex *t=&scaled_texture[eye_right];
@@ -128,4 +201,5 @@ static void world_scale_dispose(void)
  for(int i=0;i<2;++i){if(scaled_target[i])C3D_RenderTargetDelete(scaled_target[i]);scaled_target[i]=NULL;if(scaled_texture[i].data)C3D_TexDelete(&scaled_texture[i]);memset(&scaled_texture[i],0,sizeof(scaled_texture[i]));world_scale_failed[i]=0;}
  screen_effect_dispose();
  world_low_active=world_scale=world_budget_enabled=world_scale_fixed=0;memset(&scale_policy,0,sizeof(scale_policy));scale_sample_ready=0;
+ world_resolution_active=N3DS_WORLD_RESOLUTION_AUTO;
 }

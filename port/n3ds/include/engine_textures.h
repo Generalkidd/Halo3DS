@@ -47,12 +47,19 @@ const struct bitmap_data *n3ds_engine_bitmap_metadata(int group_index,int index)
 int n3ds_engine_bitmap_bind_sampler(unsigned int stage,const struct bitmap_data *bitmap,unsigned int flags);
 int n3ds_gpu_texture_sampling_test(unsigned int stage, const unsigned int expected_corners[4]);
 void *n3ds_gpu_texture_create(const unsigned int *pixels, unsigned int width, unsigned int height);
-/* Main-thread ownership: reserve returns private RGBA8 tiled image pointers
- * (one image or six cube faces). A worker may fill them, but must finish before
- * finalize/abandon. Finalize flushes; only then may the owner publish/bind.
+/* Main-thread ownership: reserve returns private tiled spans (one 2D image
+ * with consecutive mip levels, or six cube faces). A worker may fill them,
+ * but must finish before finalize/abandon. Finalize flushes the entire span;
+ * only then may the owner publish/bind.
  * Abandon is only for an unpublished resource, never referenced by GPU work. */
 void *n3ds_gpu_texture_reserve_descriptor(const struct native_texture_descriptor *,struct native_texture_span spans[6]);
 int n3ds_gpu_texture_finalize_descriptor(void *resource,const struct native_texture_descriptor *);
+#if HALO_N3DS_TEXTURE_LOD_FIXTURE
+/* Fixture-only pack. Mode 0 selects RGB8 64, mode 1 selects its full chain,
+ * and mode 2 selects the 32/16/8 suffix. On success the caller owns the ready
+ * textures and fences their last GPU use before destroying them. */
+int n3ds_gpu_texture_lod_load(const char *path,unsigned int mode,void *textures[4],unsigned int *count);
+#endif
 /* Compatibility wrappers retain the same RGBA8 dimensions, cube limits and
  * sampler defaults. The descriptor path returns bounded byte spans, not an
  * assumed pixel type; only a validated RGBA8 owner may use unsigned pixels. */
@@ -89,6 +96,17 @@ unsigned int n3ds_engine_texture_count(void);
 unsigned int n3ds_engine_texture_bytes(void);
 /* Change quality only with an empty cache; dimensions stay power-of-two. */
 int n3ds_engine_texture_resolution(unsigned int limit);
+enum n3ds_world_texture_mode {
+    N3DS_WORLD_TEXTURE_64_SINGLE=0,
+    N3DS_WORLD_TEXTURE_64_MIPS=1,
+    N3DS_WORLD_TEXTURE_32_MIPS=2
+};
+/* A request applies before the first texture of the next complete world map.
+ * A BSP transition retains the current policy and its texture resources. */
+int n3ds_engine_world_texture_request(enum n3ds_world_texture_mode mode);
+enum n3ds_world_texture_mode n3ds_engine_world_texture_requested(void);
+enum n3ds_world_texture_mode n3ds_engine_world_texture_active(void);
+void n3ds_engine_world_texture_map_loaded(void);
 int halo_engine_texture_tests(void);
 int n3ds_engine_sampled_texture_tests(void);
 /* Immutable alpha-first copy for PICA plasma bump lookup; shares owner lifetime.

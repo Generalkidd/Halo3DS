@@ -6,15 +6,18 @@ it never treats the installed release as evidence for changed source. No global
 emulator settings, source assets, saves or physical SD contents are changed.
 """
 import argparse
+import fcntl
 import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import select
 import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 
 
@@ -207,21 +210,68 @@ def stop_owned(state, emulator, binary, deadline):
     return False
 
 
-def main():
+def timeout_seconds(text):
+    seconds = int(text)
+    if not 1 <= seconds <= 600:
+        raise argparse.ArgumentTypeError('timeout must be 1..600 seconds')
+    return seconds
+
+
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--emulator', type=Path, required=True)
     parser.add_argument('--binary', type=Path, required=True)
     parser.add_argument('--assets', type=Path, required=True, help='Prepared halo-source directory (read only)')
     parser.add_argument('--dsp', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True, help='New, unused test directory')
-    parser.add_argument('--timeout', type=int, default=180, choices=range(1, 601))
+    parser.add_argument('--timeout', type=timeout_seconds, default=180)
     parser.add_argument('--renderer', choices=('vulkan', 'opengl', 'software'), default='vulkan')
-    args = parser.parse_args()
+    parser.add_argument('--map', action='append', default=[], metavar='STEM',
+        help='Also copy this map and its renderer sidecars into the private SD')
+    parser.add_argument('--archive', action='append', type=Path, default=[], metavar='PATH',
+        help='Copy an alternate .ntx, .ntx4 or .nmg using its original filename')
+    parser.add_argument('--sd-file', action='append', type=Path, default=[], metavar='PATH',
+        help='Copy an explicit fixture input to the private SD root using its original filename')
+    parser.add_argument('--require-log', action='append', default=[], metavar='TEXT',
+        help='Require this literal text in the completed guest log')
+    args = parser.parse_args(argv)
     if sys.platform != 'darwin':
         parser.error('This owned-process harness currently supports macOS Azahar only')
+    lock_path = Path(tempfile.gettempdir()) / f'halo3ds-azahar-{os.getuid()}.lock'
+    lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(lock_fd, 'r+') as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            parser.error('Another owned Azahar run is active')
+        return run(args, parser)
+
+
+def run(args, parser):
     emulator, binary, assets, dsp, out = (p.resolve() for p in
         (args.emulator, args.binary, args.assets, args.dsp, args.output))
-    for path in (emulator, binary, dsp, assets/'ui.map', assets/'ui.nrl', assets/'ntsc2276-hud-strings.bin'):
+    maps = {'ui', *args.map}
+    if any(not re.fullmatch(r'[a-z0-9_]+', name) for name in maps):
+        parser.error('--map must be a lowercase map stem')
+    archives = {}
+    for path in args.archive:
+        if path.stem not in maps or path.suffix not in ('.ntx', '.ntx4', '.nmg'):
+            parser.error(f'Archive must name a selected map with a .ntx, .ntx4 or .nmg suffix: {path}')
+        if path.name in archives:
+            parser.error(f'Duplicate archive override: {path.name}')
+        archives[path.name] = path.resolve()
+    sd_files = {}
+    for path in args.sd_file:
+        if not re.fullmatch(r'halo-[a-z0-9_.-]+', path.name) or path.name.endswith('.log'):
+            parser.error(f'Invalid fixture input filename: {path.name}')
+        if path.name in sd_files:
+            parser.error(f'Duplicate fixture input: {path.name}')
+        sd_files[path.name] = path.resolve()
+    required = [emulator, binary, dsp, assets/'ui.nrl', assets/'ntsc2276-hud-strings.bin']
+    required.extend(assets/f'{name}.map' for name in sorted(maps))
+    required.extend(archives.values())
+    required.extend(sd_files.values())
+    for path in required:
         if not path.is_file(): parser.error(f'Missing input: {path}')
     if out.exists(): parser.error('Use a fresh output directory; existing profiles are retained')
     if any(len(fields) == 2 and (fields[1] == str(emulator) or fields[1].startswith(str(emulator)+' '))
@@ -239,15 +289,23 @@ def main():
     (sd/'halo-source').mkdir(parents=True)
     (sd/'3ds').mkdir()
     copied = []
-    # Menu smoke needs only ui. Every file is copied, not a link back into the
-    # user's SD/save directory. Include the supported optional loading image.
-    for source in sorted(assets.iterdir()):
-        if source.is_file() and (source.name in ('ui.map', 'ui.nrl', 'ui.ntx',
-            'ntsc2276-hud-strings.bin', 'ntsc2276-loading.bin') or
-            (source.name.startswith('ui-bsp') and source.suffix == '.nrl')):
-            target = sd/'halo-source'/source.name
-            shutil.copy2(source, target)
-            copied.append({'name':source.name, 'sha256':sha(target), 'bytes':target.stat().st_size})
+    # Copy only selected assets. A supplied archive overrides its own basename;
+    # candidate archives require explicit selection, even if assets contains one.
+    selected = {f'{name}{suffix}' for name in maps for suffix in ('.map', '.nrl', '.ntx')}
+    selected.update(('ntsc2276-hud-strings.bin', 'ntsc2276-loading.bin'))
+    sources = {source.name: source for source in assets.iterdir() if source.is_file() and
+        (source.name in selected or (source.suffix == '.nrl' and
+        any(source.stem.startswith(name+'-bsp') for name in maps)))}
+    sources.update(archives)
+    for name, source in sorted(sources.items()):
+        target = sd/'halo-source'/name
+        shutil.copy2(source, target)
+        copied.append({'name':name, 'source':str(source), 'sha256':sha(target), 'bytes':target.stat().st_size})
+    staged = []
+    for name, source in sorted(sd_files.items()):
+        target = sd/name
+        shutil.copy2(source, target)
+        staged.append({'name':name, 'sha256':sha(target), 'bytes':target.stat().st_size})
     shutil.copy2(dsp, sd/'3ds/dspfirm.cdc')
     config = ('[Core]\nuse_cpu_jit=true\nuse_cpu_jit\\default=false\ncpu_clock_percentage=100\ncpu_clock_percentage\\default=false\n'
         '[System]\nis_new_3ds=true\nis_new_3ds\\default=false\n'
@@ -259,13 +317,14 @@ def main():
         'check_for_update_on_start=false\ncheck_for_update_on_start\\default=false\n'
         '[Miscellaneous]\nenable_telemetry=false\nenable_telemetry\\default=false\n')
     (out/'config/azahar-emu/qt-config.ini').write_text(config)
-    receipt = {'scope':'Current binary diagnostic/menu smoke only; no campaign or physical performance claim',
+    receipt = {'scope':'Selected private Azahar inputs only; no physical performance claim',
         'binary_source':str(source_binary), 'binary':str(binary), 'binary_sha256':sha(binary), 'emulator':str(emulator),
         'emulator_sha256':sha(emulator), 'renderer':args.renderer,
         'renderer_requested':args.renderer, 'renderer_observed':None,
         'model':'Azahar New 3DS XL default (not New 2DS XL midpoint coverage)',
         'timeout_seconds':args.timeout, 'timeout_scope':'Launch, observation and owned-process cleanup combined',
-        'assets':copied, 'dsp_sha256':sha(sd/'3ds/dspfirm.cdc'),
+        'assets':copied, 'sd_inputs':staged, 'required_log_text':args.require_log,
+        'dsp_sha256':sha(sd/'3ds/dspfirm.cdc'),
         'initial_config_sha256':sha(out/'config/azahar-emu/qt-config.ini'),
         'status':'not-started', 'cleanup_complete':False}
     (out/'result.json').write_text(json.dumps(receipt, indent=2)+'\n')
@@ -328,6 +387,16 @@ def main():
             observe_backend(receipt, out/'data/azahar-emu/log/azahar_log.txt')
         except OSError as error:
             receipt['renderer_log_error'] = str(error)
+        if receipt['status'] == 'pass' and args.require_log:
+            try:
+                text = (sd/'halo-source-engine.log').read_text(errors='replace')
+                missing = [marker for marker in args.require_log if marker not in text]
+                if missing:
+                    receipt['status'] = 'missing-required-log-text'
+                    receipt['missing_log_text'] = missing
+            except OSError as error:
+                receipt['status'] = 'harness-failure'
+                receipt['error'] = str(error)
         receipt['elapsed_seconds'] = round(time.monotonic()-started, 3)
         (out/'result.json').write_text(json.dumps(receipt, indent=2)+'\n')
         print(json.dumps({key:receipt[key] for key in ('status','cleanup_complete','elapsed_seconds')}))

@@ -10,6 +10,41 @@ You will need a modded 3DS/2DS console, a FAT32 SD card with at least 4 GB of fr
 Currently only the 1.0 Halo CE ISO is supported but support for others is being looking into. PC/MCC
 maps are not supported.
 
+Press **SELECT** or tap **Controller Settings** on the main or pause menu.
+On New 3DS and New 2DS models, **L fires** and **ZL throws grenades** by default.
+On original 3DS and 2DS models, **L fires** and **R throws grenades**.
+
+- **Layout:** Preview a preset, then press **A** or tap **Apply** to replace
+  this model's bindings. You can also set the menu's face-button convention.
+  On New models, **Classic ZR fire** restores the previous default layout.
+- **Buttons:** Assign an action to each face button, shoulder button, and
+  D-pad direction, or leave it unassigned. The game remembers separate
+  layouts for New and original models. Tap a row or press **A** to open the
+  action picker. Use **Prev** and **Next** to reach more rows by touch.
+- **Aim:** Adjust touch and C-stick sensitivity separately, reverse vertical
+  input for either, and set the C-stick dead zone. On New models you can turn
+  off touch drag aiming and still use the touchscreen shortcuts.
+
+Use **L/R** or tap the tabs. Use the D-pad or tap **−/+** to change a value.
+Press **START** to save, **B** to go back, or **X** to reset the current tab.
+
+Press **Y** or tap **Graphics Options** on the main or pause menu to change
+**World resolution**. Press **A** or **START** to save and apply the choice
+without reloading the map. The game remembers the setting. The HUD, menus,
+and touch screen stay at full resolution.
+
+| World resolution | When to use it | World pixels vs. native |
+| --- | --- | ---: |
+| Auto (default) | Let the game adjust under sustained load | Varies |
+| 400×240 | Sharpest picture | 100% |
+| 320×192 | Try this first if the frame rate dips | 64% |
+| 280×168 | Give the GPU more room in busy scenes | 49% |
+| 200×120 | Largest reduction, with a noticeably softer picture | 25% |
+
+Lower settings can help scenes limited by drawing pixels. The actual frame
+rate also depends on the scene and console. New models also offer a separate
+**Texture detail** tab, which takes effect on the next map load.
+
 ## Setup
 
 For command-line setup on **Linux, macOS or Windows**, see the

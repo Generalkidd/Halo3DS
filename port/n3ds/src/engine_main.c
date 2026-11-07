@@ -8,8 +8,24 @@
 #include "engine_renderer.h"
 #include "engine_renderer_features.h"
 #include "engine_algorithm_profile.h"
+#include "engine_allocation_profile.h"
 #include "engine_dependency_trace.h"
 #include "engine_parallel.h"
+#include "engine_action_replay.h"
+
+#ifdef HALO_N3DS_OPAQUE_COLOR_READS
+#define ENGINE_LOG_NAME "halo-opaque-color-reads.log"
+#define ENGINE_LOG_PREVIOUS "halo-opaque-color-reads.previous.log"
+#elif defined(HALO_N3DS_FRAMEBUFFER_REUSE)
+#define ENGINE_LOG_NAME "halo-framebuffer-reuse.log"
+#define ENGINE_LOG_PREVIOUS "halo-framebuffer-reuse.previous.log"
+#elif defined(HALO_N3DS_GPU_PROBE)
+#define ENGINE_LOG_NAME "halo-gpu-probe.log"
+#define ENGINE_LOG_PREVIOUS "halo-gpu-probe.previous.log"
+#else
+#define ENGINE_LOG_NAME "halo-source-engine.log"
+#define ENGINE_LOG_PREVIOUS "halo-source-engine.previous.log"
+#endif
 
 static FILE *log_file;
 static char log_buffer[16*1024];
@@ -82,18 +98,25 @@ static void renderer_configuration_log(void)
     n3ds_log(message);
     n3ds_log("PERFORMANCE CONFIG: configuration only; external capture unverified; not validation or measured performance");
     snprintf(message,sizeof(message),
-        "ALGORITHM CONFIG: schema=%u all_modes=reference(0) instrumentation=%d profile_loop_limit=%ld; candidate/verify unavailable",
-        (unsigned)N3DS_ALGORITHM_FEATURE_SCHEMA,N3DS_ALGORITHM_PROFILE_CONFIGURED,(long)HALO_N3DS_PROFILE_FRAMES);
+        "ALGORITHM CONFIG: schema=%u instrumentation=%d profile_loop_limit=%ld verification=%d",
+        (unsigned)N3DS_ALGORITHM_FEATURE_SCHEMA,N3DS_ALGORITHM_PROFILE_CONFIGURED,
+        (long)HALO_N3DS_PROFILE_FRAMES,N3DS_RENDERER_ALGORITHM_VERIFICATION);
     n3ds_log(message);
+#define LOG_ALGORITHM(id, name) \
+    snprintf(message,sizeof(message),"ALGORITHM MODE: %s=%u",name,(unsigned)HALO_N3DS_ALGO_ ## id); \
+    n3ds_log(message);
+    N3DS_IMPLEMENTED_ALGORITHMS(LOG_ALGORITHM)
+#undef LOG_ALGORITHM
 }
 int main(void)
 {
+    n3ds_allocation_profile_start();
     gfxInitDefault(); gfxSetDoubleBuffering(GFX_BOTTOM, false); consoleInit(GFX_BOTTOM, NULL);
     printf("\n\n             Halo3DS\n\n\n          Loading game data...\n\n    Initial loading may take a while.\n");
     fflush(stdout);flush_console();
-    remove("sdmc:/halo-source-engine.previous.log");
-    rename("sdmc:/halo-source-engine.log","sdmc:/halo-source-engine.previous.log");
-    log_file = fopen("sdmc:/halo-source-engine.log", "w");
+    remove("sdmc:/" ENGINE_LOG_PREVIOUS);
+    rename("sdmc:/" ENGINE_LOG_NAME,"sdmc:/" ENGINE_LOG_PREVIOUS);
+    log_file = fopen("sdmc:/" ENGINE_LOG_NAME, "w");
     if(log_file) setvbuf(log_file,log_buffer,_IOFBF,sizeof(log_buffer));
     n3ds_log("Halo native engine bootstrap");
     n3ds_log("BUILD: Halo3DS Original-model adaptive rendering 2026-10-05");
@@ -107,7 +130,7 @@ int main(void)
 #endif
     bool new_model=false;APT_CheckNew3DS(&new_model);
     n3ds_log(new_model?"MODEL: New 3DS family; high-speed CPU and L2 cache requested":"MODEL: original 3DS/2DS family; standard CPU speed");
-#ifdef HALO_N3DS_PERFORMANCE_PROFILE
+#if defined(HALO_N3DS_PERFORMANCE_PROFILE) || defined(HALO_N3DS_GPU_PROBE)
     s64 clock_mhz = -1, l2 = -1;
     /* Luma exposes the active mode separately from libctru's request. */
     if (new_model) {
@@ -129,6 +152,7 @@ int main(void)
     extern void n3ds_stall_watch_start(void),n3ds_stall_watch_stop(void);
     n3ds_stall_watch_start();
     int result = textures_ready ? halo_engine_boot() : 1;
+    if(!n3ds_action_replay_finish(result==0)) result=1;
     n3ds_trace_finish();
     n3ds_gpu_algorithm_profile_finish();
     n3ds_algorithm_profile_stop();
@@ -151,7 +175,7 @@ int main(void)
          * after GPU shutdown so a startup failure cannot look like a freeze. */
         error_console=1;graphics_owned=0;gfxSet3D(false);gfxSetDoubleBuffering(GFX_BOTTOM,false);
         consoleInit(GFX_BOTTOM,NULL);
-        printf("Halo3DS stopped during startup.\n\nSee halo-source-engine.log\non the SD card for details.\n\nPress START to exit.\n");
+        printf("Halo3DS stopped during startup.\n\nSee " ENGINE_LOG_NAME "\non the SD card for details.\n\nPress START to exit.\n");
         fflush(stdout);flush_console();
     }
     n3ds_log(result ? "RESULT: FAIL" : "RESULT: PASS");

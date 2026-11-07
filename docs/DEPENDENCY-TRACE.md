@@ -1,15 +1,14 @@
 # Bounded dependency trace
 
-Status: implemented in source, unbuilt and untested. No trace capture, overhead
-measurement, hardware timing or replay result exists for this slice. Earlier
-native-400 builds, setup tests and the emulator menu smoke predate it. They do
-not validate the new instrumentation. The installed launcher is unchanged.
+Status: the native-400 trace build compiles and links, and the offline reader
+passes synthetic schema-1 tests. Physical trace capture, instrumentation
+overhead and replay repeatability still need validation.
 
 This trace supports the first step of the
 [performance roadmap](PERFORMANCE-ROADMAP.md): distinguish CPU preparation,
 existing waits, submitted GPU work and observed presentation dependencies before
-moving work across their boundaries. It does not implement an optimisation
-candidate, alter Halo's 30 Hz game logic or change rendering quality.
+moving work across their boundaries. Trace collection is independent of the
+candidate switches and preserves Halo's 30 Hz gameplay logic and rendering.
 
 ## Independent build controls
 
@@ -23,8 +22,9 @@ select readback or validation fixtures. It leaves `--fixed-world-width`,
 `--present-60`, texture prefetch, cache budgets and asset/algorithm selections
 unchanged. For the native-resolution regular-frame reference, explicitly select
 `--fixed-world-width 400`; trace alone does not select a resolution policy.
-Midpoint comparisons remain a separately selected later step. Algorithm
-`candidate` and `verify` modes remain unavailable.
+Use `--present-60` separately for midpoint comparisons. See
+[Algorithm profiling](ALGORITHM-PROFILING.md) for candidate and verification
+controls.
 
 The trace-only build compiles the same Citro3D frame adapter used by
 `--present-60`, but does not enable midpoint rendering or frame-discard decisions.
@@ -100,6 +100,15 @@ using their originating attempt/view and queue IDs.
 The current stage coverage includes frontend services, actual simulation ticks
 and frame updates, thread collection, texture service/fences, per-eye frusta
 and visibility, object discovery/rendering, worker batches and GPU boundaries.
+In a prepared-view candidate trace the regular attempt's view opens before
+frame services and GPU acquisition. Its early frustum, visibility and object
+discovery spans share that view's ID through rendering. The verification build
+can retain both early and reference spans under one view.
+The legacy visibility timing window includes camera leaf lookup and portal
+traversal in both paths. The regular object obscurer ray still runs at its
+original point and may advance the object marker. Prepared lists can survive
+that advance when the marker dependencies prove their order and membership.
+Fallback retains the regular discovery pass.
 Checkpoint polling, input/director/observer/audio work outside a traced worker,
 and top-level camera/history setup are not individually timed by this slice.
 Object-render scopes include encoding and are not pure CPU preparation. A
@@ -197,21 +206,61 @@ excluding the trailer. Its initial value is 2,166,136,261 and its multiplier is
 16,777,619 with 32-bit wrap. It detects accidental damage; it is not an
 authenticity guarantee.
 
-## Offline reader and future validation
+## Offline reader
 
-[`tools/dependency_trace.py`](../tools/dependency_trace.py) is an unexecuted,
-untested, standard-library reader. It bounds input to the schema-1 maximum,
-checks the exact header/record/trailer sizes and checksum, and rejects unsupported
-fields. It prints JSON containing raw clock labels, event counts, drops,
-producer-sequence gaps and unmatched queue/swap identities. Examples of unmatched
-identities are capped at 32; CPU stage and worker-pair analysis is not implemented.
-The reader does not infer GPU completion instants, scanout times or FPS, and a
-successful file-integrity result is not a correctness or performance gate.
+[`tools/dependency_trace.py`](../tools/dependency_trace.py) bounds input to the
+schema-1 maximum, checks header/record/trailer sizes and checksum, and rejects
+unsupported fields and timestamps outside the capture interval. Its JSON
+retains raw clock labels, event counts, drops and producer-sequence gaps.
+Examples of unmatched queue or swap identities are capped at 32.
 
-A future offline invocation, not executed for this source slice:
+The reader pairs CPU scopes in owner sequence using the context applicable to
+the family. A frontend loop or service span may cross restore or generation
+boundaries, so its key is the loop. A tick or frame update uses loop, epoch and
+tick. Render spans use the attempt and view context, allowing the submission ID
+to change across frame end. Repeated spans, including texture fences and
+prepared-view verification, pair in order. Ambiguous endpoints, missing
+endpoints, intervening sequence gaps and negative intervals are counted
+separately. A GPU acquisition rejection with a retained begin has its own
+timing group.
+
+Worker spans use the captured job ID, context and category. Wake, helper,
+owner work, join, full dispatch-to-join and serial durations are separate
+distributions. Overlapping durations must stay separate. The queue and
+presentation reports pair unique retained IDs and check endpoint contexts
+before reporting run-to-completion-callback and post-to-sampled-clear latency.
+Every duration distribution gives a sample count, minimum, nearest-rank
+p50/p95/p99 and maximum in ticks and milliseconds.
+
+The `attempt_dependencies` report retains individual regular attempt identities
+and endpoints. Frustum, visibility and discovery spans before acquisition
+describe early CPU work, including preparation that is later discarded.
+Texture-fence spans before acquisition are separate from the acquisition
+call, whose duration includes call overhead. The reader links the immediately
+preceding successful midpoint in the same loop, tick, restore epoch and
+map/BSP generation to its latest observed queue run. With a matched completion
+callback it measures the intersection of that interval and the early spans.
+The callback interval includes observation latency and supports comparisons
+of overlapping work at trace boundaries. Top pending clears are linked to the
+originating regular attempt, including polls that occur in a later loop.
+Missing endpoints leave the related measurement unavailable. The output also
+summarizes the cohort of regular attempts with an observed preceding midpoint
+queue. Compare candidate and reference cohorts with the same midpoint policy.
+
+The presentation report counts distinct matched top pending-clear observations
+by kind. Clear-to-clear gaps require consecutive swap IDs and chronological
+endpoints. An interior VBlank run also requires the callback records for both
+sampled VBlank labels and every label between them, in order. The largest
+witnessed interior run bounds the longest such **observation** gap from below.
+Missing brackets and ambiguous timing remain explicit. Displayed frames,
+missed/repeated physical refreshes and the longest physical stall still require
+hardware evidence.
+
+Run the reader and synthetic tests locally.
 
 ```text
 python3 tools/dependency_trace.py /private/path/halo-trace-RUN_ID.bin > /private/path/trace-summary.json
+python3 -m unittest discover -s tools -p test_dependency_trace.py
 ```
 
 Retain the exported trace and its schema/clock/storage receipt together with
@@ -219,8 +268,8 @@ the exact executable/build manifest, source/dependency receipt, map/sidecar and
 private save identities, console model, memory mode, settings and route. The
 binary format is owned by `engine_dependency_trace.c`; parsers must reject
 unsupported schema/record sizes and disclose incomplete captures. This slice
-does not supply an offline replay tool or claim the trace is self-sufficient
-for reproducing gameplay.
+requires the separate action-replay fixture to reproduce tick inputs. Successful
+file-integrity checks validate the schema and checksum.
 
 Before using timings, build and validate the trace separately, confirm event
 pairing/context across menu entry, gameplay, pause, checkpoint restore, BSP
@@ -228,6 +277,40 @@ transition and shutdown, then measure its overhead against the same untraced
 configuration. Do correctness captures separately from uncaptured physical
 New 2DS XL timing. Emulator timings cannot establish hardware bottlenecks.
 
-Tick-indexed deterministic replay, canonical state comparison and complete
-ordinary/linear/staging allocation accounting remain proposed work. No
-optimisation should be promoted from these source changes alone.
+The reader's tests exercise synthetic data, including nonchronological
+timestamps, drops and exact attempt attribution. The
+[`prepared_object_marker_test.c`](../port/n3ds/tests/host/prepared_object_marker_test.c)
+host fixture exercises the marker dependency helpers with a model of the
+obscurer query, marker wrap, stale values and saturated discovery. It checks
+ordered object IDs and all marker writes. Promotion still requires the
+separate correctness and physical timing runs in the roadmap.
+
+## Midpoint correctness artifacts
+
+The separate `--present-60 --midpoint-capture-tick N` fixture records one
+eligible midpoint and the following regular view. Each uses the native
+240×400 top-target storage dimensions and produces a 384,000-byte `.rgba`
+image, a 384,000-byte raw tiled `.d24s8` image, and a 260-byte `.camera`
+record. Raw depth and stencil bytes retain the framebuffer's native layout.
+Each copy retires its GX queue and callback before CPU access. The final
+`-complete.json` receipt is published only after both sets of files verify.
+A set without that receipt is incomplete. These reads perturb the schedule.
+
+The camera record starts with the eight bytes `H2DSCAM1`. The remaining
+fields are 32-bit little-endian words. Indices count from the start of the
+record, including the two signature words.
+
+| Word indices | Contents |
+| --- | --- |
+| 2–8 | Simulation tick, midpoint flag, target width and height, depth format, block32 flag, presentation-time float bits |
+| 9–20 | Culling camera position, forward, up, vertical FOV, near and far float bits |
+| 21–32 | Rasterizer camera fields in the same order |
+| 33–48 | World projection matrix in Citro3D row storage order |
+| 49–64 | Camera-relative model projection matrix in the same order |
+
+Camera and matrix values are copied at the actual world-view entry, before
+weapon or UI rendering can change the renderer's camera state. The color and
+depth files represent the completed top target after all passes. The raw depth
+layout and physical execution still need device verification. The
+[host UBSan harness](../tools/verify_capture_staging.py) exercises exact DMA
+ownership, metadata serialization and receipt ordering with platform stubs.

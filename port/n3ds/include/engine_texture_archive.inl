@@ -1,9 +1,13 @@
-/* Optional setup-generated, GPU-ready RGBA8 archives. Never written by the
- * console. Candidate metadata/payload failure retains the legacy archive and
- * original map decoder. A worker receives only this copied span, not an index. */
+/* Optional setup-generated, GPU-ready archives. Candidate failures retain the
+ * legacy archive and original map decoder. Workers receive copied spans. */
 #include "engine_renderer_features.h"
+#if HALO_N3DS_TEXTURE_COMPARE && (HALO_N3DS_TEXTURE_STORAGE != N3DS_TEXTURE_STORAGE_CANDIDATE_ARCHIVE || \
+    defined(HALO_N3DS_TEXTURE_PREFETCH) || defined(HALO_N3DS_PRESENT_INTERPOLATION) || defined(HALO_N3DS_ARCHIVE_VERIFY))
+#error "Texture comparison requires candidate archives and a regular-only loader"
+#endif
 enum { TEXTURE_ARCHIVE_KIND_LEGACY = 1, TEXTURE_ARCHIVE_KIND_CANDIDATE = 4 };
-struct texture_archive_selection { unsigned int offset,bytes,hash,kind; };
+enum { TEXTURE_ARCHIVE_RAW = 0, TEXTURE_ARCHIVE_LZ4 = 1, TEXTURE_ARCHIVE_LZ4_LIMIT = 256*1024 };
+struct texture_archive_selection { unsigned int offset,bytes,hash,kind,format,codec; };
 struct texture_archive_entry {
     unsigned int bitmap_offset,resolution,source_offset,source_bytes;
     unsigned int dimensions,offset,bytes,hash;
@@ -15,6 +19,26 @@ enum { TEXTURE_ARCHIVE_LEGACY = 1, TEXTURE_ARCHIVE_FILTERED_LIGHTMAPS = 2,
 static unsigned int texture_archive_count,texture_archive_generation,texture_archive_attempted,texture_archive_version;
 static unsigned int texture_archive_hits,texture_archive_misses;
 static unsigned int texture_archive_legacy_hits,texture_archive_candidate_hits;
+#if HALO_N3DS_TEXTURE_COMPARE
+static struct {
+    unsigned int mode,raw,lz4,rgba8,rgb8,la8;
+    unsigned long long stored_bytes,resident_bytes;
+    char map[sizeof(((struct n3ds_cache_view *)0)->header.name)];
+} texture_compare;
+static void texture_compare_record_publish(const struct texture_archive_selection *selection,unsigned int resident_bytes)
+{
+    if(!texture_compare.mode || selection->kind!=TEXTURE_ARCHIVE_KIND_CANDIDATE) return;
+    if(selection->codec==TEXTURE_ARCHIVE_LZ4) ++texture_compare.lz4;
+    else ++texture_compare.raw;
+    switch(selection->format) {
+        case NATIVE_TEXTURE_FORMAT_RGBA8: ++texture_compare.rgba8;break;
+        case NATIVE_TEXTURE_FORMAT_RGB8: ++texture_compare.rgb8;break;
+        case NATIVE_TEXTURE_FORMAT_LA8: ++texture_compare.la8;break;
+    }
+    texture_compare.stored_bytes+=selection->bytes;
+    texture_compare.resident_bytes+=resident_bytes;
+}
+#endif
 static void texture_archive_record_hit(unsigned int kind)
 {
     ++texture_archive_hits;
@@ -47,6 +71,18 @@ static void texture_archive_legacy_close(void)
 #include "engine_texture_candidate.inl"
 static void texture_archive_close(void)
 {
+#if HALO_N3DS_TEXTURE_COMPARE
+    if(texture_compare.mode) {
+        char message[240];
+        snprintf(message,sizeof(message),
+            "TEXTURE COMPARE: map=%s mode=%u raw=%u lz4=%u rgba8=%u rgb8=%u la8=%u stored_bytes=%llu resident_bytes=%llu",
+            texture_compare.map,texture_compare.mode,
+            texture_compare.raw,texture_compare.lz4,texture_compare.rgba8,texture_compare.rgb8,texture_compare.la8,
+            texture_compare.stored_bytes,texture_compare.resident_bytes);
+        n3ds_log(message);
+        memset(&texture_compare,0,sizeof(texture_compare));
+    }
+#endif
     texture_archive_legacy_close();
 #if HALO_N3DS_TEXTURE_STORAGE == N3DS_TEXTURE_STORAGE_CANDIDATE_ARCHIVE
     texture_candidate_close();
@@ -145,27 +181,40 @@ static void texture_archive_reject_payload(unsigned int kind)
 static int texture_archive_select(const struct bitmap_data *bitmap,unsigned int resolution,
     unsigned int source_offset,unsigned int source_bytes,unsigned int width,unsigned int height,int lightmap,
     unsigned int source_mip,unsigned int source_format,unsigned int source_width,unsigned int source_height,
-    struct texture_archive_selection *selection)
+    int allow_candidate,struct texture_archive_selection *selection)
 {
     if(!selection) return 0;
     memset(selection,0,sizeof(*selection));
     const struct n3ds_cache_view *v=n3ds_engine_cache_view(0);
     if(!bitmap || !v || !v->tags || n3ds_cache_resolve(v,bitmap,sizeof(*bitmap))!=bitmap) return 0;
 #if HALO_N3DS_TEXTURE_STORAGE == N3DS_TEXTURE_STORAGE_CANDIDATE_ARCHIVE
-    if(texture_candidate_select(bitmap,resolution,source_offset,source_bytes,width,height,lightmap,
+    if(allow_candidate && texture_candidate_select(bitmap,resolution,source_offset,source_bytes,width,height,lightmap,
             source_mip,source_format,source_width,source_height,selection)) return 1;
 #else
-    (void)source_mip;(void)source_format;(void)source_width;(void)source_height;
+    (void)source_mip;(void)source_format;(void)source_width;(void)source_height;(void)allow_candidate;
 #endif
     const struct texture_archive_entry *r=texture_archive_find(bitmap,resolution,source_offset,source_bytes,width,height,lightmap);
     if(!r) return 0;
-    *selection=(struct texture_archive_selection){r->offset,r->bytes,r->hash,TEXTURE_ARCHIVE_KIND_LEGACY};
+    *selection=(struct texture_archive_selection){
+        r->offset,r->bytes,r->hash,TEXTURE_ARCHIVE_KIND_LEGACY,NATIVE_TEXTURE_FORMAT_RGBA8,TEXTURE_ARCHIVE_RAW};
     return 1;
+}
+static unsigned int texture_archive_read_span(const struct texture_archive_selection *selected,void *out)
+{
+    FILE *file=texture_archive;
+#if HALO_N3DS_TEXTURE_STORAGE == N3DS_TEXTURE_STORAGE_CANDIDATE_ARCHIVE
+    if(selected->kind==TEXTURE_ARCHIVE_KIND_CANDIDATE) file=texture_candidate;
+#endif
+    unsigned int got=0;
+    n3ds_files_lock();
+    if(file && !fseek(file,selected->offset,SEEK_SET)) got=fread(out,1,selected->bytes,file);
+    n3ds_files_unlock();
+    return got;
 }
 static int texture_archive_read(const struct bitmap_data *bitmap,unsigned int resolution,
     unsigned int source_offset,unsigned int source_bytes,unsigned int width,unsigned int height,int lightmap,
     unsigned int source_mip,unsigned int source_format,unsigned int source_width,unsigned int source_height,
-    void *out,unsigned int *bytes_read)
+    int allow_candidate,void *out,unsigned int *bytes_read)
 {
     *bytes_read=0;
 #ifdef HALO_N3DS_PRESENT_INTERPOLATION
@@ -177,15 +226,14 @@ static int texture_archive_read(const struct bitmap_data *bitmap,unsigned int re
     for(unsigned int attempt=0;attempt<2;++attempt) {
         struct texture_archive_selection selected;
         if(!texture_archive_select(bitmap,resolution,source_offset,source_bytes,width,height,lightmap,
-                source_mip,source_format,source_width,source_height,&selected)) break;
-        FILE *file=texture_archive;
-#if HALO_N3DS_TEXTURE_STORAGE == N3DS_TEXTURE_STORAGE_CANDIDATE_ARCHIVE
-        if(selected.kind==TEXTURE_ARCHIVE_KIND_CANDIDATE) file=texture_candidate;
-#endif
-        unsigned int got=0;
-        n3ds_files_lock();if(file && !fseek(file,selected.offset,SEEK_SET)) got=fread(out,1,selected.bytes,file);
-        n3ds_files_unlock();*bytes_read+=got;
-        if(got==selected.bytes && texture_hash(out,selected.bytes)==selected.hash) {texture_archive_record_hit(selected.kind);return 1;}
+                source_mip,source_format,source_width,source_height,allow_candidate,&selected) ||
+                selected.format!=NATIVE_TEXTURE_FORMAT_RGBA8 || selected.codec!=TEXTURE_ARCHIVE_RAW) break;
+        unsigned int got=texture_archive_read_span(&selected,out);
+        *bytes_read+=got;
+        if(got==selected.bytes && texture_hash(out,selected.bytes)==selected.hash) {
+            texture_archive_record_hit(selected.kind);
+            return 1;
+        }
         texture_archive_reject_payload(selected.kind);
         if(selected.kind!=TEXTURE_ARCHIVE_KIND_CANDIDATE) break;
     }

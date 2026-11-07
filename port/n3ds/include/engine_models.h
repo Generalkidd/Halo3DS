@@ -20,6 +20,8 @@ const struct model_vertex_uncompressed *n3ds_model_decode_stream(const void *dat
 int n3ds_model_uv_bounds(const struct model_vertex_uncompressed *vertices,unsigned int count,float bounds[4]);
 void n3ds_model_decode_cache_flush(void);
 int n3ds_model_decode_cache_tests(void);
+/* Consume posed CPU vertices before requesting another pose. Midpoint
+ * scratch is reused, so draws must publish only their own GPU-arena copy. */
 const struct native_render_vertex *n3ds_model_skin_stream(const struct model_vertex_uncompressed *vertices,
     unsigned int count,const struct rasterizer_model_skinning *skin,const real_vector2d *uv_scale,unsigned int owner);
 /* Optional raw weighted normals, without normalization or material effects.
@@ -28,6 +30,22 @@ const struct native_render_vertex *n3ds_model_skin_stream(const struct model_ver
  * NULL retains the caller's existing per-vertex calculation. */
 const real_vector3d *n3ds_model_normal_stream(const struct model_vertex_uncompressed *vertices,
     unsigned int count,const struct rasterizer_model_skinning *skin,unsigned int owner);
+/* Paired position/UV and raw normal request for consumers that replace color.
+ * The returned vertex color is unspecified. Either stream may be unavailable. */
+#if HALO_N3DS_ALGO_SHARED_SKINNING != N3DS_ALGORITHM_REFERENCE
+const struct native_render_vertex *n3ds_model_unlit_skin_stream(const struct model_vertex_uncompressed *,
+    unsigned int,const struct rasterizer_model_skinning *,const real_vector2d *,
+    unsigned int,const real_vector3d **);
+#else
+static inline const struct native_render_vertex *n3ds_model_unlit_skin_stream(
+    const struct model_vertex_uncompressed *v,unsigned int count,const struct rasterizer_model_skinning *skin,
+    const real_vector2d *scale,unsigned int owner,const real_vector3d **normals)
+{
+    const struct native_render_vertex *pose=n3ds_model_skin_stream(v,count,skin,scale,owner);
+    *normals=n3ds_model_normal_stream(v,count,skin,owner);
+    return pose;
+}
+#endif
 int n3ds_model_skin_cache_tests(void);
 int n3ds_model_gpu_cache_tests(void);
 /* Existing bounded cache, no new ownership. NULL preserves CPU posing. */

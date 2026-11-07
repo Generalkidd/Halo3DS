@@ -191,6 +191,7 @@ struct game_options;
 /* ---------- structures */
 
 #ifdef HALO_N3DS
+#include "engine_action_replay.h"
 #include "engine_game.h"
 long long n3ds_engine_ticks(void);
 long long n3ds_engine_tick_frequency(void);
@@ -492,6 +493,10 @@ void game_tick(
 	units_update();
 	ai_update();
 	players_update_before_game();
+#if defined(HALO_N3DS) && HALO_N3DS_ACTION_REPLAY
+	if (n3ds_action_replay_failed())
+		goto end_tick;
+#endif
 
 	seconds_per_tick = game_globals->players_are_double_speed
 		? 1.0f / (2 * TICKS_PER_SECOND)
@@ -514,10 +519,16 @@ void game_tick(
 	hud_update();
 	player_effect_update();
 
+#if defined(HALO_N3DS) && HALO_N3DS_ACTION_REPLAY
+end_tick:
+#endif
 	profile_exit(game_update_section);
 	collision_log_end_period();
 	profile_tick_end();
-    NATIVE_GAME_END(0);
+    #ifdef HALO_N3DS
+    if(!n3ds_action_replay_failed())
+    #endif
+        NATIVE_GAME_END(0);
 
 	return;
 }

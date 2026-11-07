@@ -6,8 +6,14 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include "engine_action_replay.h"
+#include "engine_allocation_profile.h"
 #include "engine_diagnostics.h"
 #include "engine_renderer.h"
+
+#ifdef HALO_N3DS_ALLOCATION_PROFILE
+#include "engine_allocation_profile.inl"
+#endif
 
 /* Original AI path states alone occupy about 112 KiB per nested caller.
  * B30's firing-position search exceeds the former 256 KiB stack (observed SP
@@ -106,6 +112,7 @@ void n3ds_state_flush(void *pointer, unsigned int bytes) {
     extern void n3ds_object_light_cache_reset(void);
     n3ds_object_light_cache_reset(); /* restored cluster references belong to the snapshot */
     GSPGPU_FlushDataCache(pointer, bytes);
+    n3ds_action_replay_restore();
 }
 int n3ds_state_make_directory(void)
 {
@@ -151,6 +158,14 @@ unsigned long n3ds_engine_available_memory(void)
      * return the known free arena space, not a wrapped near-4GiB estimate. */
     return state.application_free + state.heap_free + state.linear_free;
 }
+#ifdef HALO_N3DS_ALGORITHM_PROFILE
+void n3ds_engine_allocator_usage(unsigned int *heap_used,unsigned int *linear_used)
+{
+    struct mallinfo heap=mallinfo();
+    *heap_used=heap.uordblks>0?(unsigned int)heap.uordblks:0;
+    *linear_used=n3ds_linear_allocator_used();
+}
+#endif
 void n3ds_engine_memory_snapshot(struct native_memory_snapshot *result)
 {
     struct mallinfo heap=mallinfo();

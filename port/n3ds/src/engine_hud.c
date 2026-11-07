@@ -16,6 +16,7 @@
 #include "cutscene/cinematics.h"
 #include "units/units.h"
 #include "engine_input.h"
+#include "engine_controls.h"
 #include "render/render.h"
 #include "engine_renderer.h"
 #include "engine_textures.h"
@@ -247,10 +248,11 @@ void n3ds_menu_draw_screen(void)
     for(int i=0;i<4;++i) {
         saved[i]=*rects[i];rects[i]->x0=rects[i]->y0=0;rects[i]->x1=640;rects[i]->y1=480;
     }
-    extern int n3ds_controls_active(void);extern void n3ds_controls_draw(void);
     if(!n3ds_controls_active()) {
         render_ui_widgets(NONE,&render.camera.window_bounds);
-        if(main_menu_is_active()) {extern void n3ds_gpu_campaign_help(void);n3ds_gpu_campaign_help();}
+        if(main_menu_is_active() && !n3ds_ui_controls_shortcut_active()) {
+            extern void n3ds_gpu_campaign_help(void);n3ds_gpu_campaign_help();
+        }
     }
     n3ds_controls_draw();
     for(int i=0;i<4;++i) *rects[i]=saved[i];

@@ -145,9 +145,10 @@ static int glass_native(const struct glass_shader *g,short permutation,
     if(rigid) {m.pose=rows;}
     else {
     const real_vector2d unit={1,1};
-    const struct native_render_vertex *pose=n3ds_model_skin_stream(cached,count,&p->skinning,&unit,p->unique_identifier);
-    const real_vector3d *normals=(m.cube || m.diffuse)?
-        n3ds_model_normal_stream(cached,count,&p->skinning,p->unique_identifier):NULL;
+    const real_vector3d *normals=NULL;
+    const struct native_render_vertex *pose=(m.cube || m.diffuse)?
+        n3ds_model_unlit_skin_stream(cached,count,&p->skinning,&unit,p->unique_identifier,&normals):
+        n3ds_model_skin_stream(cached,count,&p->skinning,&unit,p->unique_identifier);
     out=n3ds_gpu_model_vertices_allocate(count);assert(out);
     for(unsigned int i=0;i<count;++i) {
         struct model_vertex_uncompressed decoded;struct native_render_vertex temporary;

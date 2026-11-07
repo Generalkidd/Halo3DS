@@ -1,4 +1,5 @@
 #include "engine_algorithm_profile.h"
+#include "engine_allocation_profile.h"
 
 #ifdef HALO_N3DS_ALGORITHM_PROFILE
 #include <stdio.h>
@@ -7,6 +8,7 @@
 long long n3ds_engine_ticks(void);
 long long n3ds_engine_tick_frequency(void);
 void n3ds_log(const char *message);
+void n3ds_engine_allocator_usage(unsigned int *heap_used,unsigned int *linear_used);
 
 /* Fixed storage, no allocations or per-event logging. Flush every 120
  * completed frontend loops. Delayed GPU records can carry earlier context.
@@ -23,6 +25,7 @@ static struct algorithm_window windows[ALGORITHM_KINDS];
 static struct n3ds_algorithm_profile_context current;
 static unsigned long long window_serial;
 static unsigned int window_loops;
+static unsigned int texture_staging_bytes;
 #define N3DS_ALGORITHM_NAME(id, name) name,
 static const char *const metric_names[] = { N3DS_ALGORITHM_METRICS(N3DS_ALGORITHM_NAME) };
 #undef N3DS_ALGORITHM_NAME
@@ -103,8 +106,9 @@ void n3ds_algorithm_profile_begin_loop(unsigned long long loop, long tick,
         if (!current.run) current.run = 1;
         char message[256];
         snprintf(message, sizeof(message),
-            "ALGO RUN: id=%llu tick_hz=%lld window_loops=%u counter_bytes=%u kinds=0:frontend,1:regular,2:midpoint; instrumentation overhead unmeasured",
-            current.run, n3ds_engine_tick_frequency(), ALGORITHM_WINDOW_LOOPS, (unsigned int)sizeof(windows));
+            "ALGO RUN: id=%llu tick_hz=%lld window_loops=%u counter_bytes=%u allocation_events=%d kinds=0:frontend,1:regular,2:midpoint; instrumentation overhead unmeasured",
+            current.run, n3ds_engine_tick_frequency(), ALGORITHM_WINDOW_LOOPS, (unsigned int)sizeof(windows),
+            N3DS_ALLOCATION_PROFILE_CONFIGURED);
         n3ds_log(message);
     }
     current.loop = loop;
@@ -130,12 +134,52 @@ void n3ds_algorithm_profile_finish(void)
     for (unsigned int kind = 0; kind < ALGORITHM_KINDS; ++kind) flush_window(&windows[kind]);
     window_loops = 0;
 }
+#ifdef HALO_N3DS_ALLOCATION_PROFILE
+static void drain_allocation_samples(int stop)
+{
+    struct n3ds_allocation_samples samples;
+    n3ds_allocation_profile_drain(&samples, stop);
+    struct n3ds_algorithm_profile_context context = current;
+    context.kind = 0;
+    context.submission = 0;
+    n3ds_algorithm_profile_max_at(&context, N3DS_ALG_MEM_HEAP_EVENT_PEAK, samples.ordinary.peak);
+    n3ds_algorithm_profile_add_at(&context, N3DS_ALG_MEM_HEAP_ALLOCS, samples.ordinary.allocations);
+    n3ds_algorithm_profile_add_at(&context, N3DS_ALG_MEM_HEAP_RESIZES, samples.ordinary.resizes);
+    n3ds_algorithm_profile_add_at(&context, N3DS_ALG_MEM_HEAP_ZERO_RESIZES, samples.ordinary.zero_resizes);
+    n3ds_algorithm_profile_add_at(&context, N3DS_ALG_MEM_HEAP_FREES, samples.ordinary.frees);
+    n3ds_algorithm_profile_add_at(&context, N3DS_ALG_MEM_HEAP_FAILURES, samples.ordinary.failures);
+    n3ds_algorithm_profile_max_at(&context, N3DS_ALG_MEM_LINEAR_EVENT_PEAK, samples.linear.peak);
+    n3ds_algorithm_profile_add_at(&context, N3DS_ALG_MEM_LINEAR_ALLOCS, samples.linear.allocations);
+    n3ds_algorithm_profile_add_at(&context, N3DS_ALG_MEM_LINEAR_FREES, samples.linear.frees);
+    n3ds_algorithm_profile_add_at(&context, N3DS_ALG_MEM_LINEAR_FAILURES, samples.linear.failures);
+}
+#endif
 void n3ds_algorithm_profile_end_loop(void)
 {
+#ifdef HALO_N3DS_ALLOCATION_PROFILE
+    drain_allocation_samples(0);
+#endif
+    unsigned int heap_used,linear_used;
+    n3ds_engine_allocator_usage(&heap_used,&linear_used);
+    n3ds_algorithm_profile_max(N3DS_ALG_MEM_HEAP_PEAK,heap_used);
+    n3ds_algorithm_profile_max(N3DS_ALG_MEM_LINEAR_PEAK,linear_used);
+    n3ds_algorithm_profile_max(N3DS_ALG_MEM_TEXTURE_STAGE_PEAK,texture_staging_bytes);
     if (++window_loops == ALGORITHM_WINDOW_LOOPS) n3ds_algorithm_profile_finish();
+}
+void n3ds_algorithm_profile_staging_acquire(unsigned int bytes)
+{
+    texture_staging_bytes+=bytes;
+    n3ds_algorithm_profile_max(N3DS_ALG_MEM_TEXTURE_STAGE_PEAK,texture_staging_bytes);
+}
+void n3ds_algorithm_profile_staging_release(unsigned int bytes)
+{
+    texture_staging_bytes-=bytes;
 }
 void n3ds_algorithm_profile_stop(void)
 {
+#ifdef HALO_N3DS_ALLOCATION_PROFILE
+    drain_allocation_samples(1);
+#endif
     n3ds_algorithm_profile_finish();
     memset(&current, 0, sizeof(current));
     current.kind = -1; /* Teardown is not another sample of the last loop. */

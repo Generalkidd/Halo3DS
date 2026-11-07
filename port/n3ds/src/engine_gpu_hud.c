@@ -675,6 +675,7 @@ static int sensor_gpu_begin(void)
      * can execute stale commands when the motion tracker becomes visible.
      * Queue order and deferred vertex/index flushes at present are unchanged;
      * FrameSplit enqueues work, and FrameEnd starts the queue. */
+    n3ds_gpu_framebuffer_invalidate();
     C3D_FrameSplit(GX_CMDLIST_FLUSH);
     C3D_RenderTargetClear(sensor_gpu[slot].target,C3D_CLEAR_COLOR,0,0);
     C3D_FrameDrawOn(sensor_gpu[slot].target);

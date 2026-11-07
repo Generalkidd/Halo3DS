@@ -147,3 +147,118 @@ done:
     linearFree(readback); linearFree(vertices);
     return result;
 }
+
+#if HALO_N3DS_TEXTURE_COMPARE_FIXTURE == 1
+/* Compare both compact formats with RGBA8 using the same render target,
+ * shader, draw and transfer. The patterned alpha and color expose channel
+ * order, tiling, interpolation and sampler boundary mismatches. */
+static int compare_texture_draw(C3D_RenderTarget *target, C3D_Tex *texture,
+    unsigned int stage, u32 *pixels)
+{
+    if(!n3ds_gpu_texture_bind(stage,texture) || !C3D_FrameBegin(0)) return 0;
+    C3D_RenderTargetClear(target,C3D_CLEAR_COLOR,0,0);
+    C3D_FrameDrawOn(target);
+    C3D_DrawArrays(GPU_TRIANGLES,0,6);
+    C3D_FrameEnd(GX_CMDLIST_FLUSH);
+    if(R_FAILED(GSPGPU_FlushDataCache(pixels,64*64*4))) return 0;
+    C3D_SyncDisplayTransfer(target->frameBuf.colorBuf,GX_BUFFER_DIM(64,64),pixels,GX_BUFFER_DIM(64,64),
+        GX_TRANSFER_FLIP_VERT(0)|GX_TRANSFER_OUT_TILED(0)|GX_TRANSFER_RAW_COPY(0)|
+        GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGBA8)|GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGBA8)|GX_TRANSFER_SCALING(GX_TRANSFER_SCALE_NO));
+    return R_SUCCEEDED(GSPGPU_InvalidateDataCache(pixels,64*64*4));
+}
+
+int n3ds_gpu_texture_compare_sampling(void)
+{
+    C3D_RenderTarget *target=C3D_RenderTargetCreate(64,64,GPU_RB_RGBA8,-1);
+    DVLB_s *shader=DVLB_ParseFile((u32 *)texture_test_shader,sizeof(texture_test_shader));
+    struct test_vertex *vertices=linearAlloc(6*sizeof(*vertices));
+    u32 *pixels=linearAlloc(2*64*64*4);
+    void *saved[3], *textures[2]={0};
+    shaderProgram_s program;
+    int program_ready=0, result=1;
+    for(unsigned int stage=0;stage<3;++stage) saved[stage]=n3ds_gpu_texture_bound(stage);
+    if(!target || !shader || !vertices || !pixels) goto done;
+    shaderProgramInit(&program);program_ready=1;
+    if(R_FAILED(shaderProgramSetVsh(&program,&shader->DVLE[0]))) goto done;
+    C3D_BindProgram(&program);
+    const float corners[6][2]={{-1,-1},{1,-1},{1,1},{-1,-1},{1,1},{-1,1}};
+    for(unsigned int i=0;i<6;++i)
+        vertices[i]=(struct test_vertex){{corners[i][0],corners[i][1],0},
+            {0.5f+corners[i][0]*0.75f,0.5f+corners[i][1]*0.75f}};
+    GSPGPU_FlushDataCache(vertices,6*sizeof(*vertices));
+    C3D_AttrInfo *attributes=C3D_GetAttrInfo();AttrInfo_Init(attributes);
+    AttrInfo_AddLoader(attributes,0,GPU_FLOAT,3);AttrInfo_AddLoader(attributes,1,GPU_FLOAT,2);
+    if(!n3ds_gpu_vertex_buffer_bind(vertices,sizeof(*vertices),2,0x10)) goto done;
+    for(unsigned int i=0;i<6;++i) C3D_TexEnvInit(C3D_GetTexEnv(i));
+    C3D_TexEnv *env=C3D_GetTexEnv(0);
+    C3D_TexEnvFunc(env,C3D_Both,GPU_REPLACE);
+    C3D_DepthTest(false,GPU_ALWAYS,GPU_WRITE_COLOR);
+    C3D_CullFace(GPU_CULL_NONE);
+    C3D_AlphaTest(false,GPU_ALWAYS,0);
+    C3D_AlphaBlend(GPU_BLEND_ADD,GPU_BLEND_ADD,GPU_ONE,GPU_ZERO,GPU_ONE,GPU_ZERO);
+    for(unsigned int format=NATIVE_TEXTURE_FORMAT_RGB8;format<=NATIVE_TEXTURE_FORMAT_LA8;++format) {
+        struct native_texture_descriptor descriptor[2];
+        struct native_texture_span spans[2][6];
+        int rgb=format==NATIVE_TEXTURE_FORMAT_RGB8;
+        if(!n3ds_texture_descriptor_rgba8(&descriptor[0],8,8,1,0,256,0)) goto done;
+        descriptor[1]=descriptor[0];
+        if(!n3ds_texture_descriptor_compact(&descriptor[1],format)) goto done;
+        for(unsigned int i=0;i<2;++i) {
+            textures[i]=n3ds_gpu_texture_reserve_descriptor(&descriptor[i],spans[i]);
+            if(!textures[i]) goto done;
+        }
+        u8 *rgba=(u8 *)spans[0][0].data, *native=(u8 *)spans[1][0].data;
+        for(unsigned int i=0;i<64;++i) {
+            u8 r=19+i*37,g=rgb?211-i*13:r,b=rgb?99+i*17:r,a=rgb?255:3+i*29;
+            *rgba++=a;*rgba++=b;*rgba++=g;*rgba++=r;
+            if(rgb) {*native++=b;*native++=g;*native++=r;}
+            else {*native++=a;*native++=r;}
+        }
+        for(unsigned int i=0;i<2;++i)
+            if(!n3ds_gpu_texture_finalize_descriptor(textures[i],&descriptor[i])) goto done;
+        const GPU_TEVSRC sources[3]={GPU_TEXTURE0,GPU_TEXTURE1,GPU_TEXTURE2};
+        const GPU_TEXTURE_WRAP_PARAM wraps[]={GPU_REPEAT,GPU_CLAMP_TO_EDGE,GPU_CLAMP_TO_BORDER};
+        for(unsigned int stage=0;stage<3;++stage) {
+            C3D_TexEnvSrc(env,C3D_Both,sources[stage],sources[stage],sources[stage]);
+            C3D_DirtyTexEnv(env);
+            for(unsigned int sampler=0;sampler<6;++sampler) {
+                GPU_TEXTURE_FILTER_PARAM filter=(sampler&1)?GPU_LINEAR:GPU_NEAREST;
+                for(unsigned int i=0;i<2;++i) {
+                    C3D_Tex *texture=textures[i];
+                    C3D_TexSetFilter(texture,filter,filter);
+                    C3D_TexSetWrap(texture,wraps[sampler/2],wraps[sampler/2]);
+                    if(!compare_texture_draw(target,texture,stage,pixels+i*64*64)) goto done;
+                }
+                unsigned int difference=0;
+                while(difference<64*64 && pixels[difference]==pixels[64*64+difference]) ++difference;
+                if(!pixels[32*64+32] || pixels[32*64+32]==pixels[16*64+16] || difference<64*64) {
+                    char message[184];
+                    unsigned int sample=difference<64*64?difference:32*64+32;
+                    snprintf(message,sizeof(message),
+                        "TEXTURE COMPARE GPU FAIL: format=%u stage=%u sampler=%u sample=%u rgba8=%08lx compact=%08lx",
+                        format,stage,sampler,sample,(unsigned long)pixels[sample],(unsigned long)pixels[64*64+sample]);
+                    n3ds_log(message);
+                    goto done;
+                }
+            }
+            if(!n3ds_gpu_texture_bind(stage,saved[stage])) goto done;
+        }
+        for(unsigned int i=0;i<2;++i) {
+            n3ds_gpu_texture_abandon(textures[i]);
+            textures[i]=NULL;
+        }
+    }
+    result=0;
+done:
+    if(!n3ds_gpu_texture_barrier()) abort();
+    for(unsigned int stage=0;stage<3;++stage) n3ds_gpu_texture_bind(stage,saved[stage]);
+    for(unsigned int i=0;i<2;++i) n3ds_gpu_texture_abandon(textures[i]);
+    n3ds_gpu_program_park();
+    if(program_ready) shaderProgramFree(&program);
+    if(shader) DVLB_Free(shader);
+    if(target) C3D_RenderTargetDelete(target);
+    linearFree(pixels);linearFree(vertices);
+    if(!result) n3ds_log("PASS: texture comparison native sampling");
+    return result;
+}
+#endif

@@ -79,6 +79,11 @@ symbols in this file:
 #include "scenario/scenario_definitions.h"
 #include "shaders/shader_definitions.h"
 #include "shaders/shaders.h"
+#ifdef HALO_N3DS
+#include "engine_algorithm_profile.h"
+#include "engine_cache.h"
+#include "engine_presentation.h"
+#endif
 
 /* ---------- constants */
 
@@ -313,22 +318,62 @@ struct native_part {struct model_geometry_part *part;struct model_shader_referen
 static struct native_part_list {
  const struct model *model;unsigned int generation;short lod,count;
  char permutations[MAXIMUM_REGIONS_PER_MODEL];struct native_part parts[NATIVE_PARTS];
+#if HALO_N3DS_ALGO_REGION_SELECTION != N3DS_ALGORITHM_REFERENCE
+ short geometry_indices[MAXIMUM_REGIONS_PER_MODEL][NUMBER_OF_DETAIL_LEVELS_PER_MODEL];
+#endif
 } native_part_lists[8];
 static unsigned int native_part_clock;
 static struct native_part_list *native_parts(const struct model *model,const char *perms,short lod)
 {
  unsigned int generation=n3ds_engine_cache_generation();
  if(model->regions.count>MAXIMUM_REGIONS_PER_MODEL)return NULL;
+#if HALO_N3DS_ALGO_REGION_SELECTION != N3DS_ALGORITHM_REFERENCE
+ const struct native_part_list *selection=NULL;
+#endif
  for(unsigned int k=0;k<NUMBEROF(native_part_lists);++k) {
   struct native_part_list *c=native_part_lists+k;
+#if HALO_N3DS_ALGO_REGION_SELECTION != N3DS_ALGORITHM_REFERENCE
+  if(c->model==model && c->generation==generation && !memcmp(c->permutations,perms,model->regions.count)) {
+   if(c->lod==lod)return c;
+   selection=c;
+  }
+#else
   if(c->model==model && c->generation==generation && c->lod==lod && !memcmp(c->permutations,perms,model->regions.count))return c;
+#endif
  }
  struct native_part_list *c=native_part_lists+(native_part_clock++%NUMBEROF(native_part_lists));c->model=NULL;c->count=0;
+#if HALO_N3DS_ALGO_REGION_SELECTION != N3DS_ALGORITHM_REFERENCE
+ /* The selected permutation is stable across views. Each view still picks
+  * its own LOD before reading this table, and keeps its own ordered list. */
+ if(selection) {
+  if(selection!=c)memcpy(c->geometry_indices,selection->geometry_indices,
+      model->regions.count*sizeof(c->geometry_indices[0]));
+  n3ds_algorithm_profile_add(N3DS_ALG_CPU_REGION_SELECTION_REUSE,1);
+ } else {
+  for(short r=0;r<model->regions.count;++r) {
+   if(perms[r]==NONE)continue;
+   struct model_region *region=TAG_BLOCK_GET_ELEMENT(&model->regions,r,struct model_region);
+   struct model_region_permutation *perm=TAG_BLOCK_GET_ELEMENT(&region->permutations,perms[r],struct model_region_permutation);
+   memcpy(c->geometry_indices[r],perm->geometry_indices,sizeof(c->geometry_indices[r]));
+  }
+  n3ds_algorithm_profile_add(N3DS_ALG_CPU_REGION_SELECTION_BUILD,1);
+ }
+#endif
  for(short r=0;r<model->regions.count;++r) {
   if(perms[r]==NONE)continue;
+#if HALO_N3DS_ALGO_REGION_SELECTION != N3DS_ALGORITHM_REFERENCE
+  short g=c->geometry_indices[r][lod];
+#else
   struct model_region *region=TAG_BLOCK_GET_ELEMENT(&model->regions,r,struct model_region);
   struct model_region_permutation *perm=TAG_BLOCK_GET_ELEMENT(&region->permutations,perms[r],struct model_region_permutation);
-  short g=perm->geometry_indices[lod];if(g==NONE)continue;
+  short g=perm->geometry_indices[lod];
+#endif
+#if HALO_N3DS_ALGO_REGION_SELECTION == N3DS_ALGORITHM_VERIFY
+  struct model_region *region=TAG_BLOCK_GET_ELEMENT(&model->regions,r,struct model_region);
+  struct model_region_permutation *perm=TAG_BLOCK_GET_ELEMENT(&region->permutations,perms[r],struct model_region_permutation);
+  assert(g==perm->geometry_indices[lod]);
+#endif
+  if(g==NONE)continue;
   struct model_geometry *geometry=TAG_BLOCK_GET_ELEMENT(&model->geometries,g,struct model_geometry);
   for(short i=0;i<geometry->parts.count;++i) {
    struct model_geometry_part *part=TAG_BLOCK_GET_ELEMENT(&geometry->parts,i,struct model_geometry_part);
@@ -1016,6 +1061,71 @@ void model_geometry_part_build_tangent_matrices(
 	return;
 }
 
+static void model_relative_node_matrices(const struct model *model,
+	const real_matrix4x3 *node_matrices, real_matrix4x3 *relative_node_matrices)
+{
+	short i;
+	for (i = 0; i < model->nodes.count; ++i)
+	{
+		const struct model_node *node = TAG_BLOCK_GET_ELEMENT(&model->nodes, i, struct model_node);
+		matrix4x3_multiply(node_matrices + i, &node->runtime_default_inverse_matrix, relative_node_matrices + i);
+	}
+}
+
+#if defined(HALO_N3DS) && HALO_N3DS_ALGO_INVERSE_BIND != N3DS_ALGORITHM_REFERENCE
+enum { NATIVE_INVERSE_BIND_SLOTS = 8 };
+/* Direct-mapped, render-owner only. Deferred draws still get their existing
+ * copy of the result. Midpoint scratch never replaces a regular entry. */
+static struct native_inverse_bind_entry
+{
+	unsigned int generation, count;
+	long model_index, object_id;
+	real_matrix4x3 input[MAXIMUM_NODES_PER_MODEL];
+	real_matrix4x3 products[MAXIMUM_NODES_PER_MODEL];
+} native_inverse_bind[2][NATIVE_INVERSE_BIND_SLOTS];
+
+static void native_relative_node_matrices(long model_index, const struct model *model, long object_id,
+	const real_matrix4x3 *input, real_matrix4x3 *output)
+{
+	if (model->nodes.count <= 0 || model->nodes.count > MAXIMUM_NODES_PER_MODEL)
+	{
+		model_relative_node_matrices(model,input,output);
+		return;
+	}
+	unsigned int count=model->nodes.count, bytes=count*sizeof(*input);
+	unsigned int generation=n3ds_engine_cache_generation();
+	unsigned int key=(unsigned int)object_id ^ (unsigned int)model_index;
+	unsigned int bank=0;
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+	bank=n3ds_presentation_midpoint_active();
+#endif
+	struct native_inverse_bind_entry *entry=&native_inverse_bind[bank][(key^(key>>8))%NATIVE_INVERSE_BIND_SLOTS];
+	if (entry->count==count && entry->generation==generation && entry->model_index==model_index &&
+		entry->object_id==object_id && !memcmp(entry->input,input,bytes))
+	{
+		memcpy(output,entry->products,bytes);
+		n3ds_algorithm_profile_add(N3DS_ALG_CPU_INVERSE_BIND_HIT,1);
+		n3ds_algorithm_profile_add(N3DS_ALG_CPU_INVERSE_BIND_AVOIDED,count);
+		n3ds_algorithm_profile_add(N3DS_ALG_CPU_INVERSE_BIND_COPY,bytes);
+#if HALO_N3DS_ALGO_INVERSE_BIND == N3DS_ALGORITHM_VERIFY
+		real_matrix4x3 expected[MAXIMUM_NODES_PER_MODEL];
+		model_relative_node_matrices(model,input,expected);
+		assert(!memcmp(expected,output,bytes));
+#endif
+		return;
+	}
+	n3ds_algorithm_profile_add(N3DS_ALG_CPU_INVERSE_BIND_MISS,1);
+	model_relative_node_matrices(model,input,output);
+	memcpy(entry->input,input,bytes);
+	memcpy(entry->products,output,bytes);
+	entry->generation=generation;
+	entry->model_index=model_index;
+	entry->object_id=object_id;
+	entry->count=count;
+	n3ds_algorithm_profile_add(N3DS_ALG_CPU_INVERSE_BIND_COPY,2*bytes);
+}
+#endif
+
 void render_model(
 	long model_index,
 	real level_of_detail_pixels,
@@ -1077,15 +1187,11 @@ void render_model(
 
 		if (node_matrices)
 		{
-			for (node_index = 0; node_index<model->nodes.count; node_index++)
-			{
-				struct model_node *node = TAG_BLOCK_GET_ELEMENT(&model->nodes, node_index, struct model_node);
-
-				matrix4x3_multiply(
-					&node_matrices[node_index],
-					&node->runtime_default_inverse_matrix,
-					&relative_node_matrices[node_index]);
-			}
+#if defined(HALO_N3DS) && HALO_N3DS_ALGO_INVERSE_BIND != N3DS_ALGORITHM_REFERENCE
+			native_relative_node_matrices(model_index,model,unique_identifier,node_matrices,relative_node_matrices);
+#else
+			model_relative_node_matrices(model,node_matrices,relative_node_matrices);
+#endif
 		}
 		else
 		{

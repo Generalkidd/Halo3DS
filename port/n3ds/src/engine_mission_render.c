@@ -33,10 +33,15 @@
 #include "engine_presentation.h"
 #include "engine_algorithm_profile.h"
 #include "engine_dependency_trace.h"
-#ifdef HALO_N3DS_PRESENT_INTERPOLATION
-#include "bink/bink_playback.h"
+#if HALO_N3DS_ALGO_PREPARED_VIEW != N3DS_ALGORITHM_REFERENCE
+#include "engine_prepared_view.h"
+#endif
+#if defined(HALO_N3DS_PRESENT_INTERPOLATION) || defined(HALO_N3DS_GPU_PROBE)
 #include "engine_controls.h"
 #include "game/game.h"
+#endif
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+#include "bink/bink_playback.h"
 #include "game/player_control.h"
 #include "main/console.h"
 #include "main/main.h"
@@ -159,6 +164,9 @@ static void draw_mission_environment(const void *context)
 {
     const struct rasterizer_window_begin_parameters *window=context;
     long long start=N3DS_MISSION_PROFILE?n3ds_engine_ticks():0;
+#ifdef HALO_N3DS_GPU_PROBE
+    n3ds_gpu_probe_terrain(1);
+#endif
     rasterizer_environment_diffuse_textures_begin();
     struct batch_frustum bounds_view;
     batch_frustum_prepare(&bounds_view,&window->frustum);
@@ -213,6 +221,9 @@ static void draw_mission_environment(const void *context)
             surface_cluster_owners?&visibility:NULL);
     }
     rasterizer_environment_diffuse_textures_end();
+#ifdef HALO_N3DS_GPU_PROBE
+    n3ds_gpu_probe_terrain(0);
+#endif
     if(N3DS_MISSION_PROFILE) mission_environment_ticks=n3ds_engine_ticks()-start;
 }
 static int prepare(void)
@@ -444,8 +455,54 @@ static void prefetch_upcoming_textures(const struct rasterizer_window_begin_para
 #include "engine_presentation.inl"
 #endif
 
+static void mission_build_frusta(const struct render_camera *camera, struct render_frustum *frustum,
+    struct rasterizer_window_begin_parameters *window, int stereo, float offset)
+{
+    if(stereo) {
+        /* Original visibility/projection must agree with the off-axis GPU view. */
+        real_rectangle2d bounds;
+        bounds.y0=-1;bounds.y1=1;
+        float shift=-offset/(1.5f*tanf(camera->vertical_field_of_view*.5f)*(400.f/240.f));
+        bounds.x0=-1+shift;bounds.x1=1+shift;
+        render_camera_build_frustum(camera,&bounds,frustum,TRUE);
+        /* The same off-axis camera needs the same projection and planes.
+         * Separate debug/culling cameras retain independent frusta. */
+        if(!memcmp(camera,&window->camera,sizeof(*camera))) window->frustum=*frustum;
+        else {
+            shift=-offset/(1.5f*tanf(window->camera.vertical_field_of_view*.5f)*(400.f/240.f));
+            bounds.x0=-1+shift;bounds.x1=1+shift;
+            render_camera_build_frustum(&window->camera,&bounds,&window->frustum,TRUE);
+        }
+    } else {
+        render_camera_build_frustum(camera,NULL,frustum,TRUE);
+        /* Debug camera modes can separate the culling and rasterizer views. */
+        if(!memcmp(camera,&window->camera,sizeof(*camera))) window->frustum=*frustum;
+        else render_camera_build_frustum(&window->camera,NULL,&window->frustum,TRUE);
+    }
+}
+
+#if HALO_N3DS_ALGO_PREPARED_VIEW != N3DS_ALGORITHM_REFERENCE
+struct mission_prepared_view {
+    struct render_camera render_camera, rasterizer_camera;
+    struct render_frustum render_frustum, rasterizer_frustum;
+    struct n3ds_prepared_visibility visibility;
+    struct n3ds_prepared_objects objects;
+    unsigned int generation;
+    int bsp;
+    long time, frame_index, previous_leaf_index;
+};
+
+/* Single main-owner record. It is read only within the current regular frame
+ * and is never read by a worker or passed to the GPU. */
+static struct mission_prepared_view prepared_regular_view;
+#endif
+
 static int mission_render_frame(long unit_index, long time, const struct render_window *original_window,
-    float slider, int midpoint, int weapon_prepared, long long begin);
+    float slider, int midpoint, int weapon_prepared, int submitted_midpoint, long long begin);
+
+#if HALO_N3DS_MIDPOINT_CAPTURE_TICK
+static int midpoint_capture_complete;
+#endif
 
 int n3ds_engine_mission_render(long unit_index,long time,long long tick_start)
 {
@@ -550,6 +607,9 @@ int n3ds_engine_mission_render(long unit_index,long time,long long tick_start)
             weapon_prepared=1;
             n3ds_presentation_weapon_capture();
             n3ds_presentation_poses_capture();
+#if HALO_N3DS_ALGO_MIDPOINT_PARTICLES != N3DS_ALGORITHM_REFERENCE
+            n3ds_presentation_particles_capture();
+#endif
             presentation.previous=current;
             presentation.has_previous=1;
             if(!adjacent || !n3ds_presentation_weapon_midpoint(&midpoint_window.render_camera)) {
@@ -563,7 +623,7 @@ int n3ds_engine_mission_render(long unit_index,long time,long long tick_start)
                 n3ds_gpu_frame_sync(0);
                 if(n3ds_gpu_midpoint_try_begin()) {
                     presentation.midpoint=1;
-                    rejection=mission_render_frame(unit_index,time,&midpoint_window,0.f,1,1,midpoint_begin);
+                    rejection=mission_render_frame(unit_index,time,&midpoint_window,0.f,1,1,0,midpoint_begin);
                     presentation.midpoint=0;
                     n3ds_presentation_reject_reason=0;
                     long long cost=n3ds_engine_ticks()-midpoint_begin;
@@ -580,8 +640,27 @@ int n3ds_engine_mission_render(long unit_index,long time,long long tick_start)
                 }
             }
         }
+#if HALO_N3DS_MIDPOINT_CAPTURE_TICK
+        int capture=0;
+        if(!midpoint_capture_complete && time>=HALO_N3DS_MIDPOINT_CAPTURE_TICK) {
+            if(time-HALO_N3DS_MIDPOINT_CAPTURE_TICK>=120) {
+                midpoint_capture_complete=1;
+                n3ds_log("MIDPOINT CAPTURE: no eligible pair in 120-tick window");
+            } else if(submitted) {
+                capture=n3ds_gpu_capture_midpoint_image(time,1);
+                if(capture<0) {n3ds_log("MIDPOINT CAPTURE FAIL: midpoint target");return 1;}
+            }
+        }
+#endif
         long long key_begin=n3ds_engine_ticks();
-        int result=mission_render_frame(unit_index,time,&original_window,slider,0,weapon_prepared,key_begin);
+        int result=mission_render_frame(unit_index,time,&original_window,slider,0,weapon_prepared,submitted,key_begin);
+#if HALO_N3DS_MIDPOINT_CAPTURE_TICK
+        if(capture==1 && !result) {
+            if(n3ds_gpu_capture_midpoint_image(time,0)!=1) {n3ds_log("MIDPOINT CAPTURE FAIL: regular target");return 1;}
+            midpoint_capture_complete=1;
+            n3ds_log("MIDPOINT CAPTURE: paired color, depth and camera committed; timing invalid");
+        }
+#endif
         if(eligible && !result)
             presentation_observe(tick_start,key_begin,textures,submitted,rejection);
         presentation_report();
@@ -589,11 +668,44 @@ int n3ds_engine_mission_render(long unit_index,long time,long long tick_start)
     }
 #endif
     (void)tick_start;
-    return mission_render_frame(unit_index,time,&original_window,slider,0,0,begin);
+    return mission_render_frame(unit_index,time,&original_window,slider,0,0,0,begin);
 }
 
+#ifdef HALO_N3DS_GPU_PROBE
+static void mission_gpu_probe(const struct render_window *window, long time, int eligible)
+{
+    unsigned int shoulders = NATIVE_KEY_L | NATIVE_KEY_R;
+    unsigned int held = n3ds_input_last_held();
+    int chord = (held & shoulders) == shoulders;
+    /* Eligibility excludes the main menu, so the shared shortcut predicate
+     * admits only the same pause-menu roots used by the original probe. */
+    if (!eligible || (held & ~shoulders) || !n3ds_ui_controls_shortcut_active() || n3ds_controls_active() ||
+        window->render_camera.mirrored || window->rasterizer_camera.mirrored) {
+        n3ds_gpu_probe_view(NULL, chord);
+        return;
+    }
+    struct native_gpu_probe_view view = {
+        .generation = n3ds_engine_cache_generation(),
+        .tick = time,
+        .bsp = global_structure_bsp_index_get()
+    };
+    const struct render_camera *camera[] = {&window->render_camera, &window->rasterizer_camera};
+    for (unsigned int i = 0; i < 2; ++i) {
+        memcpy(view.camera[i], camera[i]->position.n, 3 * sizeof(float));
+        memcpy(view.camera[i] + 3, camera[i]->forward.n, 3 * sizeof(float));
+        memcpy(view.camera[i] + 6, camera[i]->up.n, 3 * sizeof(float));
+        view.camera[i][9] = camera[i]->vertical_field_of_view;
+        view.camera[i][10] = camera[i]->z_near;
+        view.camera[i][11] = camera[i]->z_far;
+        memcpy(view.bounds[i], camera[i]->viewport_bounds.v, 4 * sizeof(short));
+        memcpy(view.bounds[i] + 4, camera[i]->window_bounds.v, 4 * sizeof(short));
+    }
+    n3ds_gpu_probe_view(&view, chord);
+}
+#endif
+
 static int mission_render_frame(long unit_index, long time, const struct render_window *original_window,
-    float slider, int midpoint, int weapon_prepared, long long begin)
+    float slider, int midpoint, int weapon_prepared, int submitted_midpoint, long long begin)
 {
     n3ds_algorithm_profile_context(time,n3ds_engine_cache_generation(),global_structure_bsp_index_get(),midpoint?2:1);
     /* Midpoints begin their attempt before the nonblocking GPU reservation. */
@@ -626,7 +738,73 @@ static int mission_render_frame(long unit_index, long time, const struct render_
     n3ds_gpu_frame_sync(0);
     if(!midpoint) FRONTEND_STAGE("frame-begin");
     render.camera=center_render;
+#if HALO_N3DS_ALGO_PREPARED_VIEW != N3DS_ALGORITHM_REFERENCE
+    struct mission_prepared_view *prepared = NULL;
+    boolean early_view = FALSE;
+    boolean verification_ok = TRUE;
+#ifdef HALO_N3DS_ALGORITHM_PROFILE
+    long long preparation_ticks = 0;
+#endif
+    if(submitted_midpoint && !stereo && weapon_prepared && n3ds_prepare_visibility_allowed()) {
+        struct mission_prepared_view *record = &prepared_regular_view;
+#ifdef HALO_N3DS_ALGORITHM_PROFILE
+        long long preparation_start = n3ds_engine_ticks();
+#endif
+        n3ds_trace_view_begin(0);
+        early_view = TRUE;
+        record->generation = n3ds_engine_cache_generation();
+        record->bsp = global_structure_bsp_index_get();
+        record->time = time;
+        record->frame_index = render.frame_index;
+        record->previous_leaf_index = render.leaf_index;
+        record->render_camera = center_render;
+        record->rasterizer_camera = window.camera = center_raster;
+
+        n3ds_trace_event(N3DS_TRACE_FRUSTUM_BEGIN,0,0);
+        mission_build_frusta(&record->render_camera,&record->render_frustum,&window,0,0.f);
+        record->rasterizer_frustum = window.frustum;
+        n3ds_trace_event(N3DS_TRACE_FRUSTUM_END,0,0);
+        n3ds_trace_event(N3DS_TRACE_VISIBILITY_BEGIN,0,0);
+#ifdef HALO_N3DS_PERFORMANCE_PROFILE
+        long long visibility_start = n3ds_engine_ticks();
+#endif
+        n3ds_prepare_visibility(&record->render_camera,&record->render_frustum,&record->visibility);
+#ifdef HALO_N3DS_PERFORMANCE_PROFILE
+        visibility_ticks += n3ds_engine_ticks() - visibility_start;
+#endif
+        n3ds_trace_event(N3DS_TRACE_VISIBILITY_END,(unsigned int)record->visibility.cluster_count,0);
+        if(n3ds_prepare_render_objects(&record->visibility,&record->objects))
+            prepared = record;
+#ifdef HALO_N3DS_ALGORITHM_PROFILE
+        preparation_ticks = n3ds_engine_ticks() - preparation_start;
+#endif
+        n3ds_algorithm_profile_add(N3DS_ALG_CPU_PREPARED_VIEW_ATTEMPT, 1);
+        n3ds_algorithm_profile_add(N3DS_ALG_CPU_PREPARED_VIEW_TICKS, preparation_ticks);
+        n3ds_algorithm_profile_max(N3DS_ALG_CPU_PREPARED_VIEW_PEAK, sizeof(*record));
+    }
+#else
+    (void)submitted_midpoint;
+#endif
+#ifdef HALO_N3DS_GPU_PROBE
+    mission_gpu_probe(original_window, time, !midpoint && !stereo && game_in_progress() &&
+        !main_menu_is_active() && game_time_get_paused() && !cinematic_in_progress());
+#endif
     rasterizer_frame_begin(&frame);
+#if HALO_N3DS_ALGO_PREPARED_VIEW != N3DS_ALGORITHM_REFERENCE
+    if(early_view) {
+        n3ds_algorithm_profile_add(N3DS_ALG_CPU_PREPARED_VIEW_WAIT, n3ds_gpu_frame_wait_ticks());
+        /* Frame acquisition can handle an applet boundary. Only this frame's
+         * view of the same BSP and simulation tick may consume the record. */
+        if(!prepared || !presentation.has_previous || prepared->generation != n3ds_engine_cache_generation() ||
+            prepared->bsp != global_structure_bsp_index_get() || prepared->time != game_time_get() ||
+            prepared->frame_index != render.frame_index || prepared->previous_leaf_index != render.leaf_index ||
+            !n3ds_prepare_visibility_allowed()) {
+            n3ds_algorithm_profile_add(N3DS_ALG_CPU_PREPARED_VIEW_DISCARD, 1);
+            n3ds_algorithm_profile_add(N3DS_ALG_CPU_PREPARED_VIEW_DISCARD_TICKS, preparation_ticks);
+            prepared = NULL;
+        }
+    }
+#endif
     n3ds_gpu_frame_sync(1);
     rasterizer_windows_begin();
     if(N3DS_MISSION_PROFILE && !midpoint) {
@@ -637,8 +815,10 @@ static int mission_render_frame(long unit_index, long time, const struct render_
     /* Right view first; left last leaves the ordinary HUD camera authoritative.
      * Simulation, frame service, and the original HUD execute only once. */
     for(int eye=stereo?1:0;eye>=0;--eye) {
-        n3ds_trace_view_begin((unsigned int)eye);
-        n3ds_trace_event(N3DS_TRACE_FRUSTUM_BEGIN,0,0);
+#if HALO_N3DS_ALGO_PREPARED_VIEW != N3DS_ALGORITHM_REFERENCE
+        if(!early_view)
+#endif
+            n3ds_trace_view_begin((unsigned int)eye);
         float offset=stereo?(eye?1.f:-1.f)*.0105f*slider:0.f;
         render.camera=center_render;window.camera=center_raster;
         if(stereo) {
@@ -650,37 +830,42 @@ static int mission_render_frame(long unit_index, long time, const struct render_
         }
         ++render.scene_index;
         n3ds_gpu_stereo_eye(eye,offset);
-        if(stereo) {
-            /* Original visibility/projection must agree with the off-axis GPU view. */
-            real_rectangle2d bounds;
-            bounds.y0=-1;bounds.y1=1;
-            float shift=-offset/(1.5f*tanf(render.camera.vertical_field_of_view*.5f)*(400.f/240.f));
-            bounds.x0=-1+shift;bounds.x1=1+shift;
-            render_camera_build_frustum(&render.camera,&bounds,&render.frustum,TRUE);
-            /* The same off-axis camera needs the same projection and planes.
-             * Separate debug/culling cameras retain independent frusta. */
-            if(!memcmp(&render.camera,&window.camera,sizeof(render.camera))) window.frustum=render.frustum;
-            else {
-                shift=-offset/(1.5f*tanf(window.camera.vertical_field_of_view*.5f)*(400.f/240.f));
-                bounds.x0=-1+shift;bounds.x1=1+shift;
-                render_camera_build_frustum(&window.camera,&bounds,&window.frustum,TRUE);
-            }
-        } else {
-            render_camera_build_frustum(&render.camera,NULL,&render.frustum,TRUE);
-            /* Debug camera modes can separate the culling and rasterizer views. */
-            if(!memcmp(&render.camera,&window.camera,sizeof(render.camera))) window.frustum=render.frustum;
-            else render_camera_build_frustum(&window.camera,NULL,&window.frustum,TRUE);
-        }
-        n3ds_trace_event(N3DS_TRACE_FRUSTUM_END,0,0);
-        n3ds_trace_event(N3DS_TRACE_VISIBILITY_BEGIN,0,0);
-        structure_visibility_find_camera(&render.camera);
-#ifdef HALO_N3DS_PERFORMANCE_PROFILE
-        long long visibility_start = n3ds_engine_ticks();
+#if HALO_N3DS_ALGO_PREPARED_VIEW == N3DS_ALGORITHM_CANDIDATE
+        if(prepared) {
+            render.camera = prepared->render_camera;
+            render.frustum = prepared->render_frustum;
+            window.camera = prepared->rasterizer_camera;
+            window.frustum = prepared->rasterizer_frustum;
+            n3ds_publish_visibility(&prepared->visibility);
+            n3ds_algorithm_profile_add(N3DS_ALG_CPU_PREPARED_VIEW_USED, 1);
+            n3ds_algorithm_profile_add(N3DS_ALG_CPU_PREPARED_COPY,
+                prepared->visibility.cluster_count * sizeof(prepared->visibility.clusters[0]) +
+                BIT_VECTOR_SIZE_IN_BYTES(global_structure_bsp_get()->clusters.count));
+        } else
 #endif
-        n3ds_structure_visibility_compute();
-        n3ds_trace_event(N3DS_TRACE_VISIBILITY_END,(unsigned int)render.rendered_cluster_count,0);
+        {
+            n3ds_trace_event(N3DS_TRACE_FRUSTUM_BEGIN,0,0);
+            mission_build_frusta(&render.camera,&render.frustum,&window,stereo,offset);
+            n3ds_trace_event(N3DS_TRACE_FRUSTUM_END,0,0);
+            n3ds_trace_event(N3DS_TRACE_VISIBILITY_BEGIN,0,0);
 #ifdef HALO_N3DS_PERFORMANCE_PROFILE
-        if(!midpoint) visibility_ticks += n3ds_engine_ticks() - visibility_start;
+            long long visibility_start = n3ds_engine_ticks();
+#endif
+            structure_visibility_find_camera(&render.camera);
+            n3ds_structure_visibility_compute();
+#ifdef HALO_N3DS_PERFORMANCE_PROFILE
+            if(!midpoint) visibility_ticks += n3ds_engine_ticks() - visibility_start;
+#endif
+            n3ds_trace_event(N3DS_TRACE_VISIBILITY_END,(unsigned int)render.rendered_cluster_count,0);
+        }
+#if HALO_N3DS_ALGO_PREPARED_VIEW == N3DS_ALGORITHM_VERIFY
+        if(prepared && (!n3ds_frusta_match(&prepared->render_frustum,&render.frustum) ||
+            !n3ds_frusta_match(&prepared->rasterizer_frustum,&window.frustum) ||
+            !n3ds_prepared_visibility_matches(&prepared->visibility))) {
+            n3ds_log("PREPARED VIEW VERIFY FAIL: frusta or ordered cluster results differ");
+            verification_ok = FALSE;
+            prepared = NULL;
+        }
 #endif
 #ifdef HALO_N3DS_ARCHIVE_VERIFY
         if(!midpoint && render.frame_index%30==0) FRAME_CHECK(batch_visibility_test());
@@ -691,6 +876,20 @@ static int mission_render_frame(long unit_index, long time, const struct render_
         }
         n3ds_gpu_world_view_begin();
         rasterizer_window_begin(&window);
+#if HALO_N3DS_MIDPOINT_CAPTURE_TICK
+        if(!eye && !midpoint_capture_complete && time>=HALO_N3DS_MIDPOINT_CAPTURE_TICK &&
+           time-HALO_N3DS_MIDPOINT_CAPTURE_TICK<120 && (midpoint || submitted_midpoint)) {
+            struct native_render_camera culling={
+                .vertical_fov=render.camera.vertical_field_of_view,
+                .near_clip=render.camera.z_near,
+                .far_clip=render.camera.z_far,
+            };
+            memcpy(culling.position,render.camera.position.n,sizeof(culling.position));
+            memcpy(culling.forward,render.camera.forward.n,sizeof(culling.forward));
+            memcpy(culling.up,render.camera.up.n,sizeof(culling.up));
+            n3ds_gpu_capture_midpoint_view(time,midpoint,&culling,frame.game_time_sec);
+        }
+#endif
         if(N3DS_MISSION_PROFILE) stamp[1]=n3ds_engine_ticks();
     if(n3ds_presentation_check_midpoint()) goto finish_view;
     build_sprite_prepare_for_window();
@@ -713,6 +912,12 @@ static int mission_render_frame(long unit_index, long time, const struct render_
     if(N3DS_MISSION_PROFILE) n3ds_object_profile(2,n3ds_engine_ticks()-object_stamp);
     extern void n3ds_render_objects_with_environment(void (*)(const void *),const void *);
     if(N3DS_MISSION_PROFILE) mission_environment_ticks=0;
+#if HALO_N3DS_ALGO_PREPARED_VIEW != N3DS_ALGORITHM_REFERENCE
+    if(prepared) {
+        if(!n3ds_render_prepared_objects_with_environment(draw_mission_environment,&window,&prepared->objects))
+            verification_ok = FALSE;
+    } else
+#endif
     n3ds_render_objects_with_environment(draw_mission_environment,&window);
     if(n3ds_presentation_check_midpoint()) goto finish_view;
     long long effect_stamp=0,effect_next;
@@ -777,6 +982,12 @@ finish_view:
     if(N3DS_MISSION_PROFILE) stamp[6]=n3ds_engine_ticks();
     } /* eye views */
     render.time_delta_since_tick_sec=frame.dt;
+#if HALO_N3DS_ALGO_PREPARED_VIEW != N3DS_ALGORITHM_REFERENCE
+    if(!verification_ok) {
+        n3ds_trace_attempt_end(N3DS_TRACE_ATTEMPT_PREPARATION_REJECT);
+        return 1;
+    }
+#endif
     n3ds_trace_attempt_end(N3DS_TRACE_ATTEMPT_COMPLETE);
     if(!N3DS_MISSION_PROFILE) return 0;
     profile[1]+=view_cost[0];profile[2]+=view_cost[1];profile[3]+=view_cost[2];
@@ -793,7 +1004,7 @@ finish_view:
         extern void n3ds_model_offload_report(void);n3ds_model_offload_report();
         char message[256];double scale=1000.0/((double)n3ds_engine_tick_frequency()*profile_frames);
 #ifdef HALO_N3DS_PERFORMANCE_PROFILE
-        snprintf(message, sizeof(message), "VISIBILITY PROFILE: time=%ld frames=%u traversal_ms=%.3f",
+        snprintf(message, sizeof(message), "VISIBILITY PROFILE: time=%ld frames=%u camera_and_traversal_ms=%.3f",
             time, profile_frames, visibility_ticks * scale);
         n3ds_log(message);
         visibility_ticks = 0;

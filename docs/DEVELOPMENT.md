@@ -23,18 +23,15 @@ no candidate default is promoted.
 The [texture consumer inventory](TEXTURE-CONSUMERS.md) records current CPU
 RGBA8 dependencies and the remaining per-map eligibility work.
 
-[Algorithm comparison groundwork](ALGORITHM-PROFILING.md) adds independent
-reference-only selectors, opt-in owner-side counters and `--profile-frames`
-for a bounded non-readback run. Pre-trace builds and a bounded native-400
-emulator frontend smoke now pass; the graphics diagnostic suite has recorded
-emulator sampling limitations. Campaign, midpoint and hardware performance
-validation remain outstanding. Candidate algorithms are unavailable and no
-performance gain is established. See the preservation contract for evidence scope.
+[Algorithm comparison and profiling](ALGORITHM-PROFILING.md) describes the
+reference and independent opt-in experiments. A bounded native-400 emulator
+menu smoke test passed. Campaign, midpoint and hardware performance
+validation remain outstanding. See the preservation contract for evidence scope.
 
 The independent [dependency trace](DEPENDENCY-TRACE.md) adds bounded event
-collection in source. It is disabled by default, unbuilt and untested. It does
-not enable midpoint rendering, texture preparation or an algorithm candidate;
-the earlier executable and emulator receipts do not validate this slice.
+collection and an offline reader for stage, queue and acknowledgement gaps.
+The [action replay fixture](ACTION-REPLAY.md) supports local campaign checks
+with copied starting data.
 
 ## Building the game
 
@@ -110,8 +107,14 @@ triggers a screen readback during the run. The options are recorded in
 | `--texture-cache-mib 8` | Raises the New-model gameplay byte cap from 4 to 8 MiB. Slot limits are identical. The cache reclaims the extra working set under linear-memory pressure. |
 | `--texture-prefetch` | Prewarms nearby terrain at map entry and enables bounded texture preparation on New models. `--present-60` also enables worker preparation and can prioritize the bitmap that canceled a midpoint. |
 | `--performance-profile` | Records work percentiles, visibility time, texture stages by request type, eviction pressure, and worker time in `halo-source-engine.log`. |
-| `--dependency-trace` | Independently collects bounded dependency events and exports at shutdown. Default off; no profiling flag required. Rejects readback, diagnostics and Original-memory fixtures. Source-only, unbuilt and untested. |
+| `--dependency-trace` | Independently collects bounded dependency events and exports at shutdown. Default off. Rejects readback, replay, diagnostics and Original-memory fixtures. |
 | `--dependency-trace-loops N` | Requires trace; accepts 1–18,000 completed frontend loops after gameplay first starts, default 120. Stops capture without ending gameplay or enlarging event storage. |
+| `--midpoint-capture-tick N` | Correctness fixture for `--present-60`. Writes at most one midpoint/regular top-target pair with RGBA, raw D24S8 and camera inputs in the 120 ticks starting at N. Use the complete manifest and keep timing and trace flags off. |
+| `--action-replay record\|replay` | Record or verify up to 3,600 local campaign action ticks. Use an isolated copy of the starting save and settings. |
+| `--action-replay-fixture-ticks N` | In a regular native-400 record or replay build, seed and launch the bounded idle `a10` campaign fixture. |
+| `--allocation-profile` | Add completed allocation-call observations alongside loop-end samples. Requires algorithm profiling. |
+| `--geometry-source cooked` | Opt into bounded `.nmg` model compaction plans with runtime validation and fallback. |
+| `--vertex-layout packed\|packed-verify` | Use the 44-byte weighted model stream. The verify mode checks reconstructed CPU attributes and is excluded from timing. |
 | `--texture-storage candidate-archive` | Opts into the RGBA8 `.ntx4` archive, with `.ntx` and map-decoder fallback. Default is `legacy`. Setup must separately opt into candidate generation; this changes neither mip/resolution policy nor sampling. Source-reviewed only; parity and performance remain unvalidated. |
 
 The frame work profile reports complete windows of 300 gameplay iterations
@@ -672,6 +675,15 @@ The dynamic-resolution policy must account for sustained load and recovery
 delays. Do not react to every isolated slow frame: frequent resolution changes
 can create visible oscillation and stalls. Keep UI resolution and world rendering
 quality decisions separate.
+
+Graphics Options can pin the gameplay viewport to 400×240, 320×192, 280×168,
+or 200×120. These are all exact 5:3. The renderer latches the preference at the
+next world frame; returning to Auto restarts the existing adaptive policy at
+the console's baseline. Manual modes retain that baseline's model detail and
+material policy. The smaller viewports share the same offscreen target and
+bilinear upscale, so pixel counts describe world drawing area. They do not
+measure GPU time, VRAM use or frame rate. Fixed-width New-model comparisons,
+renderer diagnostics, and active New 2DS XL midpoint builds lock this setting.
 
 New models retain the full-resolution baseline and can reduce world resolution
 only under GPU wait pressure outside the fixed-resolution profile. New 2DS XL

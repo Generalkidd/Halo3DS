@@ -169,9 +169,8 @@ void _rasterizer_reset_state(void)
     n3ds_gpu_texture_bind(0, NULL); n3ds_gpu_texture_bind(1, NULL); n3ds_gpu_texture_bind(2, NULL);
     memset(&global_window_parameters, 0, sizeof(global_window_parameters));
 }
-void _rasterizer_frame_begin(const struct rasterizer_frame_begin_parameters *parameters)
+static long long rasterizer_frame_services(void)
 {
-    assert(rasterizer_globals.initialized && !frame_state && parameters);
     long long stamp=n3ds_engine_ticks(),next;
 #ifdef HALO_N3DS_PRESENT_INTERPOLATION
     /* The optional view has already reserved the GPU frame. Run map/texture
@@ -190,6 +189,16 @@ void _rasterizer_frame_begin(const struct rasterizer_frame_begin_parameters *par
         n3ds_trace_event(N3DS_TRACE_TEXTURE_SERVICE_END,0,0);
         next=n3ds_engine_ticks();frame_service_ticks[1]=next-stamp;stamp=next;
     }
+    return stamp;
+}
+
+void _rasterizer_frame_begin(const struct rasterizer_frame_begin_parameters *parameters)
+{
+    assert(rasterizer_globals.initialized && !frame_state && parameters);
+    /* CPU-only prepared views run before these services. Texture maintenance
+     * retains its own fence, and GPU-visible arenas are reused only after
+     * n3ds_gpu_frame_begin retires the preceding queue. */
+    long long stamp=rasterizer_frame_services();
     global_frame_parameters=*parameters;
     assert(n3ds_gpu_frame_begin()); frame_state=1;++bsp_filter_frame;
     frame_service_ticks[2]=n3ds_engine_ticks()-stamp;
@@ -486,9 +495,13 @@ void n3ds_engine_bsp_draw(const struct shader *shader,short bitmap_index,
     /* Keep cutouts and every authored bump/emission path immediate. Flush
      * before changing their bindings, including paths that later fall back. */
     int batchable=!(environment->flags&1) && environment->bump_map.index==NONE && environment->emission_map.index==NONE;
-    if(bsp_packet_count && (!batchable || bsp_packets[0].shader!=shader ||
+    if(bsp_packet_count && (!batchable
+#if HALO_N3DS_ALGO_BSP_RESOLVED_BATCH == N3DS_ALGORITHM_REFERENCE
+       || bsp_packets[0].shader!=shader ||
        bsp_packets[0].permutation!=bitmap_index || bsp_packets[0].lightmap_group!=lightmap_group ||
-       bsp_packets[0].lightmap_index!=lightmap_index)) bsp_batch_flush();
+       bsp_packets[0].lightmap_index!=lightmap_index
+#endif
+       )) bsp_batch_flush();
     if(n3ds_presentation_midpoint_rejected()) return;
     struct native_geometry *entry=get_geometry(source,indices,count);
     struct native_render_vertex *vertices=entry->vertices;

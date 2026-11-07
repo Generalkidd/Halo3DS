@@ -50,8 +50,9 @@ static int water_native(const struct water_shader *w,short permutation,
     if(w->base_map.index!=NONE && !(m.base=n3ds_engine_bitmap_resource(w->base_map.index,permutation))) return 0;
     const struct model_vertex_uncompressed *cached=type==5?n3ds_model_decode_stream(data,count):NULL;
     const real_vector2d unit={1,1};
-    const struct native_render_vertex *pose=n3ds_model_skin_stream(cached,count,&p->skinning,&unit,p->unique_identifier);
-    const real_vector3d *normals=n3ds_model_normal_stream(cached,count,&p->skinning,p->unique_identifier);
+    const real_vector3d *normals;
+    const struct native_render_vertex *pose=n3ds_model_unlit_skin_stream(
+        cached,count,&p->skinning,&unit,p->unique_identifier,&normals);
     struct native_render_vertex *out=n3ds_gpu_model_vertices_allocate(count);assert(out);
     float t=global_frame_parameters.game_time_sec*w->velocity;
     float offset_u=t*cosf(w->angle),offset_v=t*sinf(w->angle);
@@ -111,8 +112,9 @@ void n3ds_water_model_draw(const struct shader *shader,short permutation,
     }
     const struct model_vertex_uncompressed *cached=type==5?n3ds_model_decode_stream(data,count):NULL;
     const real_vector2d unit={1,1};
-    const struct native_render_vertex *pose=n3ds_model_skin_stream(cached,count,&p->skinning,&unit,p->unique_identifier);
-    const real_vector3d *normals=n3ds_model_normal_stream(cached,count,&p->skinning,p->unique_identifier);
+    const real_vector3d *normals;
+    const struct native_render_vertex *pose=n3ds_model_unlit_skin_stream(
+        cached,count,&p->skinning,&unit,p->unique_identifier,&normals);
     float t=global_frame_parameters.game_time_sec*w->velocity;
     const float offset_u=t*cosf(w->angle),offset_v=t*sinf(w->angle);
     for(int pass=(w->flags&2)?0:1;pass<2;++pass) {

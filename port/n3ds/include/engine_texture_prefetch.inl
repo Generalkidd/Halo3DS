@@ -77,6 +77,7 @@ static void texture_prefetch_clear(int shutdown)
         n3ds_texture_reader_shutdown();
         free(texture_job.source);
         n3ds_gpu_texture_abandon(texture_job.resource);
+        n3ds_algorithm_profile_staging_release(texture_job.plan.native.scratch_bytes+texture_job.plan.native.resident_bytes);
         memset(&texture_job,0,sizeof(texture_job));
     }
 }
@@ -127,7 +128,11 @@ static int texture_prefetch_submit(const struct bitmap_data *bitmap,enum texture
         plan.target_width=plan.target_height=cube.target;
         if(!n3ds_texture_descriptor_rgba8(&plan.native,cube.target,cube.target,6,cube.level,
                 cube.bytes*6,(cube.bytes*6+3)&~3u)) return 0;
-    } else if(!bitmap_plan(bitmap,&plan)) return 0;
+    } else if(!bitmap_plan(bitmap,&plan) || plan.detail_levels>1 || plan.detail_rgb8) {
+        /* Authored world details use the bounded synchronous loader. Do not
+         * publish a single RGBA8 level ahead of the requested representation. */
+        return 0;
+    }
     unsigned int stage_limit=queued?TEXTURE_QUEUE_STAGE_LIMIT:is_cube?TEXTURE_CUBE_STAGE_LIMIT:TEXTURE_STAGE_LIMIT;
     /* One bounded unpublished image sits outside residency accounting. Never
      * evict to reserve it, and preserve 4 MiB of linear headroom for demand. */
@@ -135,7 +140,8 @@ static int texture_prefetch_submit(const struct bitmap_data *bitmap,enum texture
     struct texture_archive_selection entry={0};
     int archived=!is_cube && texture_archive_select(bitmap,plan.resolution,
         plan.source_offset,plan.native.source_bytes,plan.target_width,plan.target_height,plan.lightmap,
-        plan.level,(unsigned int)plan.format,plan.width,plan.height,&entry);
+        plan.level,(unsigned int)plan.format,plan.width,plan.height,1,&entry);
+    if(archived && (entry.format!=NATIVE_TEXTURE_FORMAT_RGBA8 || entry.codec!=TEXTURE_ARCHIVE_RAW)) return 0;
     char path[128];
     struct native_texture_read_range ranges[NATIVE_TEXTURE_READ_RANGES]={0};
     unsigned int range_count=is_cube?6:1,read_bytes;
@@ -160,9 +166,14 @@ static int texture_prefetch_submit(const struct bitmap_data *bitmap,enum texture
     plan.native.scratch_bytes=source_bytes+distance_bytes;
     byte *source=source_bytes?(malloc)(source_bytes+distance_bytes):NULL;
     if(source_bytes && !source) {TEXTURE_PROFILE(++texture_profile.allocation_failures);return 0;}
+    if(source)n3ds_algorithm_profile_staging_acquire(plan.native.scratch_bytes);
     struct native_texture_span images[6];
     void *resource=n3ds_gpu_texture_reserve_descriptor(&plan.native,images);
-    if(!resource) {free(source);TEXTURE_PROFILE(++texture_profile.allocation_failures);return 0;}
+    if(!resource) {
+        if(source)n3ds_algorithm_profile_staging_release(plan.native.scratch_bytes);
+        free(source);TEXTURE_PROFILE(++texture_profile.allocation_failures);return 0;
+    }
+    n3ds_algorithm_profile_staging_acquire(plan.native.resident_bytes);
     if(is_cube) for(unsigned int face=0;face<6;++face) ranges[face].destination=source+face*cube.bytes;
     else ranges[0]=(struct native_texture_read_range){archived?entry.offset:plan.source_offset,read_bytes,archived?images[0].data:source};
     texture_job=(struct texture_prefetch_job){.bitmap=bitmap,.plan=plan,.cube=cube,.cube_format=bitmap->format,
@@ -172,6 +183,7 @@ static int texture_prefetch_submit(const struct bitmap_data *bitmap,enum texture
     for(unsigned int face=0;face<6;++face) texture_job.images[face]=images[face].data;
     if(!n3ds_texture_reader_submit_ranges(path,ranges,range_count,texture_prepare_pixels,&texture_job)) {
         free(source);n3ds_gpu_texture_abandon(resource);
+        n3ds_algorithm_profile_staging_release(plan.native.scratch_bytes+plan.native.resident_bytes);
         memset(&texture_job,0,sizeof(texture_job));
         return 0;
     }
@@ -210,7 +222,7 @@ static int texture_prefetch_collect(enum texture_lane lane)
 #if HALO_N3DS_TEXTURE_PROFILE
         long long start=n3ds_engine_ticks();
 #endif
-        void *resource=texture_job.cube.side?texture_publish(bitmap,texture_job.resource,plan->native.resident_bytes,lane==TEXTURE_PREFETCH):
+        void *resource=texture_job.cube.side?texture_publish(bitmap,texture_job.resource,&plan->native,lane==TEXTURE_PREFETCH):
             bitmap_publish(bitmap,plan,texture_job.resource,lane==TEXTURE_PREFETCH);
         if(resource) texture_job.resource=NULL;
         TEXTURE_PROFILE(texture_load_profile(lane)->upload_ticks+=n3ds_engine_ticks()-start);
@@ -222,6 +234,7 @@ static int texture_prefetch_collect(enum texture_lane lane)
     }
     free(texture_job.source);
     n3ds_gpu_texture_abandon(texture_job.resource);
+    n3ds_algorithm_profile_staging_release(plan->native.scratch_bytes+plan->native.resident_bytes);
     memset(&texture_job,0,sizeof(texture_job));
     return 1;
 }

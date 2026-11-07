@@ -16,6 +16,16 @@ static void *job_context;
 static unsigned int job_begin,job_end;
 static unsigned int jobs[3],items[3];
 static u64 worker_ticks,main_ticks[3],wait_ticks[3],other_ticks[3];
+#if HALO_N3DS_ALGO_DEFERRED_DECODE != N3DS_ALGORITHM_REFERENCE
+static struct {
+    struct n3ds_model_decode_range context;
+    unsigned int active;
+    u64 dispatch;
+#ifdef HALO_N3DS_DEPENDENCY_TRACE
+    struct n3ds_trace_context trace;
+#endif
+} deferred_decode;
+#endif
 #ifdef HALO_N3DS_DEPENDENCY_TRACE
 /* One synchronous range job owns this scratch. The helper only writes its
  * timestamps; the owner copies them after the existing completion barrier. */
@@ -127,6 +137,9 @@ void n3ds_parallel_initialize(void)
 void n3ds_parallel_shutdown(void)
 {
     if(worker) {
+#if HALO_N3DS_ALGO_DEFERRED_DECODE != N3DS_ALGORITHM_REFERENCE
+        if(deferred_decode.active) n3ds_parallel_decode_end(1);
+#endif
         Handle handle=threadGetHandle(worker);
         stop=1;__sync_synchronize();LightEvent_Signal(&wake);
         if(svcWaitSynchronization(handle,U64_MAX)!=0) svcBreak(USERBREAK_PANIC);
@@ -138,6 +151,9 @@ int n3ds_parallel_range(n3ds_range_function function,void *context,unsigned int 
 {
 #ifdef HALO_N3DS_ALGORITHM_PROFILE
     u64 algorithm_batch_start=category<3?svcGetSystemTick():0;
+#endif
+#if HALO_N3DS_ALGO_DEFERRED_DECODE != N3DS_ALGORITHM_REFERENCE
+    if(deferred_decode.active) return PARALLEL_RUN_SERIAL();
 #endif
     /* Original/shared-system-core scheduling is expensive for short jobs.
      * Measured 4097-vertex poses benefit; 256/1025-vertex poses and eight
@@ -212,6 +228,76 @@ int n3ds_parallel_range(n3ds_range_function function,void *context,unsigned int 
 }
 #undef PARALLEL_RUN_SERIAL
 #undef PARALLEL_SERIAL_CALL
+#if HALO_N3DS_ALGO_DEFERRED_DECODE != N3DS_ALGORITHM_REFERENCE
+unsigned int n3ds_parallel_decode_begin(n3ds_range_function function,
+    const struct n3ds_model_decode_range *context, unsigned int count, unsigned int minimum)
+{
+    /* Decode already runs on the dedicated core only. Leave system-core
+     * scheduling and all other worker categories on their existing paths. */
+    if(!worker || worker_core!=2 || deferred_decode.active || count<minimum || count<2) return 0;
+    deferred_decode.context=*context;
+    deferred_decode.active=1;
+    job=function;
+    job_context=&deferred_decode.context;
+    job_begin=count-count/2;
+    job_end=count;
+    deferred_decode.dispatch=svcGetSystemTick();
+#ifdef HALO_N3DS_ALGORITHM_PROFILE
+    algorithm_profile_job=1;
+    algorithm_dispatch_tick=deferred_decode.dispatch;
+#endif
+#ifdef HALO_N3DS_DEPENDENCY_TRACE
+    unsigned int id=n3ds_trace_job_begin();
+    trace_worker_active=id!=0;
+    if(id) {
+        n3ds_trace_snapshot(&deferred_decode.trace);
+        deferred_decode.trace.job=id;
+    }
+#endif
+    __sync_synchronize();
+    LightEvent_Signal(&wake);
+    return job_begin;
+}
+
+int n3ds_parallel_decode_end(int discard)
+{
+    if(!deferred_decode.active) return 0;
+    u64 first_use=svcGetSystemTick();
+    LightEvent_Wait(&complete);
+    __sync_synchronize();
+    u64 finished=svcGetSystemTick();
+    deferred_decode.active=0;
+    n3ds_algorithm_profile_add(N3DS_ALG_IO_DEFERRED_DECODE_DISPATCH,1);
+    n3ds_algorithm_profile_add(N3DS_ALG_IO_DEFERRED_DECODE_AGE,first_use-deferred_decode.dispatch);
+    n3ds_algorithm_profile_add(N3DS_ALG_IO_DEFERRED_DECODE_JOIN,finished-first_use);
+    n3ds_algorithm_profile_add(N3DS_ALG_IO_DEFERRED_DECODE_DISCARD,discard!=0);
+#ifdef HALO_N3DS_ALGORITHM_PROFILE
+    const unsigned int *m=algorithm_parallel_metrics[1];
+    n3ds_algorithm_profile_add(m[PAR_WORKER_COUNT],1);
+    n3ds_algorithm_profile_add(m[PAR_WORKER_ITEMS],job_end);
+    n3ds_algorithm_profile_add(m[PAR_BATCH_TICKS],finished-deferred_decode.dispatch);
+    n3ds_algorithm_profile_max(m[PAR_PEAK_TICKS],finished-deferred_decode.dispatch);
+    n3ds_algorithm_profile_add(m[PAR_WAKE_TICKS],algorithm_wake_ticks);
+    n3ds_algorithm_profile_add(m[PAR_MAIN_TICKS],first_use-deferred_decode.dispatch);
+    n3ds_algorithm_profile_add(m[PAR_HELPER_TICKS],worker_ticks);
+    n3ds_algorithm_profile_add(m[PAR_JOIN_TICKS],finished-first_use);
+#endif
+#ifdef HALO_N3DS_DEPENDENCY_TRACE
+    if(trace_worker_active) {
+        const struct n3ds_trace_context *trace=&deferred_decode.trace;
+        unsigned int share=job_end-job_begin;
+        n3ds_trace_event_at(trace,N3DS_TRACE_WORKER_DISPATCH,deferred_decode.dispatch,1,job_end);
+        n3ds_trace_event_at(trace,N3DS_TRACE_WORKER_START,trace_worker_start,1,share);
+        n3ds_trace_event_at(trace,N3DS_TRACE_WORKER_END,trace_worker_end,1,share);
+        n3ds_trace_event_at(trace,N3DS_TRACE_MAIN_WORK_BEGIN,deferred_decode.dispatch,1,job_begin);
+        n3ds_trace_event_at(trace,N3DS_TRACE_MAIN_WORK_END,first_use,1,job_begin);
+        n3ds_trace_event_at(trace,N3DS_TRACE_JOIN_BEGIN,first_use,1,share);
+        n3ds_trace_event_at(trace,N3DS_TRACE_JOIN_END,finished,1,share);
+    }
+#endif
+    return !discard && worker_result;
+}
+#endif
 static int test_range(void *context,unsigned int begin,unsigned int end)
 {
     unsigned int *out=context;

@@ -50,7 +50,10 @@ static struct scenery_batch_mesh *scenery_batch_mesh_get(const void *source,cons
  }
  memcpy(slot->rigid,v,count*sizeof(*v));n3ds_gpu_geometry_flush(slot->rigid,count*sizeof(*v));
  for(unsigned int j=0;j<SCENERY_INSTANCES;++j){
-  for(unsigned int k=0;k<count;++k){struct native_skin_vertex *out=slot->v+j*count+k;memcpy(out,v+k,sizeof(*v));out->bones[0]=j*3;out->bones[1]=0;out->bones[2]=1;out->bones[3]=0;}
+  for(unsigned int k=0;k<count;++k){
+   struct native_skin_vertex *out=slot->v+j*count+k;
+   memcpy(out,v+k,sizeof(*v));n3ds_skin_vertex_set_bones(out,j*3,0,1.f,0.f);
+  }
   for(unsigned int k=0;k<ni;++k){assert(indices[k]<count);slot->i[j*ni+k]=indices[k]+j*count;}
  }
  n3ds_gpu_geometry_flush(slot->v,count*SCENERY_INSTANCES*sizeof(*slot->v));n3ds_gpu_geometry_flush(slot->i,ni*SCENERY_INSTANCES*2);scenery_batch_bytes+=bytes;
@@ -110,7 +113,11 @@ int n3ds_scenery_batch_tests(void)
  struct scenery_batch_mesh *m=scenery_batch_mesh_get(v,ids,v,4,ids,6);
  int ok=m!=NULL;
  if(m)for(unsigned int j=0;j<SCENERY_INSTANCES;++j){
-  for(unsigned int i=0;i<4;++i)if(memcmp(m->v+j*4+i,v+i,sizeof(v[0])) || m->v[j*4+i].bones[0]!=j*3 || m->v[j*4+i].bones[2]!=1 || m->v[j*4+i].bones[3]!=0)ok=0;
+  for(unsigned int i=0;i<4;++i){
+   const struct native_skin_vertex *vertex=m->v+j*4+i;
+   float bones[4];n3ds_skin_vertex_read_bones(vertex,bones);
+   if(memcmp(vertex,v+i,sizeof(v[0])) || bones[0]!=j*3 || bones[1]!=0 || bones[2]!=1 || bones[3]!=0)ok=0;
+  }
   for(unsigned int i=0;i<6;++i)if(m->i[j*6+i]!=ids[i]+j*4)ok=0;
  }
  if(m && memcmp(m->rigid,v,sizeof(v)))ok=0;

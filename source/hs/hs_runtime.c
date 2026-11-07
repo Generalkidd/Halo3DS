@@ -282,6 +282,9 @@ symbols in this file:
 #include "cseries/errors.h"
 #include "main/console.h"
 #include "game/game.h"
+#if defined(HALO_N3DS) && HALO_N3DS_ACTION_REPLAY
+#include "engine_action_replay.h"
+#endif
 
 /* ---------- constants */
 
@@ -1250,6 +1253,67 @@ void n3ds_hs_trace_state(long time)
 	snprintf(text,sizeof(text),"MISSION HS: time=%ld initialized=%d startup=%d ready=%d sleeping=%d dormant=%d finished=%d",
 		time,hs_runtime_globals.initialized,startup,ready,sleeping,dormant,finished);
 	n3ds_log(text);
+}
+#endif
+
+#if defined(HALO_N3DS) && HALO_N3DS_ACTION_REPLAY
+uint64_t n3ds_action_replay_script_digest(void)
+{
+	uint64_t hash=N3DS_ACTION_REPLAY_HASH_INIT;
+	if(!hs_runtime_globals.initialized)return hash;
+	for(long index=data_next_index(hs_thread_data,NONE);index!=NONE;
+		index=data_next_index(hs_thread_data,index))
+	{
+		const struct hs_thread_datum *thread=hs_thread_get(index);
+		if(thread->type!=_hs_thread_type_script)continue;
+		hash=n3ds_action_replay_mix(hash,index);
+		hash=n3ds_action_replay_mix(hash,thread->script_index);
+		hash=n3ds_action_replay_mix(hash,thread->flags);
+		hash=n3ds_action_replay_mix(hash,thread->sleep_until);
+		hash=n3ds_action_replay_mix(hash,thread->previous_sleep_until);
+		/* Expression identities describe continuation independently of VM
+		 * stack addresses and typed argument/result storage. */
+		const struct hs_stack_frame *base=(const void *)thread->stack_data;
+		for(const struct hs_stack_frame *frame=thread->stack;frame;frame=frame->previous)
+		{
+			hash=n3ds_action_replay_mix(hash,frame->expression_index);
+			hash=n3ds_action_replay_mix(hash,frame->size);
+			if(frame==base)break;
+		}
+		hash=n3ds_action_replay_mix(hash,NONE);
+	}
+	hash=n3ds_action_replay_mix(hash,NONE);
+	const struct scenario *scenario=global_scenario_get();
+	for(long i=0;i<scenario->hs_globals.count;++i)
+	{
+		const struct hs_global *definition=TAG_BLOCK_GET_ELEMENT(&scenario->hs_globals,i,struct hs_global);
+		const struct hs_global_datum *global=datum_get(hs_global_data,i+hs_external_global_count);
+		short type=definition->type;
+		uint32_t bits;
+		if(type==_hs_type_boolean)bits=global->value.boolean!=0;
+		else if(type==_hs_type_real)memcpy(&bits,&global->value.real,sizeof(bits));
+		else if(type==_hs_type_short_integer || (type>=_hs_type_script && type<=_hs_type_device_group) ||
+			(type>=_hs_type_ai_command_list && type<=_hs_type_hud_message) ||
+			HS_TYPE_IS_ENUM(type) || HS_TYPE_IS_OBJECT_NAME(type))
+			bits=(uint16_t)global->value.short_integer;
+		else if(type==_hs_type_long_integer || type==_hs_type_ai || type==_hs_type_object_list ||
+			HS_TYPE_IS_TAG_REFERENCE(type) || HS_TYPE_IS_OBJECT(type))
+			bits=global->value.long_integer;
+		else continue; /* Strings and VM storage can contain addresses. */
+		hash=n3ds_action_replay_mix(hash,i);
+		hash=n3ds_action_replay_mix(hash,type);
+		hash=n3ds_action_replay_mix(hash,bits);
+		if(type==_hs_type_object_list && global->value.long_integer!=NONE)
+		{
+			long list=global->value.long_integer;
+			long reference;
+			for(long object=object_list_get_first(list,&reference);object!=NONE;
+				object=object_list_get_next(list,&reference))
+				hash=n3ds_action_replay_mix(hash,object);
+			hash=n3ds_action_replay_mix(hash,NONE);
+		}
+	}
+	return hash;
 }
 #endif
 

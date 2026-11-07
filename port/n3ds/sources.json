@@ -43,6 +43,10 @@
   ],
   "objects": [
     {
+      "source": "port/n3ds/src/engine_action_replay.c",
+      "compiler": "clang"
+    },
+    {
       "source": "port/n3ds/src/engine_algorithm_profile.c",
       "compiler": "clang",
       "sdk": false
@@ -654,6 +658,12 @@
       "defines": ["CITRO3D_BUILD"]
     },
     {
+      "source": "port/n3ds/src/engine_citro3d_color_read.c",
+      "compiler": "gcc",
+      "citro3d_color_read_adapter": true,
+      "defines": ["CITRO3D_BUILD"]
+    },
+    {
       "source": "port/n3ds/src/engine_gpu_programs.c",
       "compiler": "gcc"
     },
@@ -1166,6 +1176,13 @@
       ]
     },
     {
+      "source": "port/n3ds/src/engine_graphics_options.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
       "source": "port/n3ds/src/engine_save_codec.c",
       "compiler": "gcc"
     },
@@ -1246,6 +1263,10 @@
     },
     {
       "source": "port/n3ds/tests/src/engine_gpu_texture_tests.c",
+      "compiler": "gcc"
+    },
+    {
+      "source": "port/n3ds/tests/src/engine_texture_lod_fixture.c",
       "compiler": "gcc"
     },
     {

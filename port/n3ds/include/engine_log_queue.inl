@@ -46,7 +46,7 @@ static void log_async_start(void)
      * All subsequent normal writes belong to this one worker. */
     fflush(log_file);
     Result opened=FSUSER_OpenFileDirectly(&log_handle,ARCHIVE_SDMC,fsMakePath(PATH_EMPTY,NULL),
-        fsMakePath(PATH_ASCII,"/halo-source-engine.log"),FS_OPEN_WRITE,0);
+        fsMakePath(PATH_ASCII,"/" ENGINE_LOG_NAME),FS_OPEN_WRITE,0);
     if(R_FAILED(opened)) {log_handle=0;return;}
     if(R_FAILED(FSFILE_GetSize(log_handle,&log_offset))) {FSFILE_Close(log_handle);log_handle=0;return;}
     fclose(log_file);log_file=NULL;LightLock_Init(&log_lock);
@@ -55,7 +55,7 @@ static void log_async_start(void)
     if(log_thread) atexit(log_async_finish);
     if(!log_thread) {
         FSFILE_Close(log_handle);log_handle=0;
-        log_file=fopen("sdmc:/halo-source-engine.log","a");
+        log_file=fopen("sdmc:/" ENGINE_LOG_NAME,"a");
         if(log_file) setvbuf(log_file,log_buffer,_IOFBF,sizeof(log_buffer));
     }
 }

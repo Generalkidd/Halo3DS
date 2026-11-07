@@ -35,6 +35,10 @@ static void surface_water_pass(int base,int mask)
 {
     int pass=base?1:2+!!mask;
     if(surface_pass==pass)return;
+#if HALO_N3DS_ALGO_WATER_BASE == N3DS_ALGORITHM_CANDIDATE
+    if(!surface_pass || (surface_pass==1)!=!!base)
+        C3D_BoolUnifSet(GPU_VERTEX_SHADER,WATER_BASE_BOOL,base);
+#endif
     C3D_TexEnv *e=C3D_GetTexEnv(0);C3D_TexEnvInit(e);
     if(base) {
         C3D_TexEnvSrc(e,C3D_Both,GPU_TEXTURE1,GPU_CONSTANT,GPU_CONSTANT);
@@ -53,6 +57,9 @@ static void surface_glass_pass(int diffuse,unsigned int tint)
 {
     int pass=diffuse?2:1;
     if(surface_pass!=pass) {
+#if HALO_N3DS_ALGO_BOOLEAN_SELECTORS == N3DS_ALGORITHM_CANDIDATE
+        C3D_BoolUnifSet(GPU_VERTEX_SHADER,GLASS_DIFFUSE_BOOL,diffuse);
+#endif
         C3D_TexEnv *e=C3D_GetTexEnv(0);C3D_TexEnvInit(e);
         if(diffuse) {
             C3D_TexEnvSrc(e,C3D_RGB,GPU_TEXTURE1,GPU_PRIMARY_COLOR,GPU_CONSTANT);

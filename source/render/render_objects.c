@@ -110,9 +110,14 @@ symbols in this file:
 #include "saved games/game_state.h"
 #include "scenario/scenario.h"
 #include "structures/structure_bsp_definitions.h"
+#include "structures/structure_visibility.h"
 #ifdef HALO_N3DS
 #include "engine_diagnostics.h"
 #include "engine_dependency_trace.h"
+#include "engine_algorithm_profile.h"
+#if HALO_N3DS_ALGO_PREPARED_VIEW != N3DS_ALGORITHM_REFERENCE
+#include "engine_prepared_view.h"
+#endif
 #endif
 #ifdef HALO_N3DS_PRESENT_INTERPOLATION
 #include "engine_presentation.h"
@@ -230,6 +235,11 @@ static boolean object_is_first_person_camera(
 	long object_index);
 static void find_rendered_objects(
 	void);
+static void report_rendered_object_overflow(void);
+#if defined(HALO_N3DS) && HALO_N3DS_ALGO_PREPARED_VIEW != N3DS_ALGORITHM_REFERENCE
+static boolean use_prepared_render_objects(const struct n3ds_prepared_objects *);
+static boolean prepared_render_objects_current(const struct n3ds_prepared_objects *);
+#endif
 static real object_get_level_of_detail_pixels(
 	long object_index);
 static void render_object_list(
@@ -273,14 +283,6 @@ static void process_rendered_objects(
 
 boolean scripted_camera_object_is_first_person_camera(
 	long object_index);
-short structure_visibility_find_objects(
-	long *object_indices,
-	short maximum_object_count,
-	long (*get_first_object_function)(long *reference_index, short cluster_index),
-	long (*get_next_object_function)(long *reference_index),
-	void (*get_bounding_sphere_function)(long object_index, real_point3d *center, real *radius),
-	boolean (*unmarked_function)(long object_index),
-	boolean (*mark_function)(long object_index));
 void rasterizer_models_begin(
 	boolean sky);
 void rasterizer_models_end(
@@ -402,8 +404,13 @@ struct render_lighting *object_get_cached_render_lighting(
 	return &lighting_storage;
 }
 
-void n3ds_render_objects_with_environment(void (*environment)(const void *),const void *context)
+static boolean render_objects_with_environment(void (*environment)(const void *),const void *context
+#if defined(HALO_N3DS) && HALO_N3DS_ALGO_PREPARED_VIEW != N3DS_ALGORITHM_REFERENCE
+	, const struct n3ds_prepared_objects *prepared
+#endif
+)
 {
+	boolean matches = TRUE;
 #if N3DS_MISSION_PROFILE
     extern long long n3ds_engine_ticks(void);
     extern void n3ds_object_profile(unsigned int,long long);
@@ -414,17 +421,33 @@ void n3ds_render_objects_with_environment(void (*environment)(const void *),cons
 
 	profile_enter(render_objects_section);
 
+#if defined(HALO_N3DS) && HALO_N3DS_ALGO_MIDPOINT_PARTICLES != N3DS_ALGORITHM_REFERENCE
+	native_pose_draw_snapshots_reset();
+#endif
 	rasterizer_models_begin(FALSE);
 #if N3DS_MISSION_PROFILE
     native_stamp=n3ds_engine_ticks();
 #endif
-	#ifdef HALO_N3DS
-	n3ds_trace_event(N3DS_TRACE_OBJECT_DISCOVERY_BEGIN,0,0);
-	#endif
-	find_rendered_objects();
-	#ifdef HALO_N3DS
-	n3ds_trace_event(N3DS_TRACE_OBJECT_DISCOVERY_END,(unsigned int)render_object_globals.rendered_object_count,0);
-	#endif
+#if defined(HALO_N3DS) && HALO_N3DS_ALGO_PREPARED_VIEW != N3DS_ALGORITHM_REFERENCE
+	if (prepared && prepared_render_objects_current(prepared))
+	{
+		matches = use_prepared_render_objects(prepared);
+	}
+	else
+#endif
+	{
+#if defined(HALO_N3DS) && HALO_N3DS_ALGO_PREPARED_VIEW != N3DS_ALGORITHM_REFERENCE
+		if (prepared)
+			n3ds_algorithm_profile_add(N3DS_ALG_CPU_PREPARED_OBJECT_DISCARD, 1);
+#endif
+#ifdef HALO_N3DS
+		n3ds_trace_event(N3DS_TRACE_OBJECT_DISCOVERY_BEGIN,0,0);
+#endif
+		find_rendered_objects();
+#ifdef HALO_N3DS
+		n3ds_trace_event(N3DS_TRACE_OBJECT_DISCOVERY_END,(unsigned int)render_object_globals.rendered_object_count,0);
+#endif
+	}
 #if N3DS_MISSION_PROFILE
     n3ds_object_profile(3,n3ds_engine_ticks()-native_stamp);
 #endif
@@ -484,9 +507,25 @@ void n3ds_render_objects_with_environment(void (*environment)(const void *),cons
 	rasterizer_models_end();
 
 	profile_exit(render_objects_section);
-
-	return;
+	return matches;
 }
+
+void n3ds_render_objects_with_environment(void (*environment)(const void *),const void *context)
+{
+	render_objects_with_environment(environment,context
+#if defined(HALO_N3DS) && HALO_N3DS_ALGO_PREPARED_VIEW != N3DS_ALGORITHM_REFERENCE
+		, NULL
+#endif
+	);
+}
+
+#if defined(HALO_N3DS) && HALO_N3DS_ALGO_PREPARED_VIEW != N3DS_ALGORITHM_REFERENCE
+boolean n3ds_render_prepared_objects_with_environment(void (*environment)(const void *), const void *context,
+	const struct n3ds_prepared_objects *prepared)
+{
+	return render_objects_with_environment(environment, context, prepared);
+}
+#endif
 
 void render_objects(void) {n3ds_render_objects_with_environment(NULL,NULL);}
 
@@ -527,8 +566,12 @@ static boolean object_is_first_person_camera(
 		scripted_camera_object_is_first_person_camera(object_index);
 }
 
-static void find_rendered_objects(
-	void)
+static long mark_rendered_object(long object_index)
+{
+	return object_mark_function(object_index);
+}
+
+static void find_rendered_objects(void)
 {
 	void (*get_bounding_sphere)(long, real_point3d *, real *) = object_get_render_bounding_sphere;
 #ifdef HALO_N3DS_PRESENT_INTERPOLATION
@@ -544,7 +587,7 @@ static void find_rendered_objects(
 		cluster_get_next_collideable_object,
 		get_bounding_sphere,
 		object_unmarked_function,
-		object_mark_function);
+		mark_rendered_object);
 
 	render_object_globals.rendered_object_count += structure_visibility_find_objects(
 		&render_object_globals.rendered_object_indices[
@@ -554,11 +597,14 @@ static void find_rendered_objects(
 		cluster_get_next_noncollideable_object,
 		get_bounding_sphere,
 		object_unmarked_function,
-		object_mark_function);
+		mark_rendered_object);
 
 	object_marker_end();
+	report_rendered_object_overflow();
+}
 
-
+static void report_rendered_object_overflow(void)
+{
 	if (render_object_globals.rendered_object_count == MAXIMUM_RENDERED_OBJECTS &&
 		!reported_rendered_object_overflow)
 	{
@@ -568,6 +614,106 @@ static void find_rendered_objects(
 
 	return;
 }
+
+#if defined(HALO_N3DS) && HALO_N3DS_ALGO_PREPARED_VIEW != N3DS_ALGORITHM_REFERENCE
+/* Both traversals share this owner-only membership scratch. Discovery makes
+ * no writes to saved object data. The anticipated marker also preserves the
+ * legacy comparison if restored data already contains that marker value. */
+static unsigned long prepared_object_flags[MAXIMUM_OBJECTS_PER_MAP / LONG_BITS];
+static struct n3ds_prepared_marker prepared_object_marker;
+
+static boolean prepared_object_unmarked(long object_index)
+{
+	const struct object_datum *object = object_get(object_index);
+	unsigned int slot = DATUM_INDEX_TO_ABSOLUTE_INDEX(object_index);
+	assert(slot < MAXIMUM_OBJECTS_PER_MAP);
+	return !(prepared_object_flags[slot / LONG_BITS] & (1UL << (slot % LONG_BITS))) &&
+		n3ds_prepared_marker_unmarked(&prepared_object_marker, (uint32_t)object->object.magic_number);
+}
+
+static long mark_prepared_object(long object_index)
+{
+	unsigned int slot = DATUM_INDEX_TO_ABSOLUTE_INDEX(object_index);
+	assert(slot < MAXIMUM_OBJECTS_PER_MAP);
+	prepared_object_flags[slot / LONG_BITS] |= 1UL << (slot % LONG_BITS);
+	return TRUE;
+}
+
+boolean n3ds_prepare_render_objects(const struct n3ds_prepared_visibility *visibility,
+	struct n3ds_prepared_objects *result)
+{
+	if (!object_header_data || object_header_data->maximum_count > MAXIMUM_OBJECTS_PER_MAP)
+		return FALSE;
+
+	memset(prepared_object_flags, 0, sizeof(prepared_object_flags));
+	prepared_object_marker = (struct n3ds_prepared_marker){.expected=(uint32_t)global_object_marker+1u};
+	n3ds_trace_event(N3DS_TRACE_OBJECT_DISCOVERY_BEGIN,0,0);
+	result->count = n3ds_prepared_visibility_find_objects(visibility,
+		result->indices, MAXIMUM_RENDERED_OBJECTS, cluster_get_first_collideable_object,
+		cluster_get_next_collideable_object, object_get_render_bounding_sphere,
+		prepared_object_unmarked, mark_prepared_object);
+	result->count += n3ds_prepared_visibility_find_objects(visibility,
+		result->indices + result->count, MAXIMUM_RENDERED_OBJECTS - result->count,
+		cluster_get_first_noncollideable_object, cluster_get_next_noncollideable_object,
+		object_get_render_bounding_sphere, prepared_object_unmarked, mark_prepared_object);
+	result->marker = prepared_object_marker;
+	n3ds_trace_event(N3DS_TRACE_OBJECT_DISCOVERY_END,(unsigned int)result->count,0);
+	return TRUE;
+}
+
+static boolean prepared_render_objects_current(const struct n3ds_prepared_objects *prepared)
+{
+	uint32_t next = (uint32_t)global_object_marker + 1u;
+	enum n3ds_prepared_marker_use eligibility = n3ds_prepared_marker_eligibility(&prepared->marker, next);
+	if (eligibility != N3DS_PREPARED_MARKER_RECHECK)
+		return eligibility == N3DS_PREPARED_MARKER_USE;
+
+	/* With no early skips, this is the first cap entries without marker
+	 * exclusions. If all remain eligible, later entries cannot displace them. */
+	for (short i = 0; i < prepared->count; ++i)
+	{
+		const struct object_datum *object = object_try_and_get(prepared->indices[i]);
+		if (!object || (uint32_t)object->object.magic_number == next)
+			return FALSE;
+	}
+	return TRUE;
+}
+
+static boolean use_prepared_render_objects(const struct n3ds_prepared_objects *prepared)
+{
+	const size_t bytes = prepared->count * sizeof(prepared->indices[0]);
+#if HALO_N3DS_ALGO_PREPARED_VIEW == N3DS_ALGORITHM_VERIFY
+	n3ds_trace_event(N3DS_TRACE_OBJECT_DISCOVERY_BEGIN,0,0);
+	find_rendered_objects();
+	n3ds_trace_event(N3DS_TRACE_OBJECT_DISCOVERY_END,(unsigned int)render_object_globals.rendered_object_count,0);
+	if (render_object_globals.rendered_object_count != prepared->count ||
+		memcmp(render_object_globals.rendered_object_indices, prepared->indices, bytes))
+	{
+		extern void n3ds_log(const char *);
+		n3ds_log("PREPARED VIEW VERIFY FAIL: ordered object IDs differ");
+		return FALSE;
+	}
+	n3ds_algorithm_profile_add(N3DS_ALG_CPU_PREPARED_VIEW_VERIFIED, 1);
+	static boolean reported;
+	if (!reported)
+	{
+		extern void n3ds_log(const char *);
+		n3ds_log("PASS: prepared view matched ordered visibility and object results");
+		reported = TRUE;
+	}
+#else
+	object_marker_begin();
+	for (short i = 0; i < prepared->count; ++i)
+		object_mark_function(prepared->indices[i]);
+	object_marker_end();
+	render_object_globals.rendered_object_count = prepared->count;
+	memcpy(render_object_globals.rendered_object_indices, prepared->indices, bytes);
+	n3ds_algorithm_profile_add(N3DS_ALG_CPU_PREPARED_COPY, bytes);
+	report_rendered_object_overflow();
+#endif
+	return TRUE;
+}
+#endif
 
 static real object_get_level_of_detail_pixels(
 	long object_index)
@@ -749,11 +895,16 @@ static void render_object_list(
 					}
 
 #ifdef HALO_N3DS_PRESENT_INTERPOLATION
-					real_matrix4x3 const *node_matrices = object_get_node_matrices(object_index);
+					real_matrix4x3 const *live_node_matrices = object_get_node_matrices(object_index);
+					real_matrix4x3 const *node_matrices = live_node_matrices;
 					real_point3d midpoint_center = object->object.bounding_sphere_center;
 					if (model_effect.type == _render_model_effect_type_none && !render.camera.mirrored &&
 						n3ds_presentation_midpoint_active())
 						node_matrices = native_pose_for_draw(object_index, object, definition, node_matrices, &midpoint_center);
+#if HALO_N3DS_ALGO_MIDPOINT_PARTICLES != N3DS_ALGORITHM_REFERENCE
+					boolean interpolated = node_matrices != live_node_matrices;
+					unsigned int draw_serial = interpolated ? n3ds_presentation_model_draw_serial() : 0;
+#endif
 #endif
 					render_model(
 						definition->object.model.index,
@@ -782,6 +933,11 @@ static void render_object_list(
 #endif
                         );
 
+#if defined(HALO_N3DS) && HALO_N3DS_ALGO_MIDPOINT_PARTICLES != N3DS_ALGORITHM_REFERENCE
+					if (interpolated && draw_serial != n3ds_presentation_model_draw_serial() &&
+						!n3ds_presentation_midpoint_rejected())
+						native_pose_draw_snapshot(object_index, node_matrices);
+#endif
 					if (debug_objects)
 					{
 						object_type_render_debug(object_index);

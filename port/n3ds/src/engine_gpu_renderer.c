@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <math.h>
 #include "engine_renderer.h"
+#include "engine_gpu_model_layout.h"
 #include "engine_algorithm_profile.h"
 #include "engine_dependency_trace.h"
 #include "engine_presentation.h"
@@ -86,6 +87,22 @@ static unsigned int loading_submissions;
 static int eye_right,overlay_stereo;
 static float stereo_level,eye_offset;
 static int diagnostic_mode;
+#ifdef HALO_N3DS_GPU_PROBE
+#include "engine_gpu_probe.inl"
+#else
+#define gpu_probe_count(...) ((void)0)
+#endif
+
+int n3ds_gpu_diagnostic_mode(void)
+{
+#ifdef HALO_N3DS_GPU_PROBE
+    if (gpu_probe.recording) {
+        int mode = probe_modes[gpu_probe.phase];
+        return mode <= 2 ? mode : 0;
+    }
+#endif
+    return diagnostic_mode;
+}
 #ifdef HALO_N3DS_PRESENT_INTERPOLATION
 enum { TOP_REFRESH_TICKS = 4481136 };
 static enum { MIDPOINT_IDLE, MIDPOINT_RESERVED, MIDPOINT_RENDERING } midpoint_state;
@@ -174,6 +191,14 @@ int n3ds_gpu_midpoint_latched(void)
     return midpoint_visible_before_keyframe;
 }
 #endif
+#ifdef HALO_N3DS_FRAMEBUFFER_REUSE
+static int direct_top_bound;
+
+void n3ds_gpu_framebuffer_invalidate(void)
+{
+    direct_top_bound = 0;
+}
+#endif
 #include "engine_world_scale.inl"
 #ifdef HALO_N3DS_PRESENT_INTERPOLATION
 int n3ds_gpu_midpoint_compatible(void)
@@ -195,6 +220,7 @@ void n3ds_gpu_stereo_overlay(int enabled) {overlay_stereo=!!enabled;}
 int n3ds_gpu_overlay_other_begin(void)
 {
     if(!overlay_stereo || !stereo_level || bottom_selected) return 0;
+    n3ds_gpu_framebuffer_invalidate();
     surface_state_mode=0;C3D_FrameDrawOn(right_target);return 1;
 }
 void n3ds_gpu_overlay_other_end(void) {surface_state_mode=0;world_target_bind();}
@@ -208,7 +234,7 @@ void n3ds_gpu_hud_screen(int bottom)
         C3D_DepthTest(false,GPU_ALWAYS,GPU_WRITE_COLOR & ~GPU_WRITE_ALPHA);
         C3D_StencilTest(false,GPU_ALWAYS,0,255,255);
     }
-    C3D_SetScissor(diagnostic_mode==1 && !bottom_selected?GPU_SCISSOR_NORMAL:GPU_SCISSOR_DISABLE,0,0,120,200);
+    C3D_SetScissor(n3ds_gpu_diagnostic_mode()==1 && !bottom_selected?GPU_SCISSOR_NORMAL:GPU_SCISSOR_DISABLE,0,0,120,200);
 }
 void n3ds_gpu_hud_screen_restore(void)
 { surface_state_mode=0;world_target_bind(); }
@@ -223,17 +249,15 @@ static struct vertex_buffer_binding bound_vertex[2];
 static unsigned int bound_vertex_count;
 static int bound_vertex_valid;
 static unsigned long long vertex_buffer_requests,vertex_buffer_reuses;
-static C3D_AttrInfo model_attributes[2];
+static C3D_AttrInfo model_attributes[2],water_wave_attributes;
 static C3D_TexEnv world_texture_recipe[6];
 static void renderer_layouts_initialize(void)
 {
-    /* The fourth float4 is either skin indices/weights or authored wave data.
-     * These immutable layouts are rebuilt on every renderer initialization. */
-    for(int i=0;i<2;++i) {
-        C3D_AttrInfo *a=&model_attributes[i];AttrInfo_Init(a);
-        AttrInfo_AddLoader(a,0,GPU_FLOAT,3);AttrInfo_AddLoader(a,1,GPU_FLOAT,3);AttrInfo_AddLoader(a,2,GPU_FLOAT,2);
-        if(i) AttrInfo_AddLoader(a,3,GPU_FLOAT,4);
-    }
+    /* Authored BSP water waves always retain their float4 attribute. */
+    n3ds_gpu_model_attributes_initialize(&model_attributes[0],0);
+    n3ds_gpu_model_attributes_initialize(&model_attributes[1],1);
+    water_wave_attributes=model_attributes[0];
+    AttrInfo_AddLoader(&water_wave_attributes,3,GPU_FLOAT,4);
     /* World restore always installs this exact combiner. Copy the complete
      * stages, including unused fields, rather than retaining external state. */
     for(int i=0;i<6;++i) C3D_TexEnvInit(&world_texture_recipe[i]);
@@ -388,6 +412,12 @@ static void environment_recipes_initialize(void)
 static struct {DVLB_s *binary; shaderProgram_s program; int ready,projection,bone,options,camera,delta,parallel;} lit_programs[4];
 static struct {DVLB_s *binary; shaderProgram_s program; int ready,projection,camera,fallback,delta,parallel,wave_phase,wave_switch;} water_program;
 static struct {DVLB_s *binary; shaderProgram_s program; int ready,projection,camera,fallback,delta,parallel,options,pose;} glass_program;
+/* Citro3D's setter accepts uniform locations and subtracts 0x68 to obtain
+ * the Boolean bit. Match the per-program b0/b1 aliases in generated code. */
+enum {
+    MODEL_REFLECTION_BOOL=0x68, WATER_WAVES_BOOL=0x68, WATER_BASE_BOOL=0x69,
+    GLASS_RIGID_BOOL=0x68, GLASS_DIFFUSE_BOOL=0x69,
+};
 static C3D_LightEnv model_light_env;
 static C3D_Light model_lights[3];
 /* Cache installed components independently: an animated ambient value or
@@ -785,11 +815,11 @@ void n3ds_gpu_algorithm_profile_finish(void)
 #define ALGORITHM_GPU_DRAW(count) do { \
     n3ds_algorithm_profile_add(N3DS_ALGORITHM_GPU_RENDERER_DRAW_CALLS,1); \
     n3ds_algorithm_profile_add(N3DS_ALGORITHM_GPU_RENDERER_TRIANGLES,(count)/3); \
+    gpu_probe_count(count); \
 } while(0)
 #ifdef HALO_N3DS_PERFORMANCE_PROFILE
 static unsigned int queue_over_refresh;
 #endif
-int n3ds_gpu_diagnostic_mode(void) {return diagnostic_mode;}
 static void renderer_diagnostic_initialize(void)
 {
     FILE *file=fopen("sdmc:/halo-source/renderer-profile.txt","rb");char mode[32]={0};
@@ -798,10 +828,53 @@ static void renderer_diagnostic_initialize(void)
     if(!strcmp(mode,"quarter-pixels")) diagnostic_mode=1;
     else if(!strcmp(mode,"no-effects")) diagnostic_mode=2;
     char message[128];snprintf(message,sizeof(message),"GPU DIAGNOSTIC: mode=%d (0=normal 1=quarter-pixel scissor 2=no effect drawing)",diagnostic_mode);n3ds_log(message);
+#ifdef HALO_N3DS_GPU_PROBE
+    n3ds_log(diagnostic_mode ? "GPU PROBE: disabled by renderer-profile.txt" :
+        "GPU PROBE: ready, press L+R while paused in a mission");
+#endif
 }
 
 int n3ds_gpu_frame_active(void) { return frame_active; }
 int n3ds_gpu_frame_is_mono(void) { return frame_active && stereo_level==0.f; }
+#ifdef HALO_N3DS_OPAQUE_COLOR_READS
+/* Scope the SDK adapter to the direct native top target. It checks the
+ * actual installed blend, access masks and depth state before omitting a read. */
+int n3ds_gpu_opaque_color_read_path(const void *color_buffer)
+{
+    if (!frame_active || !target || color_buffer != target->frameBuf.colorBuf ||
+        bottom_selected || stereo_level || eye_right || !world_budget_enabled ||
+        !world_scale_fixed || world_scale || world_low_active || screen_effect_active ||
+        diagnostic_mode)
+        return 0;
+#ifdef HALO_N3DS_GPU_PROBE
+    if (gpu_probe.recording && probe_modes[gpu_probe.phase] != PROBE_OPAQUE_COLOR_MODE)
+        return 1;
+#endif
+    return 2;
+}
+void n3ds_gpu_opaque_color_read_draw(int omitted)
+{
+#ifdef HALO_N3DS_GPU_PROBE
+    if (gpu_probe.recording) {
+        ++gpu_probe.draws[PROBE_READ_ELIGIBLE];
+        gpu_probe.draws[PROBE_READ_ELIDED] += !!omitted;
+    }
+#else
+    (void)omitted;
+#endif
+}
+void n3ds_gpu_opaque_color_read_transition(int extra_flush)
+{
+#ifdef HALO_N3DS_GPU_PROBE
+    if (gpu_probe.recording) {
+        ++gpu_probe.draws[PROBE_READ_MASK_WRITES];
+        gpu_probe.draws[PROBE_READ_EXTRA_FLUSHES] += !!extra_flush;
+    }
+#else
+    (void)extra_flush;
+#endif
+}
+#endif
 float n3ds_gpu_command_usage(void)
 {
     u32 *buffer,size,offset;
@@ -941,6 +1014,10 @@ void n3ds_gpu_map_scratch_release(void)
 
 void n3ds_gpu_renderer_dispose(void)
 {
+    n3ds_gpu_framebuffer_invalidate();
+#ifdef HALO_N3DS_GPU_PROBE
+    gpu_probe_abort("renderer-dispose");
+#endif
     if(vertex_buffer_requests) {
         char line[160];snprintf(line,sizeof(line),"NATIVE VERTEX BINDINGS: cacheable_requests=%llu reused=%llu; one/two-stream layouts; same-frame descriptors only",vertex_buffer_requests,vertex_buffer_reuses);n3ds_log(line);
         vertex_buffer_requests=vertex_buffer_reuses=0;
@@ -1106,8 +1183,10 @@ int n3ds_gpu_renderer_initialize(void)
     if(water_program.delta<0) {n3ds_gpu_renderer_dispose();return 0;}
     water_program.parallel=shaderInstanceGetUniformLocation(water_program.program.vertexShader,"parallel");
     if(water_program.parallel<0) {n3ds_gpu_renderer_dispose();return 0;}
+#if HALO_N3DS_ALGO_BOOLEAN_SELECTORS == N3DS_ALGORITHM_REFERENCE
     water_program.wave_switch=shaderInstanceGetUniformLocation(water_program.program.vertexShader,"wave_switch");
     if(water_program.wave_switch<0) {n3ds_gpu_renderer_dispose();return 0;}
+#endif
     water_program.wave_phase=shaderInstanceGetUniformLocation(water_program.program.vertexShader,"wave_phase");
     if(water_program.wave_phase<0) {n3ds_gpu_renderer_dispose();return 0;}
     glass_program.binary=DVLB_ParseFile((u32 *)engine_glass_shader,sizeof(engine_glass_shader));
@@ -1223,6 +1302,8 @@ static int begin_frame(int midpoint)
         svcSleepThread(250000LL);
     }
     frame_wait_ticks=svcGetSystemTick()-before;
+    /* The first bind always installs a target, including after APT restore. */
+    n3ds_gpu_framebuffer_invalidate();
     n3ds_trace_event(N3DS_TRACE_GPU_ACQUIRE_END,midpoint,flags);
     n3ds_trace_gpu_poll();
 #ifdef HALO_N3DS_ALGORITHM_PROFILE
@@ -1254,6 +1335,9 @@ static int begin_frame(int midpoint)
             timing_frames=0;timing_cpu=timing_gpu=timing_wait=0;timing_gpu_max=0;
         }
     }
+#ifdef HALO_N3DS_GPU_PROBE
+    gpu_probe_begin(midpoint, frame_wait_ticks);
+#endif
     native_light_frame_begin();
     surface_batch_active=surface_state_mode=0;
     /* Apply scanout changes only after the previous frame has completed. */
@@ -1409,9 +1493,12 @@ static void window_state_begin(const struct native_render_camera *camera)
     C3D_AlphaBlend(GPU_BLEND_ADD, GPU_BLEND_ADD, GPU_ONE, GPU_ZERO, GPU_ONE, GPU_ZERO);
     n3ds_gpu_model_stencil_apply();
     n3ds_gpu_texture_bind(1, NULL); n3ds_gpu_texture_bind(2, NULL);
-    if (!camera->suppress_clear) C3D_RenderTargetClear(world_target(), C3D_CLEAR_ALL, world_clear_color(camera->clear_color), 0);
+    if (!camera->suppress_clear) {
+        n3ds_gpu_framebuffer_invalidate();
+        C3D_RenderTargetClear(world_target(), C3D_CLEAR_ALL, world_clear_color(camera->clear_color), 0);
+    }
     world_target_bind();
-    C3D_SetScissor(diagnostic_mode==1 && !bottom_selected?GPU_SCISSOR_NORMAL:GPU_SCISSOR_DISABLE,0,0,120,200);
+    C3D_SetScissor(n3ds_gpu_diagnostic_mode()==1 && !bottom_selected?GPU_SCISSOR_NORMAL:GPU_SCISSOR_DISABLE,0,0,120,200);
 }
 void n3ds_gpu_window_begin(const struct native_render_camera *camera)
 {
@@ -1467,6 +1554,9 @@ static int model_transform_draw(const void *vertices,const unsigned short *indic
     int reuse=retained && !((model_state_key^key)&31);
     int same_program=retained && !((model_state_key^key)&24);
     float options[4]={uv[0],uv[1],sky?1.f:0.f,reflective?1.f:0.f};
+#if HALO_N3DS_ALGO_BOOLEAN_SELECTORS == N3DS_ALGORITHM_CANDIDATE
+    options[3]=0.f;
+#endif
     if(!reuse) {
       /* A model-program change need not erase texture combiners/samplers.
        * Reinstall only pipeline state; explicit batch flushes still restore
@@ -1528,11 +1618,18 @@ static int model_transform_draw(const void *vertices,const unsigned short *indic
     if(retained_nodes<nodes || memcmp(model_cached_rows,rows,nodes*12*sizeof(float))) {
         /* Keep identical installed vectors when only part of a pose changes.
          * A program/view/origin change still invalidates the entire prefix. */
+#ifdef HALO_N3DS_ALGORITHM_PROFILE
+        unsigned int row_writes=0;
+#endif
         for(unsigned int i=0;i<nodes*3;++i) {
             const float *row=rows+i*4;
             if(i<retained_nodes*3 && !memcmp(model_cached_rows+i*4,row,4*sizeof(float)))continue;
             C3D_FVUnifSet(GPU_VERTEX_SHADER,bone_location+i,row[0],row[1],row[2],row[3]-(sky?0:current_camera.position[i%3]));
+#ifdef HALO_N3DS_ALGORITHM_PROFILE
+            ++row_writes;
+#endif
         }
+        n3ds_algorithm_profile_add(N3DS_ALGORITHM_GPU_MODEL_BONE_ROW_WRITES,row_writes);
         memcpy(model_cached_rows,rows,nodes*12*sizeof(float));
         ++model_palette_uploads;
     } else ++model_palette_reuses;
@@ -1541,14 +1638,19 @@ static int model_transform_draw(const void *vertices,const unsigned short *indic
      * transition. Only preserve that tail within the same rebasing domain. */
     model_cached_nodes=same_palette?(model_cached_nodes>nodes?model_cached_nodes:nodes):nodes;
 
+#if HALO_N3DS_ALGO_BOOLEAN_SELECTORS == N3DS_ALGORITHM_CANDIDATE
+    if(lit && (!same_program || ((model_state_key^key)&32)))
+        C3D_BoolUnifSet(GPU_VERTEX_SHADER,MODEL_REFLECTION_BOOL,reflective);
+#endif
     if(!same_program || memcmp(model_cached_options,options,sizeof(options))) {
         C3D_FVUnifSet(GPU_VERTEX_SHADER,options_location,options[0],options[1],options[2],options[3]);
         memcpy(model_cached_options,options,sizeof(options));
     }
     model_state_key=key;model_state_valid=1;
     unsigned int stride=skinned?sizeof(struct native_skin_vertex):sizeof(struct native_render_vertex);
-    int result=resident_indices?indexed_draw_resident(vertices,indices,count,stride,skinned?4:3,skinned?0x3210:0x210):
-        n3ds_gpu_indexed_draw(vertices,indices,count,stride,skinned?4:3,skinned?0x3210:0x210);
+    unsigned int attributes=skinned?N3DS_SKIN_ATTRIBUTES:3,permutation=skinned?N3DS_SKIN_PERMUTATION:0x210;
+    int result=resident_indices?indexed_draw_resident(vertices,indices,count,stride,attributes,permutation):
+        n3ds_gpu_indexed_draw(vertices,indices,count,stride,attributes,permutation);
     if(!model_batch_active) n3ds_gpu_world_state_restore();
     return result;
 }
@@ -1759,7 +1861,7 @@ static int model_culling_tests(void)
             float x=i==1 || i==2?.8f:-.8f,y=i>=2?.8f:-.8f;
             rigid[i]=(struct native_render_vertex){{path==2?x*rows[0]:x,y,-2},{path==2?1:0,path==2?1:0,1},{.5f,.5f}};
             memcpy(skin+i,rigid+i,sizeof(*rigid));
-            skin[i].bones[0]=0;skin[i].bones[1]=3;skin[i].bones[2]=(i&1)?1.f:.35f;skin[i].bones[3]=(i&1)?0.f:.65f;
+            n3ds_skin_vertex_set_bones(skin+i,0,3,(i&1)?1.f:.35f,(i&1)?0.f:.65f);
         }
         n3ds_gpu_geometry_flush(rigid,4*sizeof(*rigid));n3ds_gpu_geometry_flush(skin,4*sizeof(*skin));
         for(int pass=0;pass<2;++pass) {
@@ -1826,7 +1928,10 @@ int n3ds_gpu_model_material_tests(void)
         }
         for(unsigned int i=0;i<4;++i) {
             float x=i==1 || i==2?.8f:-.8f,y=i>=2?.8f:-.8f;
-            if(test==9) vertices[i]=(struct native_skin_vertex){{x,y,-2},{0,0,1},{.3125f,.6875f},{0,0,1,0}};
+            if(test==9) {
+                vertices[i]=(struct native_skin_vertex){.position={x,y,-2},.normal={0,0,1},.uv={.3125f,.6875f}};
+                n3ds_skin_vertex_set_bones(vertices+i,0,0,1.f,0.f);
+            }
             else ((struct native_render_vertex *)vertices)[i]=(struct native_render_vertex){{x,y,-2},
                 {test==8?0:light[0],test==8?0:light[1],test==8?1:light[2]},{.3125f,.6875f}};
         }
@@ -1893,7 +1998,7 @@ int n3ds_gpu_model_transform_tests(void)
             float p[3]={xy[i][0],xy[i][1],-3},normal[3]={.3f+i*.1f,.4f,.8f},world[3]={0},normal_world[3]={0};
             float weight[2]={skinned?(weight_case==1?1.f:weight_case==2?0.f:test==4?0.f:.35f):1.f,skinned?(weight_case==1?0.f:weight_case==2?1.f:test==4?1.f:.65f):0.f};
             rigid[i]=(struct native_render_vertex){{p[0],p[1],p[2]},{normal[0],normal[1],normal[2]},{i==1 || i==2?.8f:.2f,i>=2?.8f:.2f}};
-            memcpy(&skin[i],&rigid[i],sizeof(rigid[i]));skin[i].bones[0]=0;skin[i].bones[1]=second*3;skin[i].bones[2]=weight[0];skin[i].bones[3]=weight[1];
+            memcpy(&skin[i],&rigid[i],sizeof(rigid[i]));n3ds_skin_vertex_set_bones(skin+i,0,second*3,weight[0],weight[1]);
             for(int k=0;k<2;++k) if(weight[k]) for(int axis=0;axis<3;++axis) {
                 const float *r=rows+(k?second:0)*12+axis*4;
                 world[axis]+=(r[0]*p[0]+r[1]*p[1]+r[2]*p[2]+r[3])*weight[k];
@@ -1973,7 +2078,7 @@ int n3ds_gpu_model_batch_tests(void)
         for(unsigned int i=0;i<4;++i) {
             rigid[i]=(struct native_render_vertex){{i==1 || i==2?.25f:-.25f,i>=2?.25f:-.25f,-3},{0,0,1},{i==1 || i==2?1:0,i>=2?1:0}};
             memcpy(skin+i,rigid+i,sizeof(*rigid));
-            skin[i].bones[0]=0;skin[i].bones[1]=3;skin[i].bones[2]=.4f;skin[i].bones[3]=.6f;
+            n3ds_skin_vertex_set_bones(skin+i,0,3,.4f,.6f);
         }
         const unsigned short *draw_indices=pass?n3ds_gpu_indices_upload(indices,6):indices;
         if(!draw_indices) goto done;
@@ -2050,7 +2155,8 @@ static int model_special_transform(const void *v,const unsigned short *indices,u
         env=C3D_GetTexEnv(1);C3D_TexEnvColor(env,((unsigned int)(fade*255.f+.5f))*0x01010101u);
         C3D_TexEnvSrc(env,C3D_Alpha,GPU_PREVIOUS,GPU_CONSTANT,GPU_CONSTANT);C3D_TexEnvFunc(env,C3D_Alpha,GPU_MODULATE);
     }
-    int result=n3ds_gpu_indexed_draw(v,indices,count,skinned?sizeof(struct native_skin_vertex):sizeof(struct native_render_vertex),skinned?4:3,skinned?0x3210:0x210);
+    int result=n3ds_gpu_indexed_draw(v,indices,count,skinned?sizeof(struct native_skin_vertex):sizeof(struct native_render_vertex),
+        skinned?N3DS_SKIN_ATTRIBUTES:3,skinned?N3DS_SKIN_PERMUTATION:0x210);
     n3ds_gpu_world_state_restore();return result;
 }
 int n3ds_gpu_model_depth_transform_draw(const void *v,const unsigned short *indices,unsigned int count,
@@ -2797,6 +2903,7 @@ static int discard_midpoint_if_rejected(void)
 {
     if (midpoint_state == MIDPOINT_RENDERING && n3ds_presentation_check_midpoint()) {
         extern void n3ds_c3d_discard_frame(void);
+        n3ds_gpu_framebuffer_invalidate();
         n3ds_c3d_discard_frame();
         n3ds_trace_event(N3DS_TRACE_MIDPOINT_CANCEL,n3ds_presentation_reject_reason,0);
         n3ds_algorithm_profile_add(N3DS_ALGORITHM_GPU_CANCELED_MIDPOINTS,1);
@@ -2871,7 +2978,14 @@ void n3ds_gpu_present(void)
      * display buffers by requesting only command-memory flushing below. */
     n3ds_trace_event(N3DS_TRACE_GPU_FRAME_END_BEGIN,GX_CMDLIST_FLUSH,
         (target->used?1u:0u)|(right_target && right_target->used?2u:0u)|(bottom_target->used?4u:0u));
+#ifdef HALO_N3DS_GPU_PROBE
+    u32 probe_submission_before = gpu_probe.recording ? n3ds_c3d_gpu_probe_submission() : 0;
+#endif
+    n3ds_gpu_framebuffer_invalidate();
     C3D_FrameEnd(GX_CMDLIST_FLUSH);
+#ifdef HALO_N3DS_GPU_PROBE
+    if (gpu_probe.recording) gpu_probe_submit(probe_submission_before);
+#endif
     n3ds_trace_event(N3DS_TRACE_GPU_FRAME_END_END,GX_CMDLIST_FLUSH,0);
     n3ds_trace_gpu_poll();
 #ifdef HALO_N3DS_PRESENT_INTERPOLATION
@@ -3151,6 +3265,123 @@ static int capture_stage(const char *name,unsigned int stage)
 int n3ds_gpu_loading_capture(unsigned int stage)
 { return stage>4?1:capture_stage("halo-loading",stage); }
 int n3ds_gpu_screen_quad_capture(void) { return capture_stage("halo-screen",0); }
+#if HALO_N3DS_TEXTURE_COMPARE_FIXTURE == 1
+int n3ds_gpu_texture_compare_capture(unsigned int stage)
+{ return capture_stage("halo-texture-compare",stage); }
+#endif
+
+#if HALO_N3DS_MIDPOINT_CAPTURE_TICK
+enum { CAPTURE_WIDTH=240, CAPTURE_HEIGHT=400, CAPTURE_BYTES=CAPTURE_WIDTH*CAPTURE_HEIGHT*4 };
+static struct {
+    unsigned int tick;
+    int midpoint, valid;
+    float presentation_time;
+    struct native_render_camera culling, rasterizer;
+    C3D_Mtx projection, model_projection;
+} midpoint_capture_view;
+
+void n3ds_gpu_capture_midpoint_view(unsigned int tick,int midpoint,
+    const struct native_render_camera *culling,float presentation_time)
+{
+    midpoint_capture_view.valid=frame_active && !bottom_selected && !eye_right && !world_low_active;
+    if(!midpoint_capture_view.valid)return;
+    midpoint_capture_view.tick=tick;
+    midpoint_capture_view.midpoint=midpoint;
+    midpoint_capture_view.culling=*culling;
+    midpoint_capture_view.rasterizer=current_camera;
+    midpoint_capture_view.presentation_time=presentation_time;
+    midpoint_capture_view.projection=current_projection;
+    midpoint_capture_view.model_projection=current_model_projection;
+}
+
+static void midpoint_capture_camera_bits(u32 *words,const struct native_render_camera *camera)
+{
+    const float clip[3]={camera->vertical_fov,camera->near_clip,camera->far_clip};
+    memcpy(words,camera->position,sizeof(camera->position));
+    memcpy(words+3,camera->forward,sizeof(camera->forward));
+    memcpy(words+6,camera->up,sizeof(camera->up));
+    memcpy(words+9,clip,sizeof(clip));
+}
+
+int n3ds_gpu_capture_midpoint_image(unsigned int tick,int midpoint)
+{
+    static unsigned long long capture_id;
+    static unsigned int pending_tick;
+    static int pending;
+    extern int n3ds_c3d_capture_wait_idle(void);
+    extern int n3ds_c3d_capture_transfer(u32 *,u32 *,u32,u32,int);
+    if(midpoint && !midpoint_submitted)return 0;
+    if(!midpoint && (!pending || pending_tick!=tick))return -1;
+    pending=0;
+    if(frame_active || !target || aptShouldClose() || !gspHasGpuRight() ||
+       !midpoint_capture_view.valid || midpoint_capture_view.tick!=tick ||
+       midpoint_capture_view.midpoint!=midpoint || !n3ds_c3d_capture_wait_idle())return -1;
+    midpoint_capture_view.valid=0;
+    const C3D_FrameBuf *fb=&target->frameBuf;
+    if(!fb->colorBuf || !fb->depthBuf || fb->width!=CAPTURE_WIDTH || fb->height!=CAPTURE_HEIGHT ||
+       fb->colorFmt!=GPU_RB_RGBA8 || fb->depthFmt!=GPU_RB_DEPTH24_STENCIL8 ||
+       C3D_CalcDepthBufSize(fb->width,fb->height,fb->depthFmt)!=CAPTURE_BYTES)return -1;
+    if(midpoint)capture_id=svcGetSystemTick();
+    u32 *pixels=linearAlloc(CAPTURE_BYTES);
+    if(!pixels)return -1;
+    const char *view=midpoint?"midpoint":"regular";
+    char path[112];
+    for(int depth=0;depth<2;++depth) {
+        if(R_FAILED(GSPGPU_FlushDataCache(pixels,CAPTURE_BYTES)) || aptShouldClose() || !gspHasGpuRight()) {
+            linearFree(pixels);
+            return -1;
+        }
+        int retired=n3ds_c3d_capture_transfer(depth?fb->depthBuf:fb->colorBuf,pixels,
+            GX_BUFFER_DIM(CAPTURE_WIDTH,CAPTURE_HEIGHT),CAPTURE_BYTES,depth);
+        if(retired<0) {
+            n3ds_log("MIDPOINT CAPTURE FAIL: transfer queue did not retire; destination retained");
+            return -1;
+        }
+        if(!retired || R_FAILED(GSPGPU_InvalidateDataCache(pixels,CAPTURE_BYTES))) {
+            linearFree(pixels);
+            return -1;
+        }
+        snprintf(path,sizeof(path),"sdmc:/halo-pair-%016llx-%u-%s.%s",capture_id,tick,view,depth?"d24s8":"rgba");
+        if(loading_write_capture(path,pixels,CAPTURE_BYTES)) {
+            remove(path);linearFree(pixels);return -1;
+        }
+    }
+    linearFree(pixels);
+
+    /* Fixed little-endian word layout. Avoid pointer or struct padding bytes. */
+    _Static_assert(sizeof(float)==4 && sizeof(C3D_Mtx)==16*4,"Capture float/matrix format");
+    u32 camera[65]={0};
+    memcpy(camera,"H2DSCAM1",8);
+    camera[2]=tick;camera[3]=(u32)midpoint;camera[4]=fb->width;camera[5]=fb->height;
+    camera[6]=fb->depthFmt;camera[7]=fb->block32;
+    memcpy(camera+8,&midpoint_capture_view.presentation_time,4);
+    midpoint_capture_camera_bits(camera+9,&midpoint_capture_view.culling);
+    midpoint_capture_camera_bits(camera+21,&midpoint_capture_view.rasterizer);
+    memcpy(camera+33,&midpoint_capture_view.projection,sizeof(C3D_Mtx));
+    memcpy(camera+49,&midpoint_capture_view.model_projection,sizeof(C3D_Mtx));
+    snprintf(path,sizeof(path),"sdmc:/halo-pair-%016llx-%u-%s.camera",capture_id,tick,view);
+    if(loading_write_capture(path,camera,sizeof(camera))) {remove(path);return -1;}
+
+    if(midpoint) {
+        pending_tick=tick;
+        pending=1;
+    } else {
+        char temporary[112],receipt[256];
+        snprintf(path,sizeof(path),"sdmc:/halo-pair-%016llx-%u-complete.json",capture_id,tick);
+        snprintf(temporary,sizeof(temporary),"sdmc:/halo-pair-%016llx-%u-complete.tmp",capture_id,tick);
+        int length=snprintf(receipt,sizeof(receipt),
+            "{\"schema\":1,\"capture_id\":\"%016llx\",\"tick\":%u,\"width\":%u,\"height\":%u,"
+            "\"rgba_bytes\":%u,\"d24s8_bytes\":%u,\"camera_bytes\":%u,\"views\":[\"midpoint\",\"regular\"]}\n",
+            capture_id,tick,CAPTURE_WIDTH,CAPTURE_HEIGHT,CAPTURE_BYTES,CAPTURE_BYTES,(unsigned int)sizeof(camera));
+        if(length<0 || (unsigned int)length>=sizeof(receipt) ||
+           loading_write_capture(temporary,receipt,length) || rename(temporary,path)) {
+            remove(temporary);return -1;
+        }
+        n3ds_log(path);
+    }
+    return 1;
+}
+#endif
 
 int n3ds_gpu_readback(unsigned int *pixels,unsigned int count)
 {
@@ -3339,7 +3570,7 @@ int n3ds_gpu_model_lighting_tests(void)
         for(int i=0;i<4;++i) {
             rigid[i]=(struct native_render_vertex){{i==1 || i==2?.8f:-.8f,i>=2?.8f:-.8f,-2},{0,0,0},{.5f,.5f}};
             memcpy(rigid[i].color,normals[n],12);memcpy(skin+i,rigid+i,sizeof(*rigid));
-            skin[i].bones[0]=0;skin[i].bones[1]=3;skin[i].bones[2]=(i&1)?1.f:.35f;skin[i].bones[3]=(i&1)?0.f:.65f;
+            n3ds_skin_vertex_set_bones(skin+i,0,3,(i&1)?1.f:.35f,(i&1)?0.f:.65f);
         }
         n3ds_gpu_geometry_flush(skin,4*sizeof(*skin));n3ds_gpu_geometry_flush(rigid,4*sizeof(*rigid));
         struct native_render_camera camera={.forward={0,0,-1},.up={0,1,0},.vertical_fov=1,.near_clip=.1f,.far_clip=100,.clear_color=0x102030ff};
@@ -3416,7 +3647,7 @@ int n3ds_gpu_model_detail_tests(void)
         }
         for(int i=0;i<4;++i) {
             rigid[i]=(struct native_render_vertex){{i==1 || i==2?.8f:-.8f,i>=2?.8f:-.8f,-2},{0,0,1},{.1875f,.1875f}};
-            memcpy(skin+i,rigid+i,sizeof(*rigid));skin[i].bones[0]=0;skin[i].bones[1]=84;skin[i].bones[2]=(i&1)?1.f:.35f;skin[i].bones[3]=(i&1)?0.f:.65f;
+            memcpy(skin+i,rigid+i,sizeof(*rigid));n3ds_skin_vertex_set_bones(skin+i,0,84,(i&1)?1.f:.35f,(i&1)?0.f:.65f);
         }
         n3ds_gpu_geometry_flush(rigid,4*sizeof(*rigid));n3ds_gpu_geometry_flush(skin,4*sizeof(*skin));
         float rows[NATIVE_GPU_MODEL_BONES*12]={0},offscreen[NATIVE_GPU_MODEL_BONES*12]={0};
@@ -3492,7 +3723,7 @@ int n3ds_gpu_model_reflection_tests(void)
         for(int i=0;i<4;++i) {
             rigid[i]=(struct native_render_vertex){{i==1 || i==2?.8f:-.8f,i>=2?.8f:-.8f,-2},{0,0,0},{.5f,.5f}};
             memcpy(rigid[i].color,normal,12);memcpy(skin+i,rigid+i,sizeof(*rigid));
-            skin[i].bones[0]=0;skin[i].bones[1]=(NATIVE_GPU_MODEL_BONES-1)*3;skin[i].bones[2]=(i&1)?1.f:.35f;skin[i].bones[3]=(i&1)?0.f:.65f;
+            n3ds_skin_vertex_set_bones(skin+i,0,(NATIVE_GPU_MODEL_BONES-1)*3,(i&1)?1.f:.35f,(i&1)?0.f:.65f);
         }
         n3ds_gpu_geometry_flush(rigid,4*sizeof(*rigid));n3ds_gpu_geometry_flush(skin,4*sizeof(*skin));
         float rows[NATIVE_GPU_MODEL_BONES*12]={0};
@@ -3648,8 +3879,12 @@ static int water_draw(const struct native_render_vertex *vertices,const unsigned
     surface_vector(water_program.delta,delta,surface_uniforms.delta,retained);
     surface_vector(water_program.parallel,m->parallel,surface_uniforms.parallel,retained);
     if(!retained || surface_uniforms.waves!=!!m->wave_phase) {
+#if HALO_N3DS_ALGO_BOOLEAN_SELECTORS == N3DS_ALGORITHM_CANDIDATE
+        C3D_BoolUnifSet(GPU_VERTEX_SHADER,WATER_WAVES_BOOL,m->wave_phase!=NULL);
+#else
         C3D_FVUnifSet(GPU_VERTEX_SHADER,water_program.wave_switch,m->wave_phase?1.f:0.f,0,0,0);
-        C3D_SetAttrInfo(&model_attributes[m->wave_phase!=NULL]);
+#endif
+        C3D_SetAttrInfo(m->wave_phase?&water_wave_attributes:&model_attributes[0]);
     }
     if(m->wave_phase)surface_vector(water_program.wave_phase,m->wave_phase,surface_uniforms.phase,retained && surface_uniforms.waves);
     if(!retained || surface_uniforms.sky!=m->sky)
@@ -3709,8 +3944,15 @@ int n3ds_gpu_glass_native_sky_draw(const struct native_render_vertex *vertices,
         surface_vector(glass_program.pose+i,m->pose+i*4,surface_uniforms.pose+i*4,retained && surface_uniforms.has_pose);
     if(!retained || surface_uniforms.sides!=m->two_sided)C3D_CullFace(m->two_sided?GPU_CULL_NONE:GPU_CULL_FRONT_CCW);
     if(!retained || surface_uniforms.sky!=sky)C3D_DepthTest(!sky,GPU_GEQUAL,GPU_WRITE_COLOR & ~GPU_WRITE_ALPHA);
+#if HALO_N3DS_ALGO_BOOLEAN_SELECTORS == N3DS_ALGORITHM_CANDIDATE
+    if(!retained || surface_uniforms.has_pose!=!!m->pose)
+        C3D_BoolUnifSet(GPU_VERTEX_SHADER,GLASS_RIGID_BOOL,m->pose!=NULL);
+#endif
     surface_uniforms.sides=m->two_sided;surface_uniforms.sky=sky;surface_uniforms.has_pose=!!m->pose;surface_state_mode=2;
     float options[4]={0,!!m->pose,m->uv_scale[0],m->uv_scale[1]};
+#if HALO_N3DS_ALGO_BOOLEAN_SELECTORS == N3DS_ALGORITHM_CANDIDATE
+    options[1]=0.f;
+#endif
     int ok=1;
     if(m->cube || (m->tint&0xffffffu)!=0xffffffu) {
         /* Constant destination tint combines the old multiply and additive
@@ -3721,7 +3963,9 @@ int n3ds_gpu_glass_native_sky_draw(const struct native_render_vertex *vertices,
         ok=indexed_draw_resident(vertices,indices,count,sizeof(*vertices),3,0x210);
     }
     if(ok && m->diffuse) {
+#if HALO_N3DS_ALGO_BOOLEAN_SELECTORS == N3DS_ALGORITHM_REFERENCE
         options[0]=1;
+#endif
         surface_vector(glass_program.options,options,surface_uniforms.options,retained || surface_pass!=0);
         surface_glass_pass(1,m->tint);
         ok=indexed_draw_resident(vertices,indices,count,sizeof(*vertices),3,0x210);

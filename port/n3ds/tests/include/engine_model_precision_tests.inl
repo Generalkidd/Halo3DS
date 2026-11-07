@@ -72,7 +72,7 @@ int n3ds_gpu_model_precision_tests(void)
    if(!n3ds_gpu_frame_begin())goto done;active=1;n3ds_gpu_window_begin(&cam);
    struct native_render_vertex rigid[4]={{{-1,-1,-3},{0,0,1},{0,0}},{{1,-1,-3},{0,0,1},{1,0}},{{1,1,-3},{0,0,1},{1,1}},{{-1,1,-3},{0,0,1},{0,1}}};
    struct native_skin_vertex skin[4];
-   for(int i=0;i<4;++i){memcpy(skin+i,rigid+i,sizeof(*rigid));skin[i].bones[0]=0;skin[i].bones[1]=3;skin[i].bones[2]=.75f;skin[i].bones[3]=.25f;}
+   for(int i=0;i<4;++i){memcpy(skin+i,rigid+i,sizeof(*rigid));n3ds_skin_vertex_set_bones(skin+i,0,3,.75f,.25f);}
    float rows[24]={1,0,0,origin,0,1,0,-origin,0,0,1,origin, 1,0,0,origin+.25f,0,1,0,-origin+.125f,0,0,1,origin};
    struct native_model_lighting light={.ambient={.25f,.3f,.35f},.distant={{{.5f,.5f,.5f},{0,0,1}}},.count=1};
    struct native_model_material material={.base=texture,.lighting=lit?&light:NULL};

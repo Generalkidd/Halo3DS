@@ -1,6 +1,7 @@
 #ifndef HALO_N3DS_ENGINE_RENDERER_H
 #define HALO_N3DS_ENGINE_RENDERER_H
 #include "engine_renderer_features.h"
+#include "engine_model_vertex.h"
 /* Matches skin.v.pica: 87 bone vectors leave room for camera and constants. */
 enum { NATIVE_GPU_MODEL_BONES = 29 };
 #if defined(HALO_N3DS_PERFORMANCE_PROFILE) || defined(HALO_N3DS_PRESENT_INTERPOLATION)
@@ -8,12 +9,29 @@ enum { NATIVE_GPU_MODEL_BONES = 29 };
 #define N3DS_TOP_REFRESH_MS (1000.0 / 59.831)
 #endif
 struct native_render_vertex;
+#ifdef HALO_N3DS_GPU_PROBE
+struct native_gpu_probe_view {
+    unsigned int generation;
+    int tick, bsp;
+    /* Render/rasterizer position, forward, up, vertical FOV and clip planes. */
+    float camera[2][12];
+    short bounds[2][8];
+};
+void n3ds_gpu_probe_view(const struct native_gpu_probe_view *view, int chord_held);
+void n3ds_gpu_probe_terrain(int terrain);
+#endif
 void n3ds_gpu_world_budget(int enabled);
 struct native_screen_effect {float enhancement,desaturation,tint[3],noise;int additive,video,video_overbright;};
 void n3ds_gpu_screen_effect(const struct native_screen_effect *);
 void n3ds_gpu_frame_work(float milliseconds);
 void n3ds_gpu_world_view_begin(void);
 void n3ds_gpu_world_resolve(void);
+#ifdef HALO_N3DS_FRAMEBUFFER_REUSE
+/* Before a render-target clear, command-list split or external target bind. */
+void n3ds_gpu_framebuffer_invalidate(void);
+#else
+#define n3ds_gpu_framebuffer_invalidate() ((void)0)
+#endif
 int n3ds_gpu_world_pressure(void);
 float n3ds_gpu_world_pixel_scale(void);
 int n3ds_gpu_stereo_view(void);
@@ -70,7 +88,6 @@ int n3ds_gpu_model_lighting_tests(void);
 /* Rigid input stores a local normal in color; rows are scaled bone XYZ rows. */
 int n3ds_gpu_model_rigid_draw(const struct native_render_vertex *,const unsigned short *,unsigned int,
     const float rows[12],const float uv[2],int sky,int decal,int two_sided,const struct native_model_material *);
-struct native_skin_vertex { float position[3],normal[3],uv[2],bones[4]; };
 int n3ds_gpu_model_skin_draw(const struct native_skin_vertex *,const unsigned short *,unsigned int,
     const float *rows,unsigned int nodes,const float uv[2],int sky,int decal,int two_sided,const struct native_model_material *);
 int n3ds_gpu_model_scenery_draw_resident(const void *,const unsigned short *,unsigned int,
@@ -179,6 +196,12 @@ void n3ds_gpu_loading_pulse(float progress,int force);
 void n3ds_gpu_loading_enable(int enabled);
 unsigned int n3ds_gpu_loading_submissions(void);
 int n3ds_gpu_loading_capture(unsigned int stage);
+#if HALO_N3DS_MIDPOINT_CAPTURE_TICK
+void n3ds_gpu_capture_midpoint_view(unsigned int tick,int midpoint,
+    const struct native_render_camera *culling,float presentation_time);
+/* 1 captured (regular commits the pair), 0 midpoint lacked a top submission, -1 failure. */
+int n3ds_gpu_capture_midpoint_image(unsigned int tick,int midpoint);
+#endif
 int n3ds_gpu_screen_quad_capture(void);
 void *n3ds_gpu_geometry_allocate(unsigned int bytes);
 /* Optional visual data leaves 2 MiB of linear headroom for gameplay. */

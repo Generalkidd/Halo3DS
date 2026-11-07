@@ -2,6 +2,7 @@
 #include "cache_reader.h"
 #include "cache_build_compatibility.h"
 #include "engine_cache.h"
+#include "engine_renderer_features.h"
 #include "engine_textures.h"
 #include "engine_algorithm_profile.h"
 #include "engine_dependency_trace.h"
@@ -335,9 +336,14 @@ long n3ds_engine_tags_load(const char *name)
     n3ds_trace_location(native_cache_generation,NONE);
     strcpy(native_map, path);
     strcpy(native_name, base);
+#if HALO_N3DS_GEOMETRY_SOURCE == N3DS_GEOMETRY_SOURCE_COOKED
+    extern void n3ds_model_geometry_load(const char *,const struct n3ds_cache_view *);
+    n3ds_model_geometry_load(native_name,&native_tags);
+#endif
     assert(!native_read_stream);
     native_stream_opens=native_stream_reads=native_stream_bytes=0;
     cache_files_bind_native(&native_tags.header, native_tags.tag_header);
+    n3ds_engine_world_texture_map_loaded();
     return native_tags.tag_header->scenario_tag_index;
 }
 

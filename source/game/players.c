@@ -228,6 +228,9 @@ symbols in this file:
 /* ---------- headers */
 
 #include "cseries.h"
+#if defined(HALO_N3DS) && HALO_N3DS_ACTION_REPLAY
+#include "engine_action_replay.h"
+#endif
 #include "cseries/profile.h"
 #include "ai/ai.h"
 #include "ai/ai_debug.h"
@@ -3375,7 +3378,17 @@ void players_update_before_game(
 	short action_index;
 
 	profile_enter(PLAYERS_UPDATE_BEFORE_GAME_PROFILE);
+#if defined(HALO_N3DS) && HALO_N3DS_ACTION_REPLAY
+	boolean dequeued = n3ds_action_replay_apply(actions, NUMBEROF(actions), update_client_dequeue(actions));
+	if (n3ds_action_replay_failed())
+	{
+		profile_exit(PLAYERS_UPDATE_BEFORE_GAME_PROFILE);
+		return;
+	}
+	if (dequeued)
+#else
 	if (update_client_dequeue(actions))
+#endif
 	{
 		data_iterator_new(&iterator, player_data);
 		while (player = data_iterator_next(&iterator))

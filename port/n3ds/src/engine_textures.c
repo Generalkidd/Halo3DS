@@ -8,6 +8,7 @@
 #include "engine_cache.h"
 #include "engine_textures.h"
 #include "engine_renderer_features.h"
+#include "engine_algorithm_profile.h"
 #include "engine_presentation.h"
 #include "engine_texture_prefetch.h"
 #include "engine_bitmaps.h"
@@ -17,6 +18,9 @@
 #include "rasterizer/rasterizer_swizzle.h"
 #include "engine_lightmap_filter.inl"
 #include "engine_display_textures.inl"
+#if HALO_N3DS_TEXTURE_COMPARE
+#include "../vendor/lz4/lz4.h"
+#endif
 
 enum { NATIVE_GAME_TEXTURE_SLOTS = 256, NATIVE_TEXTURE_SLOTS = 512,
     NATIVE_TEXTURE_BUDGET = 4*1024*1024, NATIVE_MENU_TEXTURE_BUDGET = 8*1024*1024,
@@ -36,6 +40,12 @@ unsigned int n3ds_engine_texture_presentation_revision(void)
 }
 #endif
 static unsigned int texture_resolution = 128;
+static enum n3ds_world_texture_mode world_texture_pending=N3DS_WORLD_TEXTURE_32_MIPS;
+static enum n3ds_world_texture_mode world_texture_mode=N3DS_WORLD_TEXTURE_32_MIPS;
+static unsigned int world_texture_generation;
+static boolean world_texture_generation_valid;
+static boolean world_texture_retail_b30;
+static unsigned int world_mip_loads,world_rgb8_loads;
 static boolean initialized, opened;
 /* Layout is also addressed byte-by-byte by the original script globals. */
 boolean debug_texture_cache;
@@ -93,11 +103,14 @@ static void *texture_scratch(unsigned int bytes,boolean *linear)
             if(reported++<3) {char message[96];snprintf(message,sizeof(message),"TEXTURE SCRATCH: linear fallback bytes=%u",bytes);n3ds_log(message);}
         }
     }
-    if(!result) TEXTURE_PROFILE(++texture_profile.allocation_failures);
+    if(result)n3ds_algorithm_profile_staging_acquire(bytes);
+    else TEXTURE_PROFILE(++texture_profile.allocation_failures);
     return result;
 }
-static void texture_scratch_free(void *pointer,boolean linear)
+static void texture_scratch_free(void *pointer,boolean linear,unsigned int bytes)
 {
+    (void)bytes;
+    if(pointer)n3ds_algorithm_profile_staging_release(bytes);
     if(linear) n3ds_cache_linear_release(pointer);else free(pointer);
 }
 
@@ -107,6 +120,46 @@ static boolean menu_cache(void)
 {
     const struct n3ds_cache_view *view=n3ds_engine_cache_view(0);
     return view && view->tags && !strcmp(view->header.name,"ui");
+}
+static boolean world_texture_enabled(void)
+{
+#if N3DS_RENDERER_VALIDATION_CONFIGURED || HALO_N3DS_TEXTURE_COMPARE
+    return FALSE;
+#else
+    const struct n3ds_cache_view *view=n3ds_engine_cache_view(0);
+    return view && view->tags && strcmp(view->header.name,"ui") && !n3ds_input_platform_original_model();
+#endif
+}
+int n3ds_engine_world_texture_request(enum n3ds_world_texture_mode mode)
+{
+    if((unsigned int)mode>N3DS_WORLD_TEXTURE_32_MIPS ||
+       (n3ds_input_platform_original_model() && mode!=N3DS_WORLD_TEXTURE_32_MIPS)) return 0;
+    world_texture_pending=mode;
+    return 1;
+}
+enum n3ds_world_texture_mode n3ds_engine_world_texture_requested(void) {return world_texture_pending;}
+enum n3ds_world_texture_mode n3ds_engine_world_texture_active(void) {return world_texture_mode;}
+void n3ds_engine_world_texture_map_loaded(void)
+{
+    if(!world_texture_enabled()) return;
+    unsigned int generation=n3ds_engine_tag_generation();
+    if(world_texture_generation_valid && generation==world_texture_generation) return;
+    /* Full map teardown already fenced and cleared the old owners. */
+    assert(!texture_count);
+    const struct n3ds_cache_view *view=n3ds_engine_cache_view(0);
+    world_texture_generation=generation;
+    world_texture_generation_valid=TRUE;
+    world_texture_mode=world_texture_pending;
+    /* Exact RGB8 is restricted to known retail world detail inputs. Check
+     * the live header and validated original tag CRC without rereading a map. */
+    world_texture_retail_b30=!strcmp(view->header.name,"b30") &&
+        view->header.file_length==224887296 && view->source_tags_crc==0x2658d8b1u &&
+        texture_hash(&view->header,sizeof(view->header))==0x9fd68e08u;
+    char message[128];
+    snprintf(message,sizeof(message),"WORLD TEXTURES: map=%s mode=%u cap=%u",
+        view->header.name,(unsigned int)world_texture_mode,
+        world_texture_mode==N3DS_WORLD_TEXTURE_32_MIPS?32u:64u);
+    n3ds_log(message);
 }
 static int texture_large_budget(void)
 {
@@ -276,13 +329,15 @@ static int texture_make_room_allocated(unsigned int bytes,int allocated)
     return 1;
 }
 static int texture_make_room(unsigned int bytes) {return texture_make_room_allocated(bytes,0);}
-static void *texture_publish(struct bitmap_data *bitmap,void *resource,unsigned int bytes,int speculative)
+static void *texture_publish(struct bitmap_data *bitmap,void *resource,
+    const struct native_texture_descriptor *descriptor,int speculative)
 {
+    unsigned int bytes=descriptor->resident_bytes;
     unsigned int budget=texture_budget();
     if(!resource || bytes>budget || texture_bytes>budget-bytes || texture_count>=texture_slot_limit()) return NULL;
     unsigned int slot;
     for(slot=0;slot<NATIVE_TEXTURE_SLOTS && entries[slot].bitmap;++slot) {}
-    if(slot==NATIVE_TEXTURE_SLOTS || !n3ds_gpu_texture_finalize(resource)) return NULL;
+    if(slot==NATIVE_TEXTURE_SLOTS || !n3ds_gpu_texture_finalize_descriptor(resource,descriptor)) return NULL;
     n3ds_gpu_texture_publish_immutable(resource);
     entries[slot]=(struct native_texture_entry){bitmap,resource,bytes,speculative?texture_frame-3u:texture_frame};
     bitmap->hardware_format=resource;bitmap->cache_block_index=slot;bitmap->base_address=NULL;
@@ -294,6 +349,13 @@ void texture_cache_flush(void)
     unsigned int i;
     texture_prefetch_clear(1);
     texture_archive_close();
+    if(world_mip_loads || world_rgb8_loads) {
+        char message[120];
+        snprintf(message,sizeof(message),"WORLD DETAIL TEXTURES: authored_mip_loads=%u rgb8_loads=%u",
+            world_mip_loads,world_rgb8_loads);
+        n3ds_log(message);
+        world_mip_loads=world_rgb8_loads=0;
+    }
     memset(pending, 0, sizeof(pending));
     pending_limit=0;
     if (!texture_count) return;
@@ -362,7 +424,10 @@ void texture_cache_idle(void)
 #ifdef HALO_N3DS_PRESENT_INTERPOLATION
         if(!n3ds_presentation_midpoint_active())
 #endif
+        {
+            n3ds_engine_world_texture_map_loaded();
             texture_archive_open();
+        }
     }
     /* Reclaim old working sets only between frames and after the GPU fence.
      * Never evict a texture referenced by this or the preceding frame. */
@@ -628,6 +693,7 @@ static void *load_cube_now(struct bitmap_data *bitmap,enum texture_lane lane)
     byte *source=NULL;struct native_texture_span images[6];
     void *resource=NULL,*reserved=n3ds_gpu_texture_reserve_descriptor(&native,images);
     if(!reserved) {TEXTURE_PROFILE(++texture_profile.allocation_failures);return NULL;}
+    n3ds_algorithm_profile_staging_acquire(output_bytes);
     source=texture_scratch(layout.bytes,&source_linear);
     if(!source) goto done;
 #ifdef HALO_N3DS_PRESENT_INTERPOLATION
@@ -647,17 +713,20 @@ static void *load_cube_now(struct bitmap_data *bitmap,enum texture_lane lane)
         if(!cube_decode_face(&layout,bitmap->format,source,images[face].data)) goto done;
         TEXTURE_PROFILE(texture_load_profile(lane)->decode_ticks+=n3ds_engine_ticks()-start);
     }
-    texture_scratch_free(source,source_linear);source=NULL;source_linear=FALSE;
+    texture_scratch_free(source,source_linear,layout.bytes);source=NULL;source_linear=FALSE;
 #if HALO_N3DS_TEXTURE_PROFILE
     long long start=n3ds_engine_ticks();
 #endif
-    resource=texture_publish(bitmap,reserved,output_bytes,lane==TEXTURE_PREFETCH);
+    resource=texture_publish(bitmap,reserved,&native,lane==TEXTURE_PREFETCH);
     TEXTURE_PROFILE(texture_load_profile(lane)->upload_ticks+=n3ds_engine_ticks()-start);
     if(!resource) goto done;
     reserved=NULL;
     {char message[192];snprintf(message,sizeof(message),"NATIVE CUBE TEXTURE: tag=%08lx format=%d side=%u mip=%u face_stride=%u native=%u bytes=%u",bitmap->tag_index,bitmap->format,layout.side,layout.level,layout.stride,layout.target,output_bytes);n3ds_log(message);}
 done:
-    texture_scratch_free(source,source_linear);n3ds_gpu_texture_abandon(reserved);return resource;
+    texture_scratch_free(source,source_linear,layout.bytes);
+    n3ds_gpu_texture_abandon(reserved);
+    n3ds_algorithm_profile_staging_release(output_bytes);
+    return resource;
 }
 #ifdef HALO_N3DS_TEXTURE_PRESSURE_TEST
 static int texture_pressure_tests(void)
@@ -724,6 +793,8 @@ struct bitmap_plan {
     unsigned int source_offset, bytes, width, height, target_width, target_height;
     unsigned int resolution, display_resolution, level;
     int format, raw, lightmap;
+    unsigned int detail_levels;
+    boolean detail_rgb8;
     struct native_texture_descriptor native;
 };
 
@@ -731,6 +802,11 @@ static int bitmap_plan(const struct bitmap_data *bitmap,struct bitmap_plan *plan
 {
     unsigned int width,height,target_width,target_height,level,skip,bytes,block_bytes,output_bytes;
     unsigned int resolution=texture_resolution,display_resolution=0;
+    boolean world=world_texture_enabled(),detail=FALSE,compact=FALSE;
+    if(world) {
+        n3ds_engine_world_texture_map_loaded();
+        resolution=world_texture_mode==N3DS_WORLD_TEXTURE_32_MIPS?32:64;
+    }
     int lightmap=0;
     int raw=(bitmap->format>=0 && bitmap->format<=3) || bitmap->format==6 ||
         (bitmap->format>=8 && bitmap->format<=11) || bitmap->format==17;
@@ -774,6 +850,14 @@ static int bitmap_plan(const struct bitmap_data *bitmap,struct bitmap_plan *plan
             }
             else if(!strcmp(tag->name,"ui\\shell\\main_menu\\halo_logo")) resolution=512;
         }
+        detail=world && group->usage==3 && group->type==0 && !display_resolution &&
+            strncmp(tag->name,"ui\\",3) && (bitmap->format==1 || bitmap->format==6 ||
+                bitmap->format==10 || bitmap->format==14);
+        if(detail && world_texture_retail_b30 && bitmap->format==14) {
+            unsigned int offset=(const byte *)bitmap-view->tags;
+            compact=(offset==0xef23b0 && !strcmp(tag->name,"levels\\b30\\bitmaps\\detail sand")) ||
+                (offset==0xef2e84 && !strcmp(tag->name,"levels\\b30\\bitmaps\\detail cliff rock"));
+        }
     }
     if (bitmap->signature != 'bitm' || !(bitmap->flags & 0x80) ||
         (!!(bitmap->flags&4)!=(bitmap->format==17)) ||
@@ -801,10 +885,20 @@ static int bitmap_plan(const struct bitmap_data *bitmap,struct bitmap_plan *plan
     bytes = raw ? width*height*pixel_stride : ((width+3)/4)*((height+3)/4)*block_bytes;
     if (skip > (unsigned)bitmap->pixels_size || bytes > (unsigned)bitmap->pixels_size-skip ||
         bitmap->pixels_offset < 2048 || (unsigned)bitmap->pixels_offset > 0x7fffffffU-skip) return 0;
+    unsigned int detail_levels=1;
+    if(width!=target_width || height!=target_height) detail=compact=FALSE;
+    if(detail && world_texture_mode!=N3DS_WORLD_TEXTURE_64_SINGLE) {
+        unsigned int side=MIN(width,height);
+        while(side>=16 && level+detail_levels<=(unsigned int)bitmap->mipmap_count) {
+            side>>=1;
+            ++detail_levels;
+        }
+    }
     *plan=(struct bitmap_plan){.source_offset=(unsigned int)bitmap->pixels_offset+skip,.bytes=bytes,
         .width=width,.height=height,.target_width=target_width,.target_height=target_height,
         .resolution=resolution,.display_resolution=display_resolution,.level=level,
-        .format=bitmap->format,.raw=raw,.lightmap=lightmap};
+        .format=bitmap->format,.raw=raw,.lightmap=lightmap,
+        .detail_levels=detail_levels,.detail_rgb8=compact};
     /* Descriptor records the exact selected source and the bounded fallback
      * scratch. Archives write straight into the same reserved RGBA8 image. */
     return n3ds_texture_descriptor_rgba8(&plan->native,target_width,target_height,1,level,bytes,
@@ -825,7 +919,7 @@ static int bitmap_decode_sampled(const struct bitmap_plan *plan,const byte *sour
 static void *bitmap_publish(struct bitmap_data *bitmap,const struct bitmap_plan *plan,void *reserved,
     int speculative)
 {
-    void *resource=texture_publish(bitmap,reserved,plan->native.resident_bytes,speculative);
+    void *resource=texture_publish(bitmap,reserved,&plan->native,speculative);
     if(!resource) return NULL;
     if(plan->display_resolution) {
         const struct n3ds_cache_view *view=n3ds_engine_cache_view(0);
@@ -838,11 +932,203 @@ static void *bitmap_publish(struct bitmap_data *bitmap,const struct bitmap_plan 
     return resource;
 }
 
+static int bitmap_detail_dxt1_opaque(const byte *source,unsigned int bytes)
+{
+    for(unsigned int offset=0;offset<bytes;offset+=8) {
+        const byte *block=source+offset;
+        unsigned int first=block[0]|(unsigned int)block[1]<<8;
+        unsigned int second=block[2]|(unsigned int)block[3]<<8;
+        if(first>second) continue;
+        /* In DXT1's three-color mode only index 3 is transparent. */
+        for(unsigned int i=4;i<8;++i) if(block[i]&(block[i]>>1)&0x55) return 0;
+    }
+    return 1;
+}
+
+static int bitmap_decode_detail(const struct bitmap_plan *base,const byte *source,byte *destination,
+    unsigned int *rgb8_scratch)
+{
+    struct bitmap_plan mip=*base;
+    for(unsigned int level=0;level<base->detail_levels;++level) {
+        unsigned int pixels=mip.width*mip.height;
+        mip.native.resident_bytes=pixels*4;
+        unsigned int *rgba=rgb8_scratch?rgb8_scratch:(unsigned int *)destination;
+        if(!bitmap_decode_sampled(&mip,source,rgba,NULL)) return 0;
+        if(rgb8_scratch) {
+            /* PICA RGB8 preserves the canonical B,G,R bytes and implies
+             * opaque alpha. Opacity was checked before this allocation. */
+            for(unsigned int i=0;i<pixels;++i) {
+                unsigned int pixel=rgba[i];
+                *destination++=(byte)(pixel>>8);
+                *destination++=(byte)(pixel>>16);
+                *destination++=(byte)(pixel>>24);
+            }
+        } else destination+=mip.native.resident_bytes;
+        source+=mip.bytes;
+        mip.bytes>>=2;
+        mip.target_width=mip.width>>=1;
+        mip.target_height=mip.height>>=1;
+    }
+    return 1;
+}
+
+static void *load_bitmap_detail(struct bitmap_data *bitmap,const struct bitmap_plan *base,
+    enum texture_lane lane,int allow_eviction)
+{
+    unsigned int source_bytes=0;
+    for(unsigned int level=0;level<base->detail_levels;++level) source_bytes+=base->bytes>>(2*level);
+    unsigned int skip=base->source_offset-(unsigned int)bitmap->pixels_offset;
+    if(source_bytes>(unsigned int)bitmap->pixels_size-skip) return NULL;
+
+    struct bitmap_plan plan=*base;
+    unsigned int format=base->detail_rgb8?NATIVE_TEXTURE_FORMAT_RGB8:NATIVE_TEXTURE_FORMAT_RGBA8;
+    if(!n3ds_texture_descriptor_mip_chain(&plan.native,format,base->detail_levels)) return NULL;
+    unsigned int output_bytes=plan.native.resident_bytes;
+    unsigned int scratch_bytes=source_bytes+(base->detail_rgb8?base->native.resident_bytes:0);
+    plan.native.source_bytes=source_bytes;
+    plan.native.scratch_bytes=scratch_bytes;
+    boolean scratch_linear=FALSE;
+    byte *source=texture_scratch(scratch_bytes,&scratch_linear);
+    if(!source) return NULL;
+    void *resource=NULL,*reserved=NULL;
+    (void)lane;
+
+    long long start=n3ds_engine_ticks();
+    int read=n3ds_engine_cache_read(base->source_offset,source_bytes,source);
+    long long next=n3ds_engine_ticks();
+    idle_ticks[2]+=next-start;
+    TEXTURE_PROFILE(texture_load_profile(lane)->read_ticks+=next-start);
+    if(!read) goto done;
+    TEXTURE_PROFILE(texture_load_profile(lane)->read_bytes+=source_bytes);
+    if(base->format==14) {
+        start=next;
+        int opaque=bitmap_detail_dxt1_opaque(source,source_bytes);
+        next=n3ds_engine_ticks();
+        idle_ticks[3]+=next-start;
+        TEXTURE_PROFILE(texture_load_profile(lane)->decode_ticks+=next-start);
+        if(!opaque) goto done;
+    }
+    if(!(allow_eviction?texture_make_room(output_bytes):texture_can_stage(output_bytes))) goto done;
+    struct native_texture_span images[6];
+    reserved=n3ds_gpu_texture_reserve_descriptor(&plan.native,images);
+    if(!reserved) {TEXTURE_PROFILE(++texture_profile.allocation_failures);goto done;}
+    n3ds_algorithm_profile_staging_acquire(output_bytes);
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+    if(lane!=TEXTURE_PREFETCH) ++presentation_texture_revision;
+#endif
+    start=n3ds_engine_ticks();
+    unsigned int *rgb8_scratch=base->detail_rgb8?(unsigned int *)(source+source_bytes):NULL;
+    int decoded=bitmap_decode_detail(base,source,images[0].data,rgb8_scratch);
+    next=n3ds_engine_ticks();
+    idle_ticks[3]+=next-start;
+    TEXTURE_PROFILE(texture_load_profile(lane)->decode_ticks+=next-start);
+    texture_scratch_free(source,scratch_linear,scratch_bytes);source=NULL;
+    if(decoded) {
+        start=n3ds_engine_ticks();
+        resource=bitmap_publish(bitmap,&plan,reserved,!allow_eviction);
+        next=n3ds_engine_ticks();
+        idle_ticks[5]+=next-start;
+        TEXTURE_PROFILE(texture_load_profile(lane)->upload_ticks+=next-start);
+        if(resource) {
+            world_mip_loads+=plan.native.levels>1;
+            world_rgb8_loads+=plan.native.format==NATIVE_TEXTURE_FORMAT_RGB8;
+            reserved=NULL;
+        }
+    }
+    n3ds_algorithm_profile_staging_release(output_bytes);
+done:
+    n3ds_gpu_texture_abandon(reserved);
+    texture_scratch_free(source,scratch_linear,scratch_bytes);
+    return resource;
+}
+
+#if HALO_N3DS_TEXTURE_COMPARE
+static void *load_bitmap_comparison(struct bitmap_data *bitmap,const struct bitmap_plan *baseline,
+    const struct texture_archive_selection *entry,enum texture_lane lane,int allow_eviction)
+{
+    struct bitmap_plan plan=*baseline;
+    if(entry->format!=NATIVE_TEXTURE_FORMAT_RGBA8 &&
+        !n3ds_texture_descriptor_compact(&plan.native,entry->format)) return NULL;
+    unsigned int output_bytes=plan.native.resident_bytes;
+    if(!(allow_eviction?texture_make_room(output_bytes):texture_can_stage(output_bytes))) return NULL;
+    unsigned int scratch_bytes=entry->codec==TEXTURE_ARCHIVE_LZ4?entry->bytes:0;
+    plan.native.scratch_bytes=scratch_bytes;
+    struct native_texture_span images[6];
+    void *reserved=n3ds_gpu_texture_reserve_descriptor(&plan.native,images);
+    if(!reserved) {TEXTURE_PROFILE(++texture_profile.allocation_failures);return NULL;}
+    n3ds_algorithm_profile_staging_acquire(output_bytes);
+    boolean scratch_linear=FALSE;
+    byte *scratch=scratch_bytes?texture_scratch(scratch_bytes,&scratch_linear):NULL;
+    void *resource=NULL;
+    (void)lane;
+    if(scratch_bytes && !scratch) goto done;
+
+    void *out=images[0].data;
+    long long start=n3ds_engine_ticks();
+    unsigned int read_bytes=texture_archive_read_span(entry,scratch_bytes?scratch:out);
+    long long next=n3ds_engine_ticks();
+    idle_ticks[2]+=next-start;
+    TEXTURE_PROFILE(texture_load_profile(lane)->read_ticks+=next-start);
+    TEXTURE_PROFILE(texture_load_profile(lane)->read_bytes+=read_bytes);
+    int valid=read_bytes==entry->bytes;
+    if(valid) {
+        start=next;
+        if(scratch_bytes) valid=LZ4_decompress_safe((const char *)scratch,out,read_bytes,output_bytes)==(int)output_bytes;
+        /* Count validation with preparation in every comparison mode. */
+        if(valid) valid=texture_hash(out,output_bytes)==entry->hash;
+        next=n3ds_engine_ticks();
+        idle_ticks[3]+=next-start;
+        TEXTURE_PROFILE(texture_load_profile(lane)->decode_ticks+=next-start);
+    }
+    if(!valid) {
+        texture_archive_reject_payload(entry->kind);
+        goto done;
+    }
+    texture_archive_record_hit(entry->kind);
+    TEXTURE_PROFILE(++texture_load_profile(lane)->archive_hits);
+    texture_scratch_free(scratch,scratch_linear,scratch_bytes);scratch=NULL;
+    start=n3ds_engine_ticks();
+    resource=bitmap_publish(bitmap,&plan,reserved,!allow_eviction);
+    next=n3ds_engine_ticks();
+    idle_ticks[5]+=next-start;
+    TEXTURE_PROFILE(texture_load_profile(lane)->upload_ticks+=next-start);
+    if(resource) {
+        reserved=NULL;
+        texture_compare_record_publish(entry,output_bytes);
+    }
+done:
+    texture_scratch_free(scratch,scratch_linear,scratch_bytes);
+    n3ds_gpu_texture_abandon(reserved);
+    n3ds_algorithm_profile_staging_release(output_bytes);
+    return resource;
+}
+#endif
+
 static void *load_bitmap_2d(struct bitmap_data *bitmap,enum texture_lane lane,int allow_eviction)
 {
     struct bitmap_plan plan;
-    if(!bitmap_plan(bitmap,&plan) ||
-            !(allow_eviction?texture_make_room(plan.native.resident_bytes):texture_can_stage(plan.native.resident_bytes))) return NULL;
+    if(!bitmap_plan(bitmap,&plan)) return NULL;
+    if(plan.detail_levels>1 || plan.detail_rgb8) {
+        void *resource=load_bitmap_detail(bitmap,&plan,lane,allow_eviction);
+        if(resource) return resource;
+    }
+    int allow_candidate=1;
+#if HALO_N3DS_TEXTURE_COMPARE
+    texture_archive_open();
+    if(texture_compare.mode) {
+        struct texture_archive_selection selection;
+        if(texture_candidate_select(bitmap,plan.resolution,plan.source_offset,plan.native.source_bytes,
+                plan.target_width,plan.target_height,plan.lightmap,plan.level,(unsigned int)plan.format,
+                plan.width,plan.height,&selection)) {
+            void *resource=load_bitmap_comparison(bitmap,&plan,&selection,lane,allow_eviction);
+            if(resource) return resource;
+        }
+        /* The comparison loader released any unpublished image. Reserve the
+         * canonical RGBA8 image before trying the independent legacy inputs. */
+        allow_candidate=0;
+    }
+#endif
+    if(!(allow_eviction?texture_make_room(plan.native.resident_bytes):texture_can_stage(plan.native.resident_bytes))) return NULL;
     unsigned int target_width=plan.target_width,target_height=plan.target_height;
     unsigned int bytes=plan.native.source_bytes,output_bytes=plan.native.resident_bytes;
     byte *compressed=NULL;
@@ -856,6 +1142,7 @@ static void *load_bitmap_2d(struct bitmap_data *bitmap,enum texture_lane lane,in
 #endif
     reserved=n3ds_gpu_texture_reserve_descriptor(&plan.native,images);
     if(!reserved) {TEXTURE_PROFILE(++texture_profile.allocation_failures);return NULL;}
+    n3ds_algorithm_profile_staging_acquire(output_bytes);
     tiled=images[0].data;
 #ifdef HALO_N3DS_PRESENT_INTERPOLATION
     if(lane!=TEXTURE_PREFETCH) ++presentation_texture_revision;
@@ -866,7 +1153,7 @@ static void *load_bitmap_2d(struct bitmap_data *bitmap,enum texture_lane lane,in
     unsigned int read_bytes=0;
     int archived=texture_archive_read(bitmap,plan.resolution,plan.source_offset,
         bytes,target_width,target_height,plan.lightmap,plan.level,(unsigned int)plan.format,
-        plan.width,plan.height,tiled,&read_bytes);
+        plan.width,plan.height,allow_candidate,tiled,&read_bytes);
     next=n3ds_engine_ticks();idle_ticks[2]+=next-stamp;
     TEXTURE_PROFILE(texture_load_profile(lane)->read_ticks+=next-stamp);
     TEXTURE_PROFILE(texture_load_profile(lane)->read_bytes+=read_bytes);
@@ -894,7 +1181,7 @@ static void *load_bitmap_2d(struct bitmap_data *bitmap,enum texture_lane lane,in
         /* The same block decoder used by the worker also covers full-sized
          * DXT images. Each independent block writes its exact final texels. */
         int decoded=(!plan.lightmap || distance) && bitmap_decode_sampled(&plan,compressed,tiled,distance);
-        texture_scratch_free(distance,distance_linear);
+        texture_scratch_free(distance,distance_linear,output_bytes/2);
         next=n3ds_engine_ticks();idle_ticks[3]+=next-stamp;
         TEXTURE_PROFILE(texture_load_profile(lane)->decode_ticks+=next-stamp);
         if(!decoded) goto done;
@@ -904,7 +1191,7 @@ static void *load_bitmap_2d(struct bitmap_data *bitmap,enum texture_lane lane,in
 #endif
     /* The decoder has written the unpublished final image. Release its inputs
      * before flushing/publishing; no second tiled image or image copy exists. */
-    texture_scratch_free(compressed,compressed_linear);compressed=NULL;compressed_linear=FALSE;
+    texture_scratch_free(compressed,compressed_linear,bytes);compressed=NULL;compressed_linear=FALSE;
     stamp=n3ds_engine_ticks();
     resource=bitmap_publish(bitmap,&plan,reserved,!allow_eviction);
     if(resource) reserved=NULL;
@@ -912,9 +1199,10 @@ static void *load_bitmap_2d(struct bitmap_data *bitmap,enum texture_lane lane,in
     TEXTURE_PROFILE(texture_load_profile(lane)->upload_ticks+=next-stamp);
 done:
 #ifdef HALO_N3DS_ARCHIVE_VERIFY
-    texture_scratch_free(archive_reference,archive_reference_linear);
+    texture_scratch_free(archive_reference,archive_reference_linear,output_bytes);
 #endif
-    n3ds_gpu_texture_abandon(reserved);texture_scratch_free(compressed,compressed_linear);
+    n3ds_gpu_texture_abandon(reserved);texture_scratch_free(compressed,compressed_linear,bytes);
+    n3ds_algorithm_profile_staging_release(output_bytes);
     return resource;
 }
 

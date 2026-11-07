@@ -1,11 +1,14 @@
 # New 2DS XL performance roadmap
 
-Status: roadmap grounded in the published source reviewed on 2026-11-07.
-The [dependency-trace collection slice](DEPENDENCY-TRACE.md) is implemented in
-source, unbuilt and untested. The optimisation candidates, replay and allocation
-accounting remain proposed. The first milestone is a working physical-device
-reference and a bottleneck report. No percentage gain or sustained 60 FPS claim
-is made.
+The local frozen native-400 reference can be rebuilt byte for byte. The
+[algorithm build controls](ALGORITHM-PROFILING.md) expose experiments for
+prepared views, retained skinning and pose data, exact geometry, collision and
+UV output packing. The physical-device reference, campaign repeatability,
+bottleneck report and promotion gates remain open.
+
+The [implementation status](PERFORMANCE-IMPLEMENTATION-STATUS.md) accounts for
+every step below. This document is the requested roadmap, not a completion
+receipt; many sub-slices remain unimplemented.
 
 Prioritise **CPU preparation overlapping GPU execution**, **preparation retained
 across presentations**, and **geometry work eliminated before submission**.
@@ -17,26 +20,22 @@ The target is one coherent presentation per New 2DS XL refresh: approximately
 are different clocks; do not lock simulation to half the display refresh or
 count a submission, frontend loop or repeated image as a distinct presentation.
 
-## Current evidence and preservation contract
+## Reference evidence and preservation contract
 
 | Item | Established state |
 | --- | --- |
-| Published source | `044318815ff22d0112a67108fa43cae7221eab86` on `new2ds-performance` |
-| Complete source tree | `82071eee12f7179c9d0511ac9454656a614f5e6b`, 1,043 files; matches local audited commit `c4005e814d0ae577c1c3e8fe6ed2732c45e8472c` |
-| Playable executable SHA-256 | `f71167bb45c2bca1ff69ce96abbe8ef0f5c7898a6851bce0037e4bab718e7e28` |
-| Installed configuration | Native 400×240, legacy textures, reference algorithm controls; midpoint and profiling disabled |
-| Build evidence | The published pre-trace native and diagnostic builds compile/link with the recorded recovered toolchain |
-| Runtime evidence | Related native-400 emulator frontend smoke passed 240 loops; menu visually inspected; full graphics diagnostics have recorded emulator sampling failures |
-| Not established | Campaign correctness, reference replay repeatability, physical-device timings, midpoint coherence, instrumentation overhead and a hardware-accepted appearance |
+| Frozen source | `a43d94f35fbd0bdfdd0c30d7f5f5949f57c48904` |
+| Frozen native-400 3DSX SHA-256 | `b89168c853add4111c6aca13f1d84a51582fe14ff98ac7269d7178dbc3bc69e5` |
+| Reference settings | Native 400×240, legacy textures, 4 MiB texture budget, standard memory, portal cache and resident indices enabled. Prefetch and optional midpoints are off in the regular reference. |
+| Build evidence | The timestamp-pinned rebuild from the archived source and compiler inputs reproduced the native-400 launcher exactly. |
+| Runtime evidence | The current profiled reference completed a bounded 240-loop Azahar menu smoke test. Earlier emulator graphics diagnostics encountered backend sampling differences. |
+| Open evidence | Campaign and midpoint images, replay repeatability on campaign data, hardware timings and instrumentation overhead. |
 
-Private build/dependency receipts are in `build/emulator-validation-20261107`,
-publication receipts in `build/publication`, and the launcher backup/install
-receipt in `build/deployments/20261107T090946.345608Z`. Retained maps, sidecars,
-HUD data and saves are in ignored local storage. They must not be published.
-The installed binary and the smoke binary have different instrumentation and
-identities; the menu smoke is not an execution test of the installed binary.
-The dependency-trace source changes postdate these receipts. They have not
-been built, run or installed; the recorded executable remains the prior reference.
+The frozen snapshot under `build/performance-reference` includes the regular
+and trace builds, matching local game data, settings, saves and dependency
+provenance. `manifest.json` identifies private data and `reproduction.json`
+records the rebuild. The older launcher and emulator receipts describe their
+own binaries. Keep game data and SDK copies in private local storage.
 
 Keep native 400×240 and full-resolution HUD; current texture resolution,
 filtering, LODs, foliage, particles, material/lightmap passes, transparency order,
@@ -51,7 +50,8 @@ canceled workers retain owned allocations until completion is acknowledged.
 The [inherited visual limitations](RENDERER-PRESERVATION.md#preservation-contract)
 still require reference captures. Preserving the fork's accepted appearance does
 not establish complete Xbox-renderer parity. Asset controls remain independent:
-RGBA8 `.ntx4` is opt-in; cooked geometry and packed layouts remain unavailable.
+RGBA8 `.ntx4`, scoped `.nmg` compaction plans and the packed weighted vertex
+layout have separate opt-in controls.
 
 ## 1. Reference and dependency trace
 
@@ -119,7 +119,10 @@ storage. Label actual retained coverage and run whole-route timing separately.
 Preserve the existing exit timeout and cleanup rules; a trace capture limit
 alone is not a process timeout.
 
-Allocation accounting remains proposed. Track ordinary-heap, linear and staging
+Allocation accounting includes loop-end ordinary/linear heap samples, opt-in
+completed allocation-call peaks and event-based texture staging peaks.
+Internal and concurrent transient allocations can escape these samples.
+Track ordinary-heap, linear and staging
 live/high-water bytes separately, plus
 reservations, failures and GPU-retained allocations. Staging can be a subset of
 ordinary/linear storage: label it rather than adding it twice. Free-space samples
@@ -127,9 +130,10 @@ are sampled minima, not exact allocation peaks. Account for successful
 allocation/free and realloc failure/zero-size semantics without changing budget
 decisions; report untracked allocators and fragmentation limits explicitly.
 
-Replay remains proposed. Implement tick-indexed replay at the authoritative
-input-consumption boundary,
-not by replaying frontend-loop controller polls. Audit `update_client_dequeue`
+The [action journal](ACTION-REPLAY.md) implements bounded tick-indexed replay
+at the authoritative input-consumption boundary and compares selected semantic
+state fields. Full gameplay/presentation coverage and reference repeatability
+remain open. It does not replay frontend-loop controller polls. Preserve `update_client_dequeue`
 in `source/game/player_queues_new.c`, preserving its latched-control bookkeeping.
 Record starting state/seeds and
 the tick's consumed controls; distinguish presentation-only camera input. Compare
@@ -336,9 +340,12 @@ snapshots must preserve parent/child transforms, birth/death, discontinuities,
 authoritative events and timing. Treat coverage as a separate correctness slice;
 do not introduce new effect shaders or quality reductions.
 
-The current readback fixture cannot simply be combined with `--present-60`.
-Develop a dedicated bounded midpoint capture/verification route and keep it out
-of uncaptured performance runs. Integrate accepted slices individually, compare
+Use `--present-60 --midpoint-capture-tick N` for a dedicated correctness run.
+The fixture searches 120 simulation ticks from N for one submitted midpoint
+and its following regular render. It writes native 400×240 top-target RGBA,
+raw D24S8 and precise camera inputs for both views. Require the complete-pair
+manifest. The readback perturbs the schedule and is excluded from timing. Integrate
+accepted slices individually, compare
 against both previous accepted and original reference builds, and re-profile
 after major changes.
 
@@ -359,10 +366,10 @@ worst cases, deadlines and transitions separately.
 
 | Route | Coverage |
 | --- | --- |
-| Pillar of Autumn interiors and weapon close-ups | Animation, transforms, seams, precision, HUD |
-| Silent Cartographer combat | Simulation, collision, audio/effects and worker contention |
-| Moving water/reflective scene | Material passes, shader parity, blending and transparency |
-| 343 Guilty Spark cold/repeated traversal | Visibility, residency, demand stalls |
+| Pillar of Autumn (`a10`), from an interior checkpoint through a corridor and weapon reload | Animation, transforms, seams, precision, HUD |
+| Silent Cartographer (`b30`), from the approach to a combat encounter through its end | Simulation, collision, audio/effects and worker contention |
+| Silent Cartographer coast (`b30`), shoreline traversal with deliberate pans toward and across water | Material passes, shader parity, blending and transparency |
+| 343 Guilty Spark (`c10`), fixed checkpoint and traversal across a residency boundary | Visibility, residency, demand stalls |
 | Dense actors, checkpoints/BSP transitions, extended play | Pressure, invalidation, lifetime |
 
 Report distinct delivered presentations, missed/repeated refresh intervals and
@@ -370,19 +377,30 @@ consecutive stalls alongside simulation deadlines. Submission rate and average
 FPS are supporting metrics. Keep cold loads and problematic routes visible.
 Stop owned capture/test processes after each bounded sequential batch.
 
-## First reviewable deliverables
+## First physical comparisons
 
-1. Reconcile and freeze the working reference/asset/save receipts; record missing
-   physical-device evidence without treating menu smoke as campaign acceptance.
-2. Validate the independent, disabled-by-default trace identity/storage and
-   stage hooks now implemented in source. Callback ownership and observation
-   semantics have been source-reviewed; builds and runtime validation remain open.
-3. Validate the bounded exporter/integrity reader, then extend analysis, memory
-   accounting, tick replay and canonical-state records. Establish repeatability
-   and instrumentation overhead before using their results.
-4. Collect the hardware bottleneck report and select the first exact slice.
-5. If justified, implement bounded prepared views before moving preparation
-   ahead of acquisition; validate independently before retained-preparation work.
+1. Run the packaged regular reference on New 2DS XL from the fixed 400×240
+   configuration. Record CPU/L2 mode, settings, the initial save and asset
+   hashes, and an image per route. Use a fresh process for cold trials and an
+   identical uncaptured lead-in for warm trials. Preserve cold stalls in the
+   results. The route table defines coverage and starting points. Record the
+   exact route actions and end tick on hardware.
+2. Use the [action replay procedure](ACTION-REPLAY.md) twice with the reference
+   and the same copied starting data. Treat an early exit, unavailable action
+   file or a state mismatch as a failed route.
+3. Run short trace captures for stage attribution and compare instrumentation
+   overhead against an untraced build. Trace intervals and sampled swap
+   acknowledgements describe observed dependencies. Use independent display
+   observation for distinct images, repeated refresh intervals and stall runs.
+4. Compare each eligible candidate alone against the matching current-source
+   reference, then against the frozen launcher. Start the overlap A/B with
+   `--present-60` on both sides because the first prepared-view case follows
+   a queued midpoint. Keep midpoints off for the first regular-only comparison
+   of skinning, geometry, collision and the UV variant.
+5. Audit motion on the same route. The pose history admits a bounded subset
+   of units, items, scenery and devices. Attachments, widgets and many effects
+   still need render-only snapshot coverage. Any extension must preserve
+   parent/child identity, birth/death, discontinuities and authoritative events.
 
 New switches must reject unavailable candidate/verification modes rather than
 silently running reference code. No candidate becomes default merely because

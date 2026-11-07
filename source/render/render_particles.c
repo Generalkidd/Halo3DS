@@ -29,6 +29,10 @@ symbols in this file:
 #include "tag_files/tag_groups.h"
 #include "units/unit_definitions.h"
 #include "units/units.h"
+#ifdef HALO_N3DS
+#include "engine_presentation.h"
+#include "engine_algorithm_profile.h"
+#endif
 
 /* ---------- constants */
 
@@ -37,6 +41,9 @@ enum
 	MAXIMUM_RENDERED_PARTICLES = 1024,
 	MAXIMUM_RENDERED_PARTICLE_GROUPS = 512,
 };
+#if defined(HALO_N3DS) && HALO_N3DS_ALGO_MIDPOINT_PARTICLES != N3DS_ALGORITHM_REFERENCE
+#include "engine_presentation_particles.inl"
+#endif
 
 /* ---------- macros */
 
@@ -291,6 +298,9 @@ void render_particles(
 						real radius =
 							particle_get_radius(rendered_particle->particle_index);
 
+#if defined(HALO_N3DS) && HALO_N3DS_ALGO_MIDPOINT_PARTICLES != N3DS_ALGORITHM_REFERENCE
+						real_matrix4x3 const *midpoint_parent = NULL;
+#endif
 						if (particle->object_index != NONE)
 						{
 							real_matrix4x3 const *node_matrix;
@@ -309,10 +319,17 @@ void render_particles(
 								node_matrix = object_get_node_matrix(
 									particle->object_index,
 									particle->node_index);
+#if defined(HALO_N3DS) && HALO_N3DS_ALGO_MIDPOINT_PARTICLES != N3DS_ALGORITHM_REFERENCE
+								if (midpoint)
+									midpoint_parent = native_particle_midpoint_parent(native_slot, particle);
+#endif
 							}
 							else
 							{
-								particle_delete(rendered_particle->particle_index);
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+								if(!midpoint)
+#endif
+									particle_delete(rendered_particle->particle_index);
 								rendered_particle++;
 								continue;
 							}
@@ -392,6 +409,24 @@ void render_particles(
 										particle_flags,
 										_particle_datum_v_mirror_bit));
 
+#if defined(HALO_N3DS) && HALO_N3DS_ALGO_MIDPOINT_PARTICLES != N3DS_ALGORITHM_REFERENCE
+								if(midpoint) {
+									int interpolated;
+									/* Keep existing visibility and LOD admission. Only the
+									 * admitted sprite follows its accepted parent draw. */
+									if (midpoint_parent)
+									{
+										matrix4x3_transform_point(midpoint_parent, &particle->position, &position);
+										matrix4x3_transform_normal(midpoint_parent, &particle->direction, &direction);
+										interpolated = TRUE;
+									}
+									else
+										interpolated = particle->object_index == NONE &&
+											native_particle_midpoint(native_slot, particle, &position);
+									n3ds_algorithm_profile_add(N3DS_ALG_CPU_PARTICLE_INTERPOLATED,interpolated);
+									n3ds_algorithm_profile_add(N3DS_ALG_CPU_PARTICLE_HOLD,!interpolated);
+								}
+#endif
 								build_sprite(
 									&sprite_data,
 									definition->sprite_orientation,

@@ -121,6 +121,9 @@ symbols in this file:
 #include "tag_files/tag_groups.h"
 #ifdef HALO_N3DS
 #include "engine_algorithm_profile.h"
+#if HALO_N3DS_ALGO_PREPARED_VIEW != N3DS_ALGORITHM_REFERENCE
+#include "engine_prepared_view.h"
+#endif
 #define NATIVE_CPU_ADD(metric, value) n3ds_algorithm_profile_add(metric, value)
 #else
 #define NATIVE_CPU_ADD(metric, value) ((void)0)
@@ -220,12 +223,6 @@ struct structure_visibility_mirror
 	struct tag_block points;
 };
 
-struct structure_visibility_globals
-{
-	unsigned long *visited_cluster_flags;
-	short rendered_cluster_indices[MAXIMUM_CLUSTERS_PER_STRUCTURE];
-};
-
 struct structure_visibility_shader_environment
 {
 	struct shader shader;
@@ -258,6 +255,7 @@ static void grow_clipping_rectangle_by_portal_hull(
 	real_rectangle2d *rectangle,
 	struct portal_hull const *hull);
 static boolean points_within_distance(
+	const struct render_camera *camera,
 	short point_count,
 	real_point3d const *points,
 	real distance);
@@ -333,6 +331,8 @@ static void native_portal_cache_begin(void)
 }
 #endif
 static short portal_hull_from_portal(
+	const struct render_camera *camera,
+	const struct render_frustum *frustum,
 	short portal_index,
 	boolean direction,
 	struct portal_hull *result);
@@ -340,11 +340,19 @@ static void structure_visibility_render_debug_portal_hull(
 	struct portal_hull const *hull,
 	real_argb_color const *color,
 	real offset);
-static void structure_visibility_traverse_cluster(
-	short cluster_index,
-	struct portal_hull const *visible_region);
-static void structure_visibility_find_clusters(
-	void);
+struct visibility_traversal
+{
+	const struct render_camera *camera;
+	const struct render_frustum *frustum;
+	long cluster_index;
+	boolean visible_sky_model;
+	boolean draw_debug;
+	unsigned long *visible_flags;
+	struct rendered_cluster *clusters;
+	short *cluster_count;
+	short *indices_by_cluster;
+};
+
 static short structure_visibility_build_surfaces_traverse_clusters(
 	long *surface_indices,
 	short maximum_count,
@@ -397,7 +405,7 @@ static const real_plane3d screen_plane =
 };
 
 static boolean warned_about_missing_subclusters;
-static struct structure_visibility_globals structure_visibility_globals;
+static short rendered_cluster_indices[MAXIMUM_CLUSTERS_PER_STRUCTURE];
 static struct profile_section render_structure_visibility_portal_traversal =
 	{ "render_structure_visibility_portal_traversal", NONE, TRUE };
 static struct profile_section render_structure_visibility_subcluster_traversal =
@@ -417,8 +425,9 @@ void debug_pvs(
 	return;
 }
 
-void structure_visibility_find_camera(
-	const struct render_camera *camera)
+static void visibility_find_camera(const struct render_camera *camera,
+	long *previous_leaf_index, long *cluster_index, short *visible_sky_index,
+	boolean *visible_sky_model)
 {
 	struct structure_bsp *structure = global_structure_bsp_get();
 	long leaf_index = bsp3d_test_point(
@@ -428,7 +437,7 @@ void structure_visibility_find_camera(
 
 	if (leaf_index == NONE)
 	{
-		leaf_index = render.leaf_index;
+		leaf_index = *previous_leaf_index;
 		if (leaf_index < structure->leaves.count)
 		{
 			goto leaf_index_ready;
@@ -437,12 +446,12 @@ void structure_visibility_find_camera(
 		leaf_index = NONE;
 	}
 
-	render.leaf_index = leaf_index;
+	*previous_leaf_index = leaf_index;
 
 leaf_index_ready:
-	render.cluster_index = NONE;
-	render.visible_sky_index = NONE;
-	render.visible_sky_model = FALSE;
+	*cluster_index = NONE;
+	*visible_sky_index = NONE;
+	*visible_sky_model = FALSE;
 
 	if (leaf_index != NONE)
 	{
@@ -453,17 +462,23 @@ leaf_index_ready:
 		struct structure_cluster *cluster;
 		struct structure_visibility_sky *sky;
 
-		render.cluster_index = leaf->cluster_index;
-		cluster = TAG_BLOCK_GET_ELEMENT(&structure->clusters, render.cluster_index, struct structure_cluster);
-		render.visible_sky_index = cluster->sky_index;
-		sky = (struct structure_visibility_sky *)scenario_get_sky(render.visible_sky_index);
+		*cluster_index = leaf->cluster_index;
+		cluster = TAG_BLOCK_GET_ELEMENT(&structure->clusters, *cluster_index, struct structure_cluster);
+		*visible_sky_index = cluster->sky_index;
+		sky = (struct structure_visibility_sky *)scenario_get_sky(*visible_sky_index);
 		if (sky && sky->model.index != NONE)
 		{
-			render.visible_sky_model = TRUE;
+			*visible_sky_model = TRUE;
 		}
 	}
 
 	return;
+}
+
+void structure_visibility_find_camera(const struct render_camera *camera)
+{
+	visibility_find_camera(camera, &render.leaf_index, &render.cluster_index,
+		&render.visible_sky_index, &render.visible_sky_model);
 }
 
 /* ---------- private code */
@@ -727,7 +742,10 @@ static long planes_intersect_rectangle(
 	return _intersection_in;
 }
 
-short structure_visibility_find_objects(
+static short visibility_find_objects(
+	const struct rendered_cluster *clusters,
+	short cluster_count,
+	long view_cluster,
 	long *result_indices,
 	short maximum_count,
 	long (*cluster_get_first)(long *iterator, short cluster_index),
@@ -736,15 +754,14 @@ short structure_visibility_find_objects(
 	boolean (*unmarked)(long object_index),
 	long (*mark)(long object_index))
 {
-	struct structure_bsp *structure = global_structure_bsp_get();
 	short found_count = 0;
 	long rendered_cluster_index;
 
 	for (rendered_cluster_index = 0;
-		(short)rendered_cluster_index < render.rendered_cluster_count;
+		(short)rendered_cluster_index < cluster_count;
 		rendered_cluster_index++)
 	{
-		struct rendered_cluster *rendered_cluster = rendered_cluster_get(rendered_cluster_index);
+		const struct rendered_cluster *rendered_cluster = &clusters[rendered_cluster_index];
 		long iterator;
 		long object_index;
 
@@ -762,7 +779,7 @@ short structure_visibility_find_objects(
 
 			get_bounding_sphere(object_index, &center, &radius);
 			if (found_count < maximum_count &&
-				(render.cluster_index == NONE ||
+				(view_cluster == NONE ||
 				render_frustum_sphere_visible(&rendered_cluster->frustum, &center, radius)))
 			{
 				result_indices[found_count++] = object_index;
@@ -771,9 +788,39 @@ short structure_visibility_find_objects(
 		}
 	}
 
-	(void)structure;
 	return found_count;
 }
+
+short structure_visibility_find_objects(
+	long *result_indices,
+	short maximum_count,
+	long (*cluster_get_first)(long *iterator, short cluster_index),
+	long (*cluster_get_next)(long *iterator),
+	void (*get_bounding_sphere)(long object_index, real_point3d *center, real *radius),
+	boolean (*unmarked)(long object_index),
+	long (*mark)(long object_index))
+{
+	(void)global_structure_bsp_get();
+	return visibility_find_objects(render.rendered_clusters, render.rendered_cluster_count,
+		render.cluster_index, result_indices, maximum_count, cluster_get_first, cluster_get_next,
+		get_bounding_sphere, unmarked, mark);
+}
+#if defined(HALO_N3DS) && HALO_N3DS_ALGO_PREPARED_VIEW != N3DS_ALGORITHM_REFERENCE
+short n3ds_prepared_visibility_find_objects(
+	const struct n3ds_prepared_visibility *visibility,
+	long *result_indices,
+	short maximum_count,
+	long (*cluster_get_first)(long *iterator, short cluster_index),
+	long (*cluster_get_next)(long *iterator),
+	void (*get_bounding_sphere)(long object_index, real_point3d *center, real *radius),
+	boolean (*unmarked)(long object_index),
+	long (*mark)(long object_index))
+{
+	return visibility_find_objects(visibility->clusters, visibility->cluster_count,
+		visibility->cluster_index, result_indices, maximum_count, cluster_get_first, cluster_get_next,
+		get_bounding_sphere, unmarked, mark);
+}
+#endif
 
 static void grow_clipping_rectangle_by_portal_hull(
 	real_rectangle2d *rectangle,
@@ -858,6 +905,7 @@ static void structure_visibility_render_debug_portal_hull(
 }
 
 static boolean points_within_distance(
+	const struct render_camera *camera,
 	short point_count,
 	real_point3d const *points,
 	real distance)
@@ -871,10 +919,10 @@ static boolean points_within_distance(
 		real camera_distance;
 
 		vector_from_points3d(
-			&render.camera.position,
+			&camera->position,
 			point,
 			&camera_to_point);
-		camera_distance = dot_product3d(&render.camera.forward, &camera_to_point);
+		camera_distance = dot_product3d(&camera->forward, &camera_to_point);
 
 		if (camera_distance <= distance)
 		{
@@ -1009,6 +1057,8 @@ static short portal_hull_from_points(
 }
 
 static short portal_hull_from_portal(
+	const struct render_camera *camera,
+	const struct render_frustum *frustum,
 	short portal_index,
 	boolean direction,
 	struct portal_hull *result)
@@ -1040,8 +1090,8 @@ static short portal_hull_from_portal(
 		struct structure_visibility_portal);
 
 	short hull_result = portal_hull_from_points(
-		&render.camera,
-		&render.frustum,
+		camera,
+		frustum,
 		TAG_BLOCK_GET_ELEMENT(
 			&TAG_BLOCK_GET_ELEMENT(
 				&structure->collision_bsp,
@@ -1580,6 +1630,8 @@ short structure_visibility_build_surfaces(
 }
 
 static void structure_visibility_traverse_cluster(
+	const struct visibility_traversal *view,
+	unsigned long *visited_cluster_flags,
 	short cluster_index,
 	struct portal_hull const *visible_region)
 {
@@ -1591,7 +1643,7 @@ static void structure_visibility_traverse_cluster(
 		struct structure_visibility_cluster);
 	unsigned long *cluster_pvs = structure_bsp_get_cluster_pvs(
 		structure,
-		(short)render.cluster_index);
+		(short)view->cluster_index);
 	struct rendered_cluster *rendered_cluster;
 	long portal_list_index;
 
@@ -1601,42 +1653,42 @@ static void structure_visibility_traverse_cluster(
 		0x3EE,
 		valid_portal_hull(visible_region));
 	BIT_VECTOR_SET_FLAG(
-		structure_visibility_globals.visited_cluster_flags,
+		visited_cluster_flags,
 		cluster_index,
 		TRUE);
 
-	if (!BIT_VECTOR_TEST_FLAG(render.visible_cluster_flags, cluster_index))
+	if (!BIT_VECTOR_TEST_FLAG(view->visible_flags, cluster_index))
 	{
 		match_vassert(
 			"c:\\halo\\SOURCE\\structures\\structure_visibility.c",
 			0x3F5,
-			render.rendered_cluster_count < MAXIMUM_RENDERED_CLUSTERS,
+			(*view->cluster_count) < MAXIMUM_RENDERED_CLUSTERS,
 			"raise MAXIMUM_RENDERED_CLUSTERS");
 		match_assert(
 			"c:\\halo\\SOURCE\\structures\\structure_visibility.c",
 			0x3F8,
 			cluster_index>=0 && cluster_index<MAXIMUM_CLUSTERS_PER_STRUCTURE);
 
-		structure_visibility_globals.rendered_cluster_indices[cluster_index] = render.rendered_cluster_count++;
-		rendered_cluster = rendered_cluster_get(structure_visibility_globals.rendered_cluster_indices[cluster_index]);
+		view->indices_by_cluster[cluster_index] = (*view->cluster_count)++;
+		rendered_cluster = &view->clusters[view->indices_by_cluster[cluster_index]];
 		rendered_cluster->cluster_index = cluster_index;
 		rendered_cluster->clip_bounds = *global_null_rectangle2d;
 	}
 	else
 	{
-		rendered_cluster = rendered_cluster_get(
-			structure_visibility_globals.rendered_cluster_indices[cluster_index]);
+		rendered_cluster = &view->clusters[view->indices_by_cluster[cluster_index]];
 		match_assert(
 			"c:\\halo\\SOURCE\\structures\\structure_visibility.c",
 			0x403,
 			rendered_cluster->cluster_index==cluster_index);
 	}
 
-	BIT_VECTOR_SET_FLAG(render.visible_cluster_flags, cluster_index, TRUE);
+	BIT_VECTOR_SET_FLAG(view->visible_flags, cluster_index, TRUE);
 	grow_clipping_rectangle_by_portal_hull(
 		&rendered_cluster->clip_bounds,
 		visible_region);
 
+	if (view->draw_debug)
 	{
 		real_argb_color const *color;
 
@@ -1674,12 +1726,14 @@ static void structure_visibility_traverse_cluster(
 		if (neighbor_cluster_index >= 0 &&
 			neighbor_cluster_index < clusters->count &&
 			!BIT_VECTOR_TEST_FLAG(
-				structure_visibility_globals.visited_cluster_flags,
+				visited_cluster_flags,
 				neighbor_cluster_index) &&
 			BIT_VECTOR_TEST_FLAG(cluster_pvs, neighbor_cluster_index))
 		{
 			struct portal_hull portal_hull;
 			short portal_result = portal_hull_from_portal(
+				view->camera,
+				view->frustum,
 				portal_index,
 				direction,
 				&portal_hull);
@@ -1687,15 +1741,18 @@ static void structure_visibility_traverse_cluster(
 			if (portal_result == _portal_hull_from_portal_degenerate)
 			{
 				structure_visibility_traverse_cluster(
+					view,
+					visited_cluster_flags,
 					neighbor_cluster_index,
 					visible_region);
 			}
 			else if (portal_result == _portal_hull_from_portal_succeeded &&
-				(render.visible_sky_model ||
+				(view->visible_sky_model ||
 					points_within_distance(
+						view->camera,
 						(short)portal->vertices.count,
 						(real_point3d const *)portal->vertices.address,
-						render.camera.z_far)))
+						view->camera->z_far)))
 			{
 				struct portal_hull clipped_hull;
 
@@ -1710,6 +1767,8 @@ static void structure_visibility_traverse_cluster(
 				if (clipped_hull.vertex_count > 0)
 				{
 					structure_visibility_traverse_cluster(
+						view,
+						visited_cluster_flags,
 						neighbor_cluster_index,
 						&clipped_hull);
 				}
@@ -1717,6 +1776,8 @@ static void structure_visibility_traverse_cluster(
 				{
 					error(_error_silent, "portal intersection failed.");
 					structure_visibility_traverse_cluster(
+						view,
+						visited_cluster_flags,
 						neighbor_cluster_index,
 						visible_region);
 				}
@@ -1725,15 +1786,14 @@ static void structure_visibility_traverse_cluster(
 	}
 
 	BIT_VECTOR_SET_FLAG(
-		structure_visibility_globals.visited_cluster_flags,
+		visited_cluster_flags,
 		cluster_index,
 		FALSE);
 
 	return;
 }
 
-static void structure_visibility_find_clusters(
-	void)
+static void structure_visibility_find_clusters(const struct visibility_traversal *view)
 {
 	struct structure_bsp *structure = global_structure_bsp_get();
 	real_rectangle2d projection_bounds;
@@ -1741,9 +1801,9 @@ static void structure_visibility_find_clusters(
 	struct portal_hull screen_hull;
 	long rendered_cluster_index;
 
-	if (render.cluster_index != NONE)
+	if (view->cluster_index != NONE)
 	{
-		render_frustum_get_projection_bounds(&render.frustum, &projection_bounds);
+		render_frustum_get_projection_bounds(view->frustum, &projection_bounds);
 		screen_hull.vertex_count = NUMBER_OF_POINTS_PER_RECTANGLE;
 		screen_hull.vertices[0].x = projection_bounds.x0;
 		screen_hull.vertices[0].y = projection_bounds.y0;
@@ -1753,21 +1813,21 @@ static void structure_visibility_find_clusters(
 		screen_hull.vertices[2].y = projection_bounds.y1;
 		screen_hull.vertices[3].x = projection_bounds.x0;
 		screen_hull.vertices[3].y = projection_bounds.y1;
-		structure_visibility_globals.visited_cluster_flags = visited_cluster_flags;
 		csmemset(
 			visited_cluster_flags,
 			0,
 			sizeof(visited_cluster_flags));
 		structure_visibility_traverse_cluster(
-			(short)render.cluster_index,
+			view,
+			visited_cluster_flags,
+			(short)view->cluster_index,
 			&screen_hull);
 
 		for (rendered_cluster_index = 0;
-			(short)rendered_cluster_index < render.rendered_cluster_count;
+			(short)rendered_cluster_index < (*view->cluster_count);
 			rendered_cluster_index++)
 		{
-			struct rendered_cluster *rendered_cluster = rendered_cluster_get(
-				(short)rendered_cluster_index);
+			struct rendered_cluster *rendered_cluster = &view->clusters[rendered_cluster_index];
 			real_rectangle2d frustum_bounds;
 
 			TAG_BLOCK_GET_ELEMENT(
@@ -1775,11 +1835,11 @@ static void structure_visibility_find_clusters(
 				rendered_cluster->cluster_index,
 				struct structure_visibility_cluster);
 			render_camera_build_clipped_frustum_bounds(
-				&render.camera,
+				view->camera,
 				&rendered_cluster->clip_bounds,
 				&frustum_bounds);
 			render_camera_build_frustum(
-				&render.camera,
+				view->camera,
 				&frustum_bounds,
 				&rendered_cluster->frustum,
 				TRUE);
@@ -1789,34 +1849,12 @@ static void structure_visibility_find_clusters(
 	return;
 }
 
-static void structure_visibility_compute_internal(
-	boolean build_environment_surfaces)
+static void visibility_compute_clusters(struct structure_bsp *structure,
+	const struct visibility_traversal *view, boolean build_environment_surfaces)
 {
-	struct structure_bsp *structure = global_structure_bsp_get();
-
-	NATIVE_CPU_ADD(N3DS_ALG_CPU_VISIBILITY, 1);
-	profile_enter(render_structure_visibility_portal_traversal);
-	if (render.cluster_index != NONE)
-	{
-		csmemset(
-			render.visible_cluster_flags,
-			0,
-			BIT_VECTOR_SIZE_IN_BYTES(structure->clusters.count));
-	}
-	else
-	{
-		csmemset(
-			render.visible_cluster_flags,
-			-1,
-			BIT_VECTOR_SIZE_IN_BYTES(structure->clusters.count));
-	}
-
-	render.environment_surface_count = 0;
-	csmemset(
-		render.environment_surface_flags,
-		0,
-		BIT_VECTOR_SIZE_IN_BYTES(structure->surfaces.count));
-	render.rendered_cluster_count = 0;
+	csmemset(view->visible_flags, view->cluster_index == NONE ? -1 : 0,
+		BIT_VECTOR_SIZE_IN_BYTES(structure->clusters.count));
+	*view->cluster_count = 0;
 #ifdef NATIVE_PORTAL_CACHE
 	/* The Xbox traversal is also the uncached reference in the native
 	 * visibility diagnostic. Only the native render pass uses the cache. */
@@ -1825,10 +1863,27 @@ static void structure_visibility_compute_internal(
 		native_portal_cache_begin();
 	}
 #endif
-	structure_visibility_find_clusters();
+	structure_visibility_find_clusters(view);
 #ifdef NATIVE_PORTAL_CACHE
 	native_portal_cache_active = FALSE;
 #endif
+}
+
+static void structure_visibility_compute_internal(
+	boolean build_environment_surfaces)
+{
+	struct structure_bsp *structure = global_structure_bsp_get();
+	const struct visibility_traversal view = {
+		&render.camera, &render.frustum, render.cluster_index, render.visible_sky_model,
+		TRUE, render.visible_cluster_flags, render.rendered_clusters, &render.rendered_cluster_count,
+		rendered_cluster_indices
+	};
+
+	NATIVE_CPU_ADD(N3DS_ALG_CPU_VISIBILITY, 1);
+	profile_enter(render_structure_visibility_portal_traversal);
+	render.environment_surface_count = 0;
+	csmemset(render.environment_surface_flags, 0, BIT_VECTOR_SIZE_IN_BYTES(structure->surfaces.count));
+	visibility_compute_clusters(structure, &view, build_environment_surfaces);
 
 	if (structures_use_pvs_for_vs)
 	{
@@ -1860,8 +1915,8 @@ static void structure_visibility_compute_internal(
 					0x11B,
 					cluster_index>=0 && cluster_index<MAXIMUM_CLUSTERS_PER_STRUCTURE);
 
-				structure_visibility_globals.rendered_cluster_indices[cluster_index] = render.rendered_cluster_count++;
-				rendered_cluster = rendered_cluster_get(structure_visibility_globals.rendered_cluster_indices[cluster_index]);
+				rendered_cluster_indices[cluster_index] = render.rendered_cluster_count++;
+				rendered_cluster = rendered_cluster_get(rendered_cluster_indices[cluster_index]);
 				rendered_cluster->cluster_index = cluster_index;
 				render_frustum_get_projection_bounds(
 					&render.frustum,
@@ -1912,6 +1967,85 @@ void n3ds_structure_visibility_compute(void)
      * cluster clipping, sky selection and object visibility exactly intact. */
     structure_visibility_compute_internal(FALSE);
 }
+#if HALO_N3DS_ALGO_PREPARED_VIEW != N3DS_ALGORITHM_REFERENCE
+boolean n3ds_prepare_visibility_allowed(void)
+{
+	return !debug_portals && !structures_use_pvs_for_vs && !ai_debug.render_encounter_activeregion;
+}
+
+void n3ds_prepare_visibility(const struct render_camera *camera, const struct render_frustum *frustum,
+	struct n3ds_prepared_visibility *result)
+{
+	result->leaf_index = render.leaf_index;
+	visibility_find_camera(camera, &result->leaf_index, &result->cluster_index,
+		&result->visible_sky_index, &result->visible_sky_model);
+
+	short indices_by_cluster[MAXIMUM_CLUSTERS_PER_STRUCTURE];
+	const struct visibility_traversal view = {
+		camera, frustum, result->cluster_index, result->visible_sky_model,
+		FALSE, result->visible_flags, result->clusters, &result->cluster_count, indices_by_cluster
+	};
+	NATIVE_CPU_ADD(N3DS_ALG_CPU_VISIBILITY, 1);
+	profile_enter(render_structure_visibility_portal_traversal);
+	visibility_compute_clusters(global_structure_bsp_get(), &view, FALSE);
+	profile_exit(render_structure_visibility_portal_traversal);
+}
+
+void n3ds_publish_visibility(const struct n3ds_prepared_visibility *visibility)
+{
+	const struct structure_bsp *structure = global_structure_bsp_get();
+	render.leaf_index = visibility->leaf_index;
+	render.cluster_index = visibility->cluster_index;
+	render.visible_sky_index = visibility->visible_sky_index;
+	render.visible_sky_model = visibility->visible_sky_model;
+	render.rendered_cluster_count = visibility->cluster_count;
+	csmemcpy(render.visible_cluster_flags, visibility->visible_flags,
+		BIT_VECTOR_SIZE_IN_BYTES(structure->clusters.count));
+	csmemcpy(render.rendered_clusters, visibility->clusters,
+		visibility->cluster_count * sizeof(visibility->clusters[0]));
+	for (short i = 0; i < visibility->cluster_count; ++i)
+		rendered_cluster_indices[visibility->clusters[i].cluster_index] = i;
+	render.environment_surface_count = 0;
+	csmemset(render.environment_surface_flags, 0, BIT_VECTOR_SIZE_IN_BYTES(structure->surfaces.count));
+}
+
+#if HALO_N3DS_ALGO_PREPARED_VIEW == N3DS_ALGORITHM_VERIFY
+boolean n3ds_frusta_match(const struct render_frustum *a, const struct render_frustum *b)
+{
+	/* The Boolean is followed by padding. Compare both numeric ranges and
+	 * the Boolean itself, ignoring only the padding. */
+	return !memcmp(a, b, offsetof(struct render_frustum, projection_valid)) &&
+		a->projection_valid == b->projection_valid &&
+		!memcmp(a->projection_matrix, b->projection_matrix, sizeof(a->projection_matrix)) &&
+		!memcmp(&a->projection_world_to_screen, &b->projection_world_to_screen,
+			sizeof(a->projection_world_to_screen));
+}
+
+boolean n3ds_prepared_visibility_matches(const struct n3ds_prepared_visibility *visibility)
+{
+	const struct structure_bsp *structure = global_structure_bsp_get();
+	if (visibility->leaf_index != render.leaf_index ||
+		visibility->cluster_index != render.cluster_index ||
+		visibility->visible_sky_index != render.visible_sky_index ||
+		visibility->visible_sky_model != render.visible_sky_model ||
+		visibility->cluster_count != render.rendered_cluster_count ||
+		memcmp(render.visible_cluster_flags, visibility->visible_flags,
+			BIT_VECTOR_SIZE_IN_BYTES(structure->clusters.count)))
+		return FALSE;
+
+	for (short i = 0; i < visibility->cluster_count; ++i)
+	{
+		const struct rendered_cluster *a = &visibility->clusters[i], *b = &render.rendered_clusters[i];
+		if (a->cluster_index != b->cluster_index ||
+			memcmp(&a->clip_bounds, &b->clip_bounds, sizeof(a->clip_bounds)) ||
+			!n3ds_frusta_match(&a->frustum, &b->frustum))
+			return FALSE;
+	}
+	return TRUE;
+}
+#endif
+#endif
+
 static unsigned int native_visibility_hash(const void *data,unsigned int bytes,unsigned int hash)
 {
     const byte *p=data;while(bytes--) hash=(hash^*p++)*16777619u;return hash;
@@ -1920,7 +2054,7 @@ static unsigned int native_cluster_hash(void)
 {
     unsigned int hash=native_visibility_hash(render.visible_cluster_flags,sizeof(render.visible_cluster_flags),2166136261u);
     hash=native_visibility_hash(render.rendered_clusters,render.rendered_cluster_count*sizeof(render.rendered_clusters[0]),hash);
-    return native_visibility_hash(structure_visibility_globals.rendered_cluster_indices,sizeof(structure_visibility_globals.rendered_cluster_indices),hash);
+    return native_visibility_hash(rendered_cluster_indices,sizeof(rendered_cluster_indices),hash);
 }
 boolean n3ds_structure_visibility_test(void)
 {

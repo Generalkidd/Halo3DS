@@ -1,5 +1,108 @@
 # Optional RGBA8 texture archive
 
+## Gameplay texture modes
+
+On New systems, open **Graphics Options** from the bottom screen in the
+main or pause menu. Press **Y** for the same shortcut. Choose a mode and
+save. The new mode applies when the next campaign map loads. Returning to
+the main menu and loading a mission also applies it.
+
+| Mode | Campaign world texture cap | Detail sampling |
+| --- | --- | --- |
+| Performance (default) | 32 px | Authored mipmaps on eligible detail textures |
+| Balanced | 64 px | Authored mipmaps on eligible detail textures |
+| Classic | 64 px | Single level |
+
+The cap applies to the longest dimension. HUD, menu art, readable displays,
+and reflection cubes retain their separate resolution rules. Eligible detail
+chains come from the retail map, including the authored fade at smaller
+mips. Exact RGB8 is used for the audited opaque sand and cliff detail
+textures in Silent Cartographer. Other detail textures retain an RGBA8 base,
+and unsupported chains use their ordinary single-level texture. The
+ordinary texture archives already cover the 32 and 64 px plans, so the
+graphics settings work with existing installs.
+
+## Native texture LOD fixture
+
+Cook the three opaque retail Silent Cartographer detail textures into a
+standalone development pack.
+
+```text
+halo3ds-setup texture-lod --map b30.map --output texture-lod.ntxm
+```
+
+The pack holds one tiled RGB8 chain per texture. Mode 0 uses its 64×64
+base level. Mode 1 uses all four levels from 64×64 through 8×8. Mode 2 uses
+the same chain from 32×32 through 8×8. The mip modes blend between levels.
+The fixture renders the same 400×240 corridor and camera sweep in each mode.
+Sand, cliff rock and brushed metal come from the retail map. The corridor is
+a controlled scene for evaluating texture sampling.
+
+Build with `--fixed-world-width 400 --texture-lod-fixture capture` for one
+60-frame sweep with top-screen framebuffer readback. Use `--texture-lod-fixture timing`
+with the same viewport for four sweeps without readback. Both builds load
+`sdmc:/halo-texture-lod.ntxm` and select the mode from a one-byte ASCII
+`0`, `1`, or `2` in `sdmc:/halo-texture-lod-mode.txt`.
+
+`port/n3ds/tools/emulator_texture_lod.py` stages the private Azahar profiles,
+checks the selected dimensions and allocation sizes, and assembles native PNG
+stills and a frame-indexed 30 fps motion comparison. The timing runs measure
+guest render work through GPU queue retirement and paced loop intervals.
+Compare physical New 2DS XL timings separately.
+
+## Opt-in texture comparison
+
+The standalone setup command writes a matched schema-2 archive from an
+expanded, catalogue-verified retail map. Use a new output path for each
+variant. The ordinary setup installer continues to generate schema 1.
+
+```text
+halo3ds-setup texture-compare --map a10.map --output raw/a10.ntx4 --variant raw
+halo3ds-setup texture-compare --map a10.map --output lz4hc/a10.ntx4 --variant lz4hc
+halo3ds-setup texture-compare --map a10.map --output compact/a10.ntx4 --variant compact
+```
+
+Only `lz4hc` requires the optional host `liblz4` shared library. Pass
+`--lz4-library PATH` if it is outside the loader search path. Each compressed
+payload is independent and decodes into its original tiled RGBA8 allocation.
+The compact mode considers only audited BSP lightmap descriptors in retail
+`a10` and `b30`, after the normal lightmap filtering. Eligible grayscale with
+alpha uses LA8 and eligible opaque color uses RGB8. All other payloads use raw
+RGBA8. The cooker reads the archive back and compares reconstructed RGBA8
+against the canonical conversion before publishing.
+
+Build once per fixture with `--texture-storage candidate-archive
+--texture-compare --fixed-world-width 400 --texture-cache-mib 4`. The archive
+header selects the mode, so use the same executable for all three inputs.
+The comparison build requires prefetch and midpoint presentation disabled.
+The ordinary legacy archive and map decoder remain available on failure.
+
+To qualify the Azahar route, build with `--texture-compare-fixture capture`.
+Cook both `ui` and `a10` into each variant's directory. Run
+`port/n3ds/tools/emulator_texture_compare.py --phase capture` with the retained
+Azahar binary, private prepared assets, DSP firmware and a new output directory.
+Pass `--case LABEL BINARY ARCHIVE_DIR` and `--expect-mode LABEL MODE` for
+each input, using mode names `raw`, `lz4`, and `packed`. The harness runs
+sequentially, checks actual mode and format publication, and compares native
+RGBA8 captures. Its report identifies each emulator backend and input hash.
+
+Use a separate build with `--texture-compare-fixture timing
+--performance-profile` after capture parity passes. Run the same tool with
+`--phase timing`. It compares the bounded title-to-campaign fixture and
+records guest entry time, loop work and loop intervals. These are Azahar
+observations. Physical microSD latency, ARM11 time and displayed stutter
+require a separate console comparison.
+
+Schema 2 retains the 128-byte header and 96-byte entry layout below. Header
+offset 100 stores mode 1 (raw), 2 (LZ4 HC), or 3 (compact). Entry offset 88
+stores codec 0 (raw) or 1 (LZ4), and offset 92 stores the canonical RGBA8 FNV.
+Offsets 48 and 60 distinguish resident and stored length, and offset 64 checks
+the resident bytes. Stable format IDs 2 and 3 represent RGB8 and LA8,
+respectively. The stored LZ4 block is capped at 256 KiB and must be smaller
+than its decoded length.
+
+## Schema 1 reference
+
 This is development source, not a validated release. No builds, tests, archive
 generation, emulator runs or device comparisons have been performed for this
 stage. Rendering parity, lifecycle behavior and performance remain unverified.

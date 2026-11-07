@@ -49,6 +49,9 @@ static void presentation_forget_history(void)
 {
     presentation.has_previous = 0;
     n3ds_presentation_poses_reset();
+#if HALO_N3DS_ALGO_MIDPOINT_PARTICLES != N3DS_ALGORITHM_REFERENCE
+    n3ds_presentation_particles_reset();
+#endif
     n3ds_presentation_weapon_reset();
 }
 

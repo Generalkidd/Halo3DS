@@ -1,6 +1,7 @@
 /* Included by render_objects.c. History and draw scratch stay on the render
  * owner; gameplay and marker consumers always see the authoritative nodes. */
 #include "engine_cache.h"
+#include "engine_algorithm_profile.h"
 #include "engine_input.h"
 #include "engine_presentation.h"
 #include "game/game.h"
@@ -42,12 +43,38 @@ static struct native_pose_history
 	struct native_pose_snapshot snapshots[2];
 	real_matrix4x3 draw_nodes[MAXIMUM_NODES_PER_MODEL];
 } *native_pose_history;
+#if HALO_N3DS_ALGO_MIDPOINT_QUATERNIONS != N3DS_ALGORITHM_REFERENCE
+static struct native_pose_rotations
+{
+	real_quaternion values[NATIVE_POSE_NODES];
+	unsigned int valid[NATIVE_POSE_NODES / 32];
+} *native_pose_rotations;
+#endif
 static boolean native_pose_allocation_failed;
 static unsigned int native_pose_latest, native_pose_samples;
+
+#if HALO_N3DS_ALGO_MIDPOINT_PARTICLES != N3DS_ALGORITHM_REFERENCE
+static struct native_pose_draw_snapshots
+{
+	unsigned int tick, generation;
+	unsigned int valid[NATIVE_POSE_OBJECTS / 32];
+	real_matrix4x3 nodes[NATIVE_POSE_NODES];
+} *native_pose_draw_snapshots;
+static boolean native_pose_draw_allocation_failed;
+
+static void native_pose_draw_snapshots_reset(void)
+{
+	if (native_pose_draw_snapshots)
+		memset(native_pose_draw_snapshots->valid, 0, sizeof(native_pose_draw_snapshots->valid));
+}
+#endif
 
 void n3ds_presentation_poses_reset(void)
 {
 	native_pose_samples = 0;
+#if HALO_N3DS_ALGO_MIDPOINT_PARTICLES != N3DS_ALGORITHM_REFERENCE
+	native_pose_draw_snapshots_reset();
+#endif
 }
 
 static boolean native_pose_eligible(
@@ -77,12 +104,18 @@ void n3ds_presentation_poses_capture(void)
 	{
 		if (native_pose_allocation_failed)
 			return;
-		native_pose_history = malloc(sizeof(*native_pose_history));
+		native_pose_history = (malloc)(sizeof(*native_pose_history));
 		if (!native_pose_history)
 		{
 			native_pose_allocation_failed = TRUE;
 			return;
 		}
+#if HALO_N3DS_ALGO_MIDPOINT_QUATERNIONS != N3DS_ALGORITHM_REFERENCE
+		/* Optional storage cannot prevent the base pose history from working. */
+		native_pose_rotations = (malloc)(2 * sizeof(*native_pose_rotations));
+		if (!native_pose_rotations)
+			n3ds_algorithm_profile_add(N3DS_ALG_CPU_MIDPOINT_QUAT_PRESSURE,1);
+#endif
 	}
 
 	unsigned int generation = n3ds_engine_cache_generation();
@@ -98,6 +131,10 @@ void n3ds_presentation_poses_capture(void)
 	snapshot->generation = generation;
 	snapshot->tick = tick;
 	memset(snapshot->object_slots, 0, sizeof(snapshot->object_slots));
+#if HALO_N3DS_ALGO_MIDPOINT_QUATERNIONS != N3DS_ALGORITHM_REFERENCE
+	if (native_pose_rotations)
+		memset(native_pose_rotations[native_pose_latest].valid, 0, sizeof(native_pose_rotations[0].valid));
+#endif
 
 	unsigned int objects = 0, nodes = 0;
 	struct object_iterator iterator;
@@ -157,6 +194,57 @@ static struct native_object_pose const *native_pose_find(
 	return pose->object_index == object_index ? pose : NULL;
 }
 
+#if HALO_N3DS_ALGO_MIDPOINT_PARTICLES != N3DS_ALGORITHM_REFERENCE
+static void native_pose_draw_snapshot(long object_index, real_matrix4x3 const *nodes)
+{
+	struct native_pose_snapshot const *latest = &native_pose_history->snapshots[native_pose_latest];
+	struct native_object_pose const *pose = native_pose_find(latest, object_index);
+	if (!pose || native_pose_draw_allocation_failed)
+		return;
+
+	if (!native_pose_draw_snapshots)
+	{
+		native_pose_draw_snapshots = (calloc)(1, sizeof(*native_pose_draw_snapshots));
+		if (!native_pose_draw_snapshots)
+		{
+			native_pose_draw_allocation_failed = TRUE;
+			n3ds_algorithm_profile_add(N3DS_ALG_CPU_PARTICLE_PRESSURE, 1);
+			return;
+		}
+	}
+
+	/* The latest endpoint bank owns these disjoint offsets. It cannot rotate
+	 * between accepted world draws and their synchronous particle pass. */
+	native_pose_draw_snapshots->tick = latest->tick;
+	native_pose_draw_snapshots->generation = latest->generation;
+	unsigned int slot = pose - latest->objects;
+	memcpy(&native_pose_draw_snapshots->nodes[pose->node_offset], nodes, pose->node_count * sizeof(*nodes));
+	native_pose_draw_snapshots->valid[slot / 32] |= 1u << (slot % 32);
+}
+
+real_matrix4x3 const *n3ds_presentation_particle_parent_node(long object_index, short node_index)
+{
+	if (!native_pose_draw_snapshots || native_pose_samples != 2 ||
+		!n3ds_presentation_midpoint_active() || n3ds_presentation_midpoint_rejected())
+		return NULL;
+
+	struct native_pose_snapshot const *latest = &native_pose_history->snapshots[native_pose_latest];
+	if (native_pose_draw_snapshots->tick != latest->tick ||
+		native_pose_draw_snapshots->generation != latest->generation ||
+		latest->generation != n3ds_engine_cache_generation())
+		return NULL;
+
+	struct native_object_pose const *pose = native_pose_find(latest, object_index);
+	if (!pose || (unsigned short)node_index >= pose->node_count)
+		return NULL;
+
+	unsigned int slot = pose - latest->objects;
+	if (!(native_pose_draw_snapshots->valid[slot / 32] & (1u << (slot % 32))))
+		return NULL;
+	return &native_pose_draw_snapshots->nodes[pose->node_offset + node_index];
+}
+#endif
+
 static struct native_object_pose const *native_pose_pair(
 	long object_index, struct native_object_pose const **previous)
 {
@@ -200,6 +288,37 @@ static boolean native_pose_valid_rotation(real_matrix4x3 const *matrix)
 	cross_product3d(&matrix->forward, &matrix->left, &up);
 	return matrix->scale > 0.0001f && valid_real_matrix4x3(matrix) && dot_product3d(&up, &matrix->up) > 0.f;
 }
+
+#if HALO_N3DS_ALGO_MIDPOINT_QUATERNIONS != N3DS_ALGORITHM_REFERENCE
+static void native_pose_rotation(unsigned int bank, unsigned int node, real_quaternion *out)
+{
+	struct native_pose_snapshot *snapshot=&native_pose_history->snapshots[bank];
+	if (!native_pose_rotations)
+	{
+		matrix4x3_rotation_to_quaternion(&snapshot->nodes[node],out);
+		return;
+	}
+	struct native_pose_rotations *rotations=&native_pose_rotations[bank];
+	unsigned int *valid=&rotations->valid[node/32];
+	unsigned int bit=1u<<(node%32);
+	if (*valid & bit)
+	{
+		n3ds_algorithm_profile_add(N3DS_ALG_CPU_MIDPOINT_QUAT_REUSE,1);
+#if HALO_N3DS_ALGO_MIDPOINT_QUATERNIONS == N3DS_ALGORITHM_VERIFY
+		real_quaternion expected;
+		matrix4x3_rotation_to_quaternion(&snapshot->nodes[node],&expected);
+		assert(!memcmp(&expected,&rotations->values[node],sizeof(expected)));
+#endif
+	}
+	else
+	{
+		matrix4x3_rotation_to_quaternion(&snapshot->nodes[node],&rotations->values[node]);
+		*valid|=bit;
+		n3ds_algorithm_profile_add(N3DS_ALG_CPU_MIDPOINT_QUAT_BUILD,1);
+	}
+	*out=rotations->values[node];
+}
+#endif
 
 static real_matrix4x3 const *native_pose_for_draw(
 	long object_index, struct object_datum const *datum, struct object_definition const *definition,
@@ -249,8 +368,13 @@ static real_matrix4x3 const *native_pose_for_draw(
 		}
 
 		real_quaternion rotation_a, rotation_b, midpoint;
+#if HALO_N3DS_ALGO_MIDPOINT_QUATERNIONS != N3DS_ALGORITHM_REFERENCE
+		native_pose_rotation(native_pose_latest^1u,previous->node_offset+i,&rotation_a);
+		native_pose_rotation(native_pose_latest,current->node_offset+i,&rotation_b);
+#else
 		matrix4x3_rotation_to_quaternion(&a[i], &rotation_a);
 		matrix4x3_rotation_to_quaternion(&b[i], &rotation_b);
+#endif
 		/* Matrix conversion normalizes the interpolated rotation. */
 		quaternions_interpolate(&rotation_a, &rotation_b, 0.5f, &midpoint);
 		matrix4x3_rotation_from_quaternion(node, &midpoint);
