@@ -7,6 +7,7 @@
 #include "engine_files.h"
 #include "engine_checkpoint.h"
 #include "engine_presentation.h"
+#include "engine_dependency_trace.h"
 #include "engine_threads.h"
 #include "engine_cache.h"
 #include "cache_reader.h"
@@ -347,6 +348,7 @@ done:
 #ifdef HALO_N3DS_PRESENT_INTERPOLATION
         n3ds_presentation_reset();
 #endif
+        n3ds_trace_restore(game_time_get());
         char message[128];snprintf(message,sizeof(message),"CHECKPOINT: resumed map=%s bsp=%d",engine.map_name,h.bsp);n3ds_log(message);
     }
 }

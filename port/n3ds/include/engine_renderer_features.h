@@ -95,12 +95,17 @@ typedef char n3ds_vertex_layout_supported[(HALO_N3DS_VERTEX_LAYOUT == N3DS_VERTE
 #if HALO_N3DS_PROFILE_FRAMES && N3DS_RENDERER_VALIDATION_CONFIGURED
 #error "Non-readback profile frame limit cannot be mixed with validation fixtures"
 #endif
+#if defined(HALO_N3DS_DEPENDENCY_TRACE) && N3DS_RENDERER_VALIDATION_CONFIGURED
+#error "Dependency trace cannot be mixed with readback or validation fixtures"
+#endif
 #define N3DS_RENDERER_UNCAPTURED_PROFILE_ELIGIBLE \
     (N3DS_RENDERER_PROFILE_CONFIGURED && !N3DS_RENDERER_VALIDATION_CONFIGURED)
 #if N3DS_RENDERER_READBACK_CONFIGURED
 #define N3DS_RENDERER_RUN_PURPOSE "validation-readback"
 #elif N3DS_RENDERER_VALIDATION_CONFIGURED
 #define N3DS_RENDERER_RUN_PURPOSE "validation-fixture"
+#elif defined(HALO_N3DS_DEPENDENCY_TRACE)
+#define N3DS_RENDERER_RUN_PURPOSE "dependency-trace-uncaptured"
 #elif N3DS_RENDERER_UNCAPTURED_PROFILE_ELIGIBLE
 #define N3DS_RENDERER_RUN_PURPOSE "performance-uncaptured-candidate"
 #else
