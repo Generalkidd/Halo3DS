@@ -140,7 +140,11 @@ void particle_system_update(
 	real delta_time,
 	long system_index);
 static void particle_system_render(
-	long system_index);
+	long system_index
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+	, unsigned long *preview_seed
+#endif
+	);
 static void particle_system_next_type_state_index(
 	struct particle_system_datum const *system,
 	struct particle_type *type,
@@ -1358,7 +1362,11 @@ void particle_system_update(
 static unsigned int native_particle_selected,native_particle_omitted,native_system_draws;
 #endif
 static void particle_system_render(
-	long system_index)
+	long system_index
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+	, unsigned long *preview_seed
+#endif
+	)
 {
 	struct particle_system_datum *system = particle_system_get(system_index);
 	struct particle_system_definition *definition = particle_system_definition_get(system->definition_index);
@@ -1510,10 +1518,15 @@ static void particle_system_render(
 
 					if (particle->sprite_index == -1.0f)
 					{
-						particle->sprite_index = (real)local_random_range(
-							0,
-							(short)sequence->sprites.count);
-						sprite_index = (short)particle->sprite_index;
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+						if (preview_seed)
+							sprite_index = seed_random_range(preview_seed, 0, (short)sequence->sprites.count);
+						else
+#endif
+						{
+							sprite_index = local_random_range(0, (short)sequence->sprites.count);
+							particle->sprite_index = (real)sprite_index;
+						}
 					}
 					else
 					{
@@ -1577,8 +1590,11 @@ static void particle_system_render(
 								FLAG(_build_sprite_viewer_space_bit));
 						}
 
-						((struct shader_effect_definition *)sprite_data.shader)->secondary_map_radius =
-							state_definition->variables.radius;
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+						if (!preview_seed)
+#endif
+							((struct shader_effect_definition *)sprite_data.shader)->secondary_map_radius =
+								state_definition->variables.radius;
 						build_sprites_end(&sprite_data);
 					}
 
@@ -1638,8 +1654,11 @@ static void particle_system_render(
 								FLAG(_build_sprite_viewer_space_bit));
 						}
 
-						((struct shader_effect_definition *)sprite_data.shader)->secondary_map_radius =
-							state_definition->variables.radius;
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+						if (!preview_seed)
+#endif
+							((struct shader_effect_definition *)sprite_data.shader)->secondary_map_radius =
+								state_definition->variables.radius;
 						build_sprites_end(&sprite_data);
 					}
 				}
@@ -1655,6 +1674,17 @@ static void particle_system_render(
 void particle_systems_render(
 	void)
 {
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+	extern int n3ds_presentation_midpoint_active(void);
+	unsigned long midpoint_seed;
+	unsigned long *preview_seed = NULL;
+
+	if (n3ds_presentation_midpoint_active())
+	{
+		midpoint_seed = *get_global_local_random_seed_address();
+		preview_seed = &midpoint_seed;
+	}
+#endif
 #ifdef HALO_N3DS
     native_system_draws=0; /* Reset per view, including each stereo eye. */
 #endif
@@ -1676,7 +1706,11 @@ void particle_systems_render(
 			if (system->location.cluster_index != NONE &&
 				scenario_location_potentially_visible_local(&system->location))
 			{
-				particle_system_render(system_index);
+				particle_system_render(system_index
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+					, preview_seed
+#endif
+					);
 			}
 		}
 	}
