@@ -560,6 +560,27 @@ boolean shader_type_is_valid_for_modifier(
 	return result;
 }
 
+#ifdef HALO_N3DS
+/* Drawing several parts/instances can evaluate the same texture animation
+ * repeatedly. Keep copied inputs and results only for the current GPU frame;
+ * no object or tag contents are retained by reference. Dynamic animation
+ * values, exact time, and mutable descriptors all participate in the key. */
+enum { NATIVE_TEXTURE_ANIMATION_SETS = 16, NATIVE_TEXTURE_ANIMATION_WAYS = 2 };
+static struct native_texture_animation_entry {
+    unsigned long long frame;
+    unsigned int generation;
+    const void *source;
+    struct shader_texture_animation animation;
+    real inputs[9];
+    real_vector4d rows[2];
+    int valid;
+} native_texture_animations[NATIVE_TEXTURE_ANIMATION_SETS][NATIVE_TEXTURE_ANIMATION_WAYS];
+static byte native_texture_animation_next[NATIVE_TEXTURE_ANIMATION_SETS];
+extern int n3ds_gpu_frame_active(void);
+extern unsigned long long n3ds_gpu_model_frame_serial(void);
+extern unsigned int n3ds_engine_cache_generation(void);
+#endif
+
 void shader_texture_animation_evaluate(
 	struct shader_texture_animation const *texture_animation,
 	struct render_animation const *render_animation,
@@ -653,6 +674,36 @@ void shader_texture_animation_evaluate(
 		r_input = 1.0f;
 	}
 
+#ifdef HALO_N3DS
+    struct native_texture_animation_entry *cached = NULL;
+    /* The all-constant, unrotated case is already cheaper than a cache key. */
+    int native_expensive=texture_animation->u_function || texture_animation->v_function ||
+        texture_animation->r_function || texture_animation->r_scale!=0.f || r_offset!=0.f;
+    /* Overlapping output rows retain the original write ordering. */
+    unsigned long u_address=(unsigned long)u_transform_reference,v_address=(unsigned long)v_transform_reference;
+    if(native_expensive && n3ds_gpu_frame_active() && (u_address>v_address?u_address-v_address:v_address-u_address)>=sizeof(real_vector4d)) {
+        real native_inputs[9] = {u_scale,v_scale,u_offset,v_offset,r_offset,time_value,u_input,v_input,r_input};
+        unsigned long address=(unsigned long)texture_animation;
+        unsigned int set=((address>>4)^(address>>9))&(NATIVE_TEXTURE_ANIMATION_SETS-1);
+        unsigned long long frame=n3ds_gpu_model_frame_serial();
+        unsigned int generation=n3ds_engine_cache_generation();
+        for(unsigned int i=0;i<NATIVE_TEXTURE_ANIMATION_WAYS;++i) {
+            struct native_texture_animation_entry *entry=&native_texture_animations[set][i];
+            if(entry->valid && entry->frame==frame && entry->generation==generation && entry->source==texture_animation &&
+               !memcmp(&entry->animation,texture_animation,sizeof(*texture_animation)) &&
+               !memcmp(entry->inputs,native_inputs,sizeof(native_inputs))) {
+                *u_transform_reference=entry->rows[0];*v_transform_reference=entry->rows[1];
+                return;
+            }
+        }
+        unsigned int way=native_texture_animation_next[set]++%NATIVE_TEXTURE_ANIMATION_WAYS;
+        cached=&native_texture_animations[set][way];cached->valid=0;
+        cached->frame=frame;cached->generation=generation;cached->source=texture_animation;
+        memcpy(&cached->animation,texture_animation,sizeof(*texture_animation));
+        memcpy(cached->inputs,native_inputs,sizeof(native_inputs));
+    }
+#endif
+
 	u_input = periodic_function_evaluate(
 		texture_animation->u_function,
 		(texture_animation->u_phase + time_value) / u_period) *
@@ -695,6 +746,13 @@ void shader_texture_animation_evaluate(
 	v_transform_reference->n[3] =
 		cosine_value * v_input + sine_value * u_input +
 		texture_animation->r_center.y;
+
+#ifdef HALO_N3DS
+    if(cached) {
+        cached->rows[0]=*u_transform_reference;cached->rows[1]=*v_transform_reference;
+        cached->valid=1;
+    }
+#endif
 
 	return;
 }
