@@ -75,6 +75,12 @@ symbols in this file:
 #include "render/render.h"
 #include "text/font_group.h"
 #include "text/unicode.h"
+#ifdef HALO_N3DS
+#include "engine_text.h"
+#endif
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+#include "engine_presentation.h"
+#endif
 
 /* ---------- constants */
 
@@ -205,6 +211,70 @@ static struct hardware_character_cache hardware_character_cache;
 static pixel32 global_shadow_color = 0;
 static short rasterizer_text_unused = 0;
 static short magic_number= 12;
+
+#ifdef HALO_N3DS
+static struct native_glyph_pass {
+	boolean active, dirty, sampled;
+	int left, top, right, bottom;
+} glyph_pass;
+
+static void native_glyph_pass_begin(void)
+{
+	if (n3ds_engine_text_active() && n3ds_gpu_text_batch_begin())
+		glyph_pass = (struct native_glyph_pass){.active= TRUE};
+}
+
+static void native_glyph_pass_publish(void)
+{
+	if (glyph_pass.dirty)
+	{
+		rasterizer_bitmap_changed(hardware_character_cache.bitmap);
+		glyph_pass.dirty= FALSE;
+	}
+	glyph_pass.sampled= FALSE;
+}
+
+static void native_glyph_pass_end(void)
+{
+	if (!glyph_pass.active) return;
+	native_glyph_pass_publish();
+	if (!n3ds_gpu_text_batch_end()) vhalt("Failed to emit the native text batch");
+	glyph_pass.active= FALSE;
+}
+
+static void native_glyph_pass_sample(int x, int y, int width, int height)
+{
+	if (!glyph_pass.active) return;
+	/* The atlas is clamped and has no mipmaps. Keep the adjacent texel at
+	 * either edge for the bilinear footprint of both foreground and shadow. */
+	int left= x-1, top= y-1, right= x+width+1, bottom= y+height+1;
+	if (glyph_pass.sampled)
+	{
+		left= MIN(left, glyph_pass.left);
+		top= MIN(top, glyph_pass.top);
+		right= MAX(right, glyph_pass.right);
+		bottom= MAX(bottom, glyph_pass.bottom);
+	}
+	glyph_pass.left= left;
+	glyph_pass.top= top;
+	glyph_pass.right= right;
+	glyph_pass.bottom= bottom;
+	glyph_pass.sampled= TRUE;
+}
+
+static void native_glyph_pass_before_write(int x, int y, int width, int height)
+{
+	if (glyph_pass.active && glyph_pass.sampled &&
+		x < glyph_pass.right && x+width > glyph_pass.left &&
+		y < glyph_pass.bottom && y+height > glyph_pass.top)
+	{
+		/* Draw before changing texels a preceding quad can sample. The
+		 * bitmap owner retains that GPU version until the queue retires. */
+		native_glyph_pass_publish();
+		if (!n3ds_gpu_text_batch_emit()) vhalt("Failed to emit the native text batch");
+	}
+}
+#endif
 
 /* ---------- public code */
 
@@ -369,7 +439,10 @@ rasterizer_draw_string(
 		rectangle2d window_bounds;
 		rectangle2d viewport_bounds;
 
-		magic_number++;
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+		if (!n3ds_presentation_midpoint_active())
+#endif
+			magic_number++;
 
 		match_assert("c:\\halo\\SOURCE\\rasterizer\\rasterizer_text.c", 180, string);
 
@@ -422,6 +495,9 @@ rasterizer_draw_string(
 			parameters.map[0] = bitmap;
 
 			rasterizer_text_begin(&parameters);
+#ifdef HALO_N3DS
+			native_glyph_pass_begin();
+#endif
 			draw_string(
 				rasterizer_draw_character_with_dropshadow,
 				&window_bounds,
@@ -429,6 +505,9 @@ rasterizer_draw_string(
 				&viewport_bounds,
 				height_adjust,
 				string);
+#ifdef HALO_N3DS
+			native_glyph_pass_end();
+#endif
 			rasterizer_text_end();
 		}
 	}
@@ -452,7 +531,10 @@ rasterizer_draw_unicode_string(
 		rectangle2d window_bounds;
 		rectangle2d viewport_bounds;
 
-		magic_number++;
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+		if (!n3ds_presentation_midpoint_active())
+#endif
+			magic_number++;
 
 		match_assert("c:\\halo\\SOURCE\\rasterizer\\rasterizer_text.c", 310, string);
 
@@ -505,6 +587,9 @@ rasterizer_draw_unicode_string(
 			parameters.map[0] = bitmap;
 
 			rasterizer_text_begin(&parameters);
+#ifdef HALO_N3DS
+			native_glyph_pass_begin();
+#endif
 			draw_unicode_string(
 				rasterizer_draw_character_with_dropshadow,
 				&window_bounds,
@@ -512,6 +597,9 @@ rasterizer_draw_unicode_string(
 				&viewport_bounds,
 				height_adjust,
 				string);
+#ifdef HALO_N3DS
+			native_glyph_pass_end();
+#endif
 			rasterizer_text_end();
 		}
 	}
@@ -557,6 +645,9 @@ rasterizer_draw_character_with_dropshadow(
 
 			u0 += x;
 			v0 += y;
+#ifdef HALO_N3DS
+			if (shadow) native_glyph_pass_sample(u0, v0, dx, dy);
+#endif
 
 			vertex_color = shadow ? shadow_color : color;
 
@@ -652,6 +743,12 @@ cache_hardware_format_character(
 		short x, y;
 		short next_write_index;
 
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+		/* A cold glyph rewrites the atlas. Leave its index and pixels alone
+		 * until the regular frame can publish the complete texture. */
+		if (n3ds_presentation_reject_texture())
+			return;
+#endif
 		match_assert("c:\\halo\\SOURCE\\rasterizer\\rasterizer_text.c", 645, font_character->bitmap_width<=HARDWARE_CHARACTER_CACHE_BITMAP_WIDTH);
 		match_assert("c:\\halo\\SOURCE\\rasterizer\\rasterizer_text.c", 646, font_character->bitmap_height<=HARDWARE_CHARACTER_CACHE_BITMAP_HEIGHT);
 
@@ -719,6 +816,10 @@ cache_hardware_format_character(
 
 		source = (byte *)font->pixels.address + font_character->pixels_offset;
 
+#ifdef HALO_N3DS
+		native_glyph_pass_before_write(hardware_character_cache.x0, hardware_character_cache.y0,
+			font_character->bitmap_width, font_character->bitmap_height);
+#endif
 		for (y = 0; y < font_character->bitmap_height; y++)
 		{
 			word *destination = (word *)bitmap_2d_address(
@@ -731,7 +832,12 @@ cache_hardware_format_character(
 				*destination++ = (word)((*source++ << 8) | 0x0FFF);
 		}
 
-		rasterizer_bitmap_changed(hardware_character_cache.bitmap);
+#ifdef HALO_N3DS
+		if (glyph_pass.active)
+			glyph_pass.dirty= TRUE;
+		else
+#endif
+			rasterizer_bitmap_changed(hardware_character_cache.bitmap);
 
 		hardware_character_cache.x0 += font_character->bitmap_width;
 		hardware_character_cache.write_index = (hardware_character_cache.write_index + 1) & (MAXIMUM_HARDWARE_CHARACTERS - 1);
