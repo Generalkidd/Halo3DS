@@ -48,6 +48,10 @@
       "sdk": false
     },
     {
+      "source": "port/n3ds/src/engine_dependency_trace.c",
+      "compiler": "gcc"
+    },
+    {
       "source": "source/saved games/game_state.c",
       "compiler": "clang",
       "defines": [

@@ -95,6 +95,10 @@ def main():
                         help='Add bounded owner-side algorithm counters; requires --performance-profile')
     parser.add_argument('--profile-frames', type=int, default=0,
                         help='Exit after 1..18000 frontend loops without readback; requires --performance-profile')
+    parser.add_argument('--dependency-trace', action='store_true',
+                        help='Collect a bounded dependency event trace independently of profiling; export at shutdown')
+    parser.add_argument('--dependency-trace-loops', type=int,
+                        help='Capture 1..18000 completed frontend loops after gameplay starts (default: 120); requires --dependency-trace')
     for name in ALGORITHMS:
         parser.add_argument('--algo-'+name.replace('_', '-'), choices=tuple(ALGORITHM_MODES), default='reference',
                             help='Independent algorithm comparison; only reference is implemented')
@@ -112,6 +116,14 @@ def main():
         parser.error('--algorithm-profile and --profile-frames require --performance-profile')
     if args.profile_frames and (args.test_frames or args.diagnostics or args.original_memory):
         parser.error('--profile-frames cannot be combined with readback or validation fixtures')
+    if args.dependency_trace_loops is not None and not args.dependency_trace:
+        parser.error('--dependency-trace-loops requires --dependency-trace')
+    if args.dependency_trace_loops is None:
+        args.dependency_trace_loops = 120
+    if not 1 <= args.dependency_trace_loops <= 18000:
+        parser.error('--dependency-trace-loops must be 1..18000 completed frontend loops')
+    if args.dependency_trace and (args.test_frames or args.diagnostics or args.original_memory):
+        parser.error('--dependency-trace cannot be combined with readback or validation fixtures')
     for name in RENDERER_MODES:
         selected = getattr(args, name)
         if selected not in RENDERER_AVAILABLE[name]:
@@ -132,6 +144,7 @@ def main():
     uncaptured_profile_eligible = bool(args.performance_profile and not validation_configured)
     run_purpose = ('validation-readback' if readback_configured else
                    'validation-fixture' if validation_configured else
+                   'dependency-trace-uncaptured' if args.dependency_trace else
                    'performance-uncaptured-candidate' if uncaptured_profile_eligible else 'gameplay')
     out = args.output.resolve(); out.mkdir(parents=True, exist_ok=True)
     for name in defaults:
@@ -142,11 +155,11 @@ def main():
     nm = args.devkitarm/('bin/arm-none-eabi-nm'+ext)
     for path in [gcc, ar, args.libctru/'lib/libctru.a', args.citro3d/'lib/libcitro3d.a', args.xdk]:
         if not path.exists(): parser.error(f'Missing dependency: {path}')
-    if args.present_60:
+    if args.present_60 or args.dependency_trace:
         for name, expected in CITRO3D_FRAME_SOURCE.items():
             path = args.citro3d/'source'/name
             if not path.is_file() or hashlib.sha256(path.read_bytes().replace(b'\r\n', b'\n')).hexdigest() != expected:
-                parser.error(f'--present-60 requires the Citro3D {CITRO3D_FRAME_REVISION} source checkout and its built library; check {path}')
+                parser.error(f'--present-60/--dependency-trace requires the Citro3D {CITRO3D_FRAME_REVISION} source checkout and its built library; check {path}')
     manifest = json.loads((PORT/'sources.json').read_text())
     entries = manifest['objects']+[{'source':s,'compiler':'clang','archive':True} for s in manifest['runtime']]
     sources = [ROOT/e['source'] for e in entries]
@@ -163,7 +176,7 @@ def main():
     for source in sources: digest.update(source.read_bytes())
     for shader in shaders.values(): digest.update(Path(shader['binary']).read_bytes())
     build_id = int(digest.hexdigest()[:8],16)
-    if not args.present_60:
+    if not (args.present_60 or args.dependency_trace):
         entries = [entry for entry in entries if not entry.get('citro3d_frame_adapter')]
     defines = [f'-DHALO_N3DS_CHECKPOINT_BUILD=0x{build_id:08x}u','-DHALO_N3DS_CHECKPOINT_FEATURE=1',f'-DHALO_N3DS_MISSION_TICKS={args.test_frames}']
     for name, modes in RENDERER_MODES.items():
@@ -173,6 +186,9 @@ def main():
     defines.append(f'-DHALO_N3DS_PROFILE_FRAMES={args.profile_frames}')
     if args.algorithm_profile:
         defines.append('-DHALO_N3DS_ALGORITHM_PROFILE=1')
+    if args.dependency_trace:
+        defines.extend(('-DHALO_N3DS_DEPENDENCY_TRACE=1',
+                        f'-DHALO_N3DS_DEPENDENCY_TRACE_LOOPS={args.dependency_trace_loops}'))
     if args.diagnostics: defines.append('-DHALO_N3DS_RENDERER_TESTS=1')
     if args.original_memory: defines.append('-DHALO_N3DS_LOW_MEMORY_TEST=1')
     if args.fixed_world_width:
@@ -260,12 +276,33 @@ def main():
                                   'instrumentation_overhead':'unmeasured',
                                   'profile_loop_limit':args.profile_frames,
                                   'candidate_status':'reserved; no algorithm candidate implemented'},
+            'dependency_trace':{'enabled':args.dependency_trace,
+                                'independent_of_profile':True,
+                                'schema_version':1,'header_bytes':128,'record_bytes':64,'footer_bytes':16,
+                                'capture_loop_limit':args.dependency_trace_loops if args.dependency_trace else 0,
+                                'capture_start':'first gameplay loop',
+                                'capture_limit_unit':'completed frontend loops; not ticks or presentations',
+                                'owner_event_capacity':8192,'owner_event_bytes':64,
+                                'callback_ring_capacity':256,'vblank_ring_capacity':256,
+                                'callback_ring_bytes':16400,'vblank_ring_bytes':16400,
+                                'submission_metadata_slots':16,'submission_metadata_bytes':704,
+                                'configured_buffer_bytes':557792 if args.dependency_trace else 0,
+                                'buffer_bytes_exclude':'collector contexts/scalars, stack and stdio export storage',
+                                'overflow_policy':'drop new records; never overwrite retained events',
+                                'export':'shutdown only; capture limit does not end gameplay',
+                                'export_path':'sdmc:/halo-trace-%016llx.bin (run ID)',
+                                'checksum':'FNV-1a32 over header and records; trailer excluded',
+                                'tail_always_unconfirmed':True,
+                                'instrumentation_overhead':'unmeasured',
+                                'frame_adapter':args.present_60 or args.dependency_trace,
+                                'citro3d_frame_revision':CITRO3D_FRAME_REVISION},
             'renderer_features':{'schema_version':1,
                                  **{name:{'mode':getattr(args,name),'id':modes[getattr(args,name)]}
                                     for name,modes in RENDERER_MODES.items()}},
             'renderer_run':{'purpose':run_purpose,'configured_readback':readback_configured,
                             'configured_validation_fixture':validation_configured,
                             'profile_instrumentation':args.performance_profile,
+                            'dependency_trace_instrumentation':args.dependency_trace,
                             'configured_uncaptured_profile_eligible':uncaptured_profile_eligible,
                             'external_capture':'unverified',
                             'evidence':'configuration only; not validation or measured performance'},
