@@ -12,6 +12,9 @@ struct n3ds_cache_view {
     struct cache_file_tag_header *tag_header;
     struct cache_file_tag_instance *instances;
     int tags_linear;
+    /* Renderer-side provenance captured before relocation mutates tag bytes.
+     * Set only after the existing relocation/source CRC checks succeed. */
+    unsigned int source_tags_crc;
 };
 void *n3ds_cache_allocate(struct n3ds_cache_view *view);
 /* Bounded I/O permits loading feedback without another map-sized buffer. */

@@ -5,9 +5,14 @@
 #define SCENERY_BATCH_CACHE 32
 #define SCENERY_BATCH_GROUPS 16
 static struct scenery_batch_mesh {const void *source,*key;unsigned int count,indices;struct native_skin_vertex *v;struct native_render_vertex *rigid;unsigned short *i;} scenery_batch_meshes[SCENERY_BATCH_CACHE];
+/* Optional allocation failures must not occupy permanent resident-mesh slots. */
+static struct scenery_batch_rejection {const void *source,*key;unsigned int count,indices;} scenery_batch_rejections[SCENERY_BATCH_CACHE];
+static unsigned int scenery_batch_rejection_next;
+static unsigned long long scenery_batch_allocation_failure_frame;
+static int scenery_batch_allocation_failed;
 static struct scenery_batch_group {
  struct scenery_batch_mesh *mesh;struct native_model_material material;struct native_model_lighting lighting;
- float rows[SCENERY_INSTANCES*12],uv[2],center[3];unsigned int count;int sides;
+ float rows[SCENERY_INSTANCES*12],uv[2];unsigned int count;int sides;
 } scenery_batch_groups[SCENERY_BATCH_GROUPS];
 static unsigned int scenery_batch_bytes,scenery_batch_avoided,scenery_batch_draws,scenery_batch_instances;
 static struct scenery_batch_mesh *scenery_batch_mesh_get(const void *source,const void *key,const struct native_render_vertex *v,unsigned int count,const unsigned short *indices,unsigned int ni)
@@ -18,27 +23,46 @@ static struct scenery_batch_mesh *scenery_batch_mesh_get(const void *source,cons
   if(!s->source && !slot)slot=s;
  }
  if(!slot || !count || count>512 || !ni || ni>4096)return NULL;
- *slot=(struct scenery_batch_mesh){.source=source,.key=key,.count=count,.indices=ni};
+ /* Keep resident hits above available even when cold admission is suspended.
+  * Geometry-budget rejections below never trigger the allocation-failure gate. */
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+ if(n3ds_presentation_midpoint_active())return NULL;
+#endif
+ if(scenery_batch_allocation_failed && n3ds_gpu_frame_active() &&
+    scenery_batch_allocation_failure_frame==n3ds_gpu_model_frame_serial())return NULL;
+ for(unsigned int i=0;i<SCENERY_BATCH_CACHE;++i){const struct scenery_batch_rejection *s=scenery_batch_rejections+i;
+  if(s->source==source && s->key==key && s->count==count && s->indices==ni)return NULL;
+ }
+ struct scenery_batch_rejection *failed=scenery_batch_rejections+(scenery_batch_rejection_next++%SCENERY_BATCH_CACHE);
+ *failed=(struct scenery_batch_rejection){source,key,count,ni};
  extern int n3ds_input_platform_original_model(void);
  unsigned int bytes=SCENERY_INSTANCES*(count*sizeof(*slot->v)+ni*2)+count*sizeof(*slot->rigid),budget=n3ds_input_platform_original_model()?128*1024:768*1024;
  if(bytes>budget || scenery_batch_bytes>budget-bytes)return NULL;
+ *slot=(struct scenery_batch_mesh){.source=source,.key=key,.count=count,.indices=ni};
  slot->v=n3ds_gpu_geometry_optional_allocate(count*SCENERY_INSTANCES*sizeof(*slot->v));
- slot->i=n3ds_gpu_geometry_optional_allocate(ni*SCENERY_INSTANCES*2);
- slot->rigid=n3ds_gpu_geometry_optional_allocate(count*sizeof(*slot->rigid));
- if(!slot->v || !slot->i || !slot->rigid){n3ds_gpu_geometry_free(slot->rigid);slot->rigid=NULL;n3ds_gpu_geometry_free(slot->v);n3ds_gpu_geometry_free(slot->i);slot->v=NULL;slot->i=NULL;return NULL;}
+ if(slot->v)slot->i=n3ds_gpu_geometry_optional_allocate(ni*SCENERY_INSTANCES*2);
+ if(slot->i)slot->rigid=n3ds_gpu_geometry_optional_allocate(count*sizeof(*slot->rigid));
+ if(!slot->v || !slot->i || !slot->rigid){
+  n3ds_gpu_geometry_free(slot->rigid);n3ds_gpu_geometry_free(slot->v);n3ds_gpu_geometry_free(slot->i);memset(slot,0,sizeof(*slot));
+  if(n3ds_gpu_frame_active()){scenery_batch_allocation_failed=1;scenery_batch_allocation_failure_frame=n3ds_gpu_model_frame_serial();}
+  memset(failed,0,sizeof(*failed));
+  return NULL;
+ }
  memcpy(slot->rigid,v,count*sizeof(*v));n3ds_gpu_geometry_flush(slot->rigid,count*sizeof(*v));
  for(unsigned int j=0;j<SCENERY_INSTANCES;++j){
   for(unsigned int k=0;k<count;++k){struct native_skin_vertex *out=slot->v+j*count+k;memcpy(out,v+k,sizeof(*v));out->bones[0]=j*3;out->bones[1]=0;out->bones[2]=1;out->bones[3]=0;}
   for(unsigned int k=0;k<ni;++k){assert(indices[k]<count);slot->i[j*ni+k]=indices[k]+j*count;}
  }
- n3ds_gpu_geometry_flush(slot->v,count*SCENERY_INSTANCES*sizeof(*slot->v));n3ds_gpu_geometry_flush(slot->i,ni*SCENERY_INSTANCES*2);scenery_batch_bytes+=bytes;return slot;
+ n3ds_gpu_geometry_flush(slot->v,count*SCENERY_INSTANCES*sizeof(*slot->v));n3ds_gpu_geometry_flush(slot->i,ni*SCENERY_INSTANCES*2);scenery_batch_bytes+=bytes;
+ memset(failed,0,sizeof(*failed));return slot;
 }
 static void scenery_batch_submit(struct scenery_batch_group *g)
 {
  if(!g->count)return;
  g->material.lighting=&g->lighting;
- if(g->count==1){assert(n3ds_gpu_model_rigid_draw(g->mesh->rigid,g->mesh->i,g->mesh->indices,g->rows,g->uv,0,0,g->sides,&g->material));}
- else {assert(n3ds_gpu_model_skin_draw(g->mesh->v,g->mesh->i,g->mesh->indices*g->count,g->rows,g->count,g->uv,0,0,g->sides,&g->material));}
+ const void *vertices=g->count==1?(const void *)g->mesh->rigid:g->mesh->v;
+ assert(n3ds_gpu_model_scenery_draw_resident(vertices,g->mesh->i,g->mesh->indices*g->count,
+    g->rows,g->count,g->uv,g->sides,&g->material));
  scenery_batch_avoided+=g->count-1;scenery_batch_instances+=g->count;++scenery_batch_draws;g->count=0;
 }
 static void scenery_batch_flush(void)
@@ -49,6 +73,8 @@ static void scenery_batch_release(void)
  if(scenery_batch_bytes){assert(n3ds_gpu_texture_barrier());}
  for(unsigned int i=0;i<SCENERY_BATCH_CACHE;++i){n3ds_gpu_geometry_free(scenery_batch_meshes[i].rigid);n3ds_gpu_geometry_free(scenery_batch_meshes[i].v);n3ds_gpu_geometry_free(scenery_batch_meshes[i].i);}
  memset(scenery_batch_meshes,0,sizeof(scenery_batch_meshes));memset(scenery_batch_groups,0,sizeof(scenery_batch_groups));scenery_batch_bytes=0;
+ memset(scenery_batch_rejections,0,sizeof(scenery_batch_rejections));scenery_batch_rejection_next=0;
+ scenery_batch_allocation_failure_frame=0;scenery_batch_allocation_failed=0;
 }
 static int scenery_batch_add(const void *source,const void *key,const struct native_render_vertex *v,unsigned int count,const unsigned short *indices,unsigned int ni,const float *rows,const float *uv,int sides,const struct native_model_material *material)
 {
@@ -69,7 +95,7 @@ static int scenery_batch_add(const void *source,const void *key,const struct nat
  }
  if(!empty){scenery_batch_flush();empty=scenery_batch_groups;}
  *empty=(struct scenery_batch_group){.mesh=mesh,.material=compare,.lighting=*material->lighting,.count=1,.sides=sides};
- memcpy(empty->rows,rows,48);memcpy(empty->uv,uv,8);for(int a=0;a<3;++a)empty->center[a]=rows[a*4+3];return 1;
+ memcpy(empty->rows,rows,48);memcpy(empty->uv,uv,8);return 1;
 }
 void n3ds_scenery_report(void)
 {

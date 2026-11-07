@@ -4,6 +4,7 @@
 static C3D_Tex scaled_texture[2];
 static C3D_RenderTarget *scaled_target[2];
 static int world_budget_enabled,world_scale,world_low_active,world_scale_failed[2];
+static int world_scale_fixed;
 static unsigned int scale_frames;
 #include "engine_screen_effect.inl"
 #include "engine_resolution_policy.inl"
@@ -12,23 +13,51 @@ static float scale_work_previous,scale_wait_previous;
 static int scale_sample_ready;
 static const unsigned short scale_widths[]={400,320,256,200};
 static const unsigned short scale_heights[]={240,192,152,120};
+#if defined(HALO_N3DS_FIXED_WORLD_WIDTH) && HALO_N3DS_FIXED_WORLD_WIDTH!=400 && HALO_N3DS_FIXED_WORLD_WIDTH!=320
+#error "HALO_N3DS_FIXED_WORLD_WIDTH must be 400 or 320"
+#endif
 void n3ds_gpu_world_budget(int enabled)
 {
  if(world_budget_enabled!=!!enabled){
   world_budget_enabled=!!enabled;memset(&scale_policy,0,sizeof(scale_policy));
-  world_scale=enabled && n3ds_input_platform_original_model()?1:0;
+  int original=enabled && n3ds_input_platform_original_model();
+  world_scale=original?1:0;
+  world_scale_fixed=0;
+#if defined(HALO_N3DS_PRESENT_INTERPOLATION) && !defined(HALO_N3DS_WORLD_SCALE_TEST) && !defined(HALO_N3DS_RENDERER_TESTS)
+  if (enabled && n3ds_platform_is_new_2ds_xl() && !diagnostic_mode) {
+   /* Hold native quality on both midpoint and one-view fallback frames. */
+   world_scale=0;
+   world_scale_fixed=1;
+   n3ds_log("WORLD PIXEL BUDGET: New 2DS XL presentation uses native 400x240");
+  }
+#endif
+#if defined(HALO_N3DS_FIXED_WORLD_WIDTH) && !defined(HALO_N3DS_WORLD_SCALE_TEST) && !defined(HALO_N3DS_RENDERER_TESTS)
+  if(enabled && !original && !world_scale_fixed && !diagnostic_mode) {
+   world_scale_fixed=1;
+   world_scale=HALO_N3DS_FIXED_WORLD_WIDTH==320?1:0;
+   char message[128];
+   snprintf(message,sizeof(message),"WORLD PIXEL BUDGET: fixed %ux%u; full-resolution model LOD and HUD",
+       scale_widths[world_scale],scale_heights[world_scale]);
+   n3ds_log(message);
+  }
+#endif
   scale_policy.level=world_scale;scale_sample_ready=0;
-  if(world_scale)n3ds_log("WORLD PIXEL BUDGET: Original baseline 320x192; adaptive 256x152/200x120, HUD/menu full resolution");
+  if(original)n3ds_log("WORLD PIXEL BUDGET: Original baseline 320x192; adaptive 256x152/200x120, HUD/menu full resolution");
  }
 }
 void n3ds_gpu_frame_work(float milliseconds)
 {scale_work_previous=milliseconds;scale_wait_previous=n3ds_gpu_frame_wait_ticks()*(1000.f/268123480.f);scale_sample_ready=1;}
-int n3ds_gpu_world_pressure(void){return world_budget_enabled?world_scale:0;}
-float n3ds_gpu_world_pixel_scale(void){return world_budget_enabled && !world_scale_failed[eye_right]?scale_widths[world_scale]/400.f:1.f;}
+int n3ds_gpu_world_pressure(void){return world_budget_enabled && !world_scale_fixed?world_scale:0;}
+float n3ds_gpu_world_pixel_scale(void)
+{
+ /* Fixed-width comparisons keep projected model size at the native baseline. */
+ if(!world_budget_enabled || world_scale_fixed || world_scale_failed[eye_right])return 1.f;
+ return scale_widths[world_scale]/400.f;
+}
 int n3ds_gpu_stereo_view(void){return eye_right;}
 static void world_scale_feedback(float gpu,float prepare)
 {
- if(!world_budget_enabled || diagnostic_mode)return;
+ if(!world_budget_enabled || world_scale_fixed || diagnostic_mode)return;
  if(!scale_sample_ready)return;
  scale_sample_ready=0;
  int next=resolution_policy_step_profile(&scale_policy,scale_work_previous,gpu,scale_wait_previous,prepare,n3ds_input_platform_original_model());
@@ -98,5 +127,5 @@ static void world_scale_dispose(void)
 {
  for(int i=0;i<2;++i){if(scaled_target[i])C3D_RenderTargetDelete(scaled_target[i]);scaled_target[i]=NULL;if(scaled_texture[i].data)C3D_TexDelete(&scaled_texture[i]);memset(&scaled_texture[i],0,sizeof(scaled_texture[i]));world_scale_failed[i]=0;}
  screen_effect_dispose();
- world_low_active=world_scale=world_budget_enabled=0;memset(&scale_policy,0,sizeof(scale_policy));scale_sample_ready=0;
+ world_low_active=world_scale=world_budget_enabled=world_scale_fixed=0;memset(&scale_policy,0,sizeof(scale_policy));scale_sample_ready=0;
 }

@@ -6,6 +6,7 @@
 #include "interface/player_ui.h"
 #include "engine_files.h"
 #include "engine_checkpoint.h"
+#include "engine_presentation.h"
 #include "engine_threads.h"
 #include "engine_cache.h"
 #include "cache_reader.h"
@@ -191,8 +192,12 @@ static unsigned int checkpoint_write_worker(void *argument)
     const char *path=job->path;char temp[256],backup[256];
     struct checkpoint_header h=job->header;
     unsigned int handle=0,next=0;int ok=0;unsigned long crc;
+    qsort(job->records,h.pointer_count,sizeof(*job->records),compare_records);
+    for(unsigned int i=1;i<h.pointer_count;++i)
+        if(job->records[i-1].offset==job->records[i].offset) return 0;
     byte *block=(malloc)(32768),*packed=(malloc)(n3ds_save_pack_bound());
-    if(!block || !packed)goto done;
+    void *codec=(malloc)(n3ds_save_pack_state_bytes());
+    if(!block || !packed || !codec)goto done;
     snprintf(temp,sizeof(temp),"%s.tmp",path);snprintf(backup,sizeof(backup),"%s.bak",path);
     if(!n3ds_file_create(temp,0) || !(handle=n3ds_file_open(temp,3)) || !n3ds_file_resize(handle,0) || !n3ds_file_write_buffered(handle,&h,sizeof(h))) goto done;
     crc_new(&crc);h.reserved=0;
@@ -205,7 +210,7 @@ static unsigned int checkpoint_write_worker(void *argument)
             memcpy(block+job->records[next].offset-offset,&job->records[next].target,4);++next;
         }
         crc_checksum_buffer(&crc,block,n);
-        unsigned int count=n3ds_save_pack(block,n,packed,n3ds_save_pack_bound());
+        unsigned int count=n3ds_save_pack(codec,block,n,packed,n3ds_save_pack_bound());
         if(!count || !n3ds_file_write_buffered(handle,&count,4) || !n3ds_file_write_buffered(handle,packed,count)) goto done;
         h.reserved+=count+4;offset+=n;
         if(job->threaded) n3ds_engine_sleep(1);
@@ -224,7 +229,7 @@ static unsigned int checkpoint_write_worker(void *argument)
     ok=n3ds_file_rename(temp,path);job->header.reserved=h.reserved;
 done:
     if(handle) n3ds_file_close(handle);
-    free(block);free(packed);return ok;
+    free(codec);free(block);free(packed);return ok;
 }
 static void release_job(struct checkpoint_job_data *job)
 {n3ds_save_snapshot_release(job->snapshot);free(job->records);memset(job,0,sizeof(*job));}
@@ -269,8 +274,6 @@ void game_state_write_to_persistent_storage(void *buffer,unsigned long *field,lo
     writing.records=(malloc)(MAX_POINTERS*sizeof(struct pointer_record));
     if(!writing.records) {n3ds_log("CHECKPOINT: insufficient memory; previous save retained");return;}
     if(!n3ds_checkpoint_visit(encode_pointer)) goto rejected;
-    qsort(writing.records,writing.count,sizeof(*writing.records),compare_records);
-    for(unsigned int i=1;i<writing.count;++i) if(writing.records[i-1].offset==writing.records[i].offset) goto rejected;
     h.magic=STORAGE_MAGIC;h.version=STORAGE_VERSION;h.header_bytes=sizeof(h);h.payload_bytes=bytes;
     h.engine_header_bytes=header_bytes;h.checksum_offset=offsetof(struct game_state_header,checksum);h.pointer_count=writing.count;
     for(unsigned int i=0;i<writing.count;++i) if((writing.records[i].target>>28)==4) h.build=image_identity();
@@ -278,7 +281,7 @@ void game_state_write_to_persistent_storage(void *buffer,unsigned long *field,lo
     h.bsp=global_structure_bsp_index_get();h.seed=get_random_seed();
     const void *snapshot=n3ds_game_state_snapshot();
     if(snapshot && (checkpoint_just_captured || n3ds_save_snapshot_matches(snapshot,buffer))) n3ds_save_snapshot_retain(snapshot);
-    else snapshot=n3ds_save_snapshot_create(buffer,bytes);
+    else snapshot=n3ds_save_snapshot_capture(buffer,bytes,NULL);
     struct checkpoint_job_data job={0};job.header=h;job.started=begin;job.records=writing.records;writing.records=NULL;
     job.snapshot=snapshot;job.raw=snapshot?NULL:buffer;
     strcpy(job.path,path);strcpy(job.map,engine->map_name);
@@ -340,5 +343,10 @@ done:
     if(handle && !n3ds_file_close(handle)) ok=0;
     free(records);free(block);free(packed);n3ds_files_unlock();
     if(!ok) {vhalt("Campaign storage: incompatible or damaged checkpoint during restore");}
-    else {char message[128];snprintf(message,sizeof(message),"CHECKPOINT: resumed map=%s bsp=%d",engine.map_name,h.bsp);n3ds_log(message);}
+    else {
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+        n3ds_presentation_reset();
+#endif
+        char message[128];snprintf(message,sizeof(message),"CHECKPOINT: resumed map=%s bsp=%d",engine.map_name,h.bsp);n3ds_log(message);
+    }
 }

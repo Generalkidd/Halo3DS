@@ -11,6 +11,25 @@ struct native_generic_material {
     float transform[4][2][4];
     struct native_generic_stage stage[8];
 };
+/* Portable one-stage TEV recipe. Sources 0..2 are original texture slots;
+ * source 3 is the packed RGBA constant. Operand pairs select color, alpha,
+ * or blue, with the odd member taking one minus that component. No GPU enums
+ * cross this boundary. Function zero means the existing fallback is required. */
+enum native_generic_function {
+    NATIVE_GENERIC_REPLACE=1,NATIVE_GENERIC_MODULATE,NATIVE_GENERIC_ADD,
+    NATIVE_GENERIC_INTERPOLATE,NATIVE_GENERIC_MULTIPLY_ADD
+};
+struct native_generic_channel {
+    unsigned int function,source[3],operand[3];
+};
+struct native_generic_recipe {
+    struct native_generic_channel channel[2];
+    unsigned int constant;
+};
+/* Accept unsigned UV combiners fitting one TEV stage, including leading
+ * register-copy stages that can be substituted without intermediate rounding.
+ * Arithmetic stage chains retain the CPU fallback. Failure clears the recipe. */
+int n3ds_generic_lower(const struct native_generic_material *,struct native_generic_recipe *);
 int n3ds_generic_validate(const struct native_generic_material *m);
 /* Exact two-map alpha interpolation, vertex0 lighting and inverse map1 blue
  * alpha packet. Recognize operations, never tag names; other packets fall back. */
@@ -43,6 +62,10 @@ int n3ds_chicago_program(struct native_generic_material *,int maps,const int col
  * callers must still reacquire a handle after each waited FrameBegin.
  * Vertex-dependent combiner inputs are deliberately rejected by validation. */
 void *n3ds_gpu_generic_bake(const struct native_generic_material *m,const float bounds[4]);
+/* Optional-frame preflight using the same complete key as the bake cache.
+ * kind: 0 generic, 1 meter, 2 shield, 3 hologram stream. Never loads, allocates,
+ * ages entries or changes texture state; a midpoint miss marks rejection. */
+int n3ds_gpu_generic_bake_preflight(const struct native_generic_material *,const float bounds[4],int kind);
 void *n3ds_gpu_meter_bake(const struct native_generic_material *m,const float bounds[4]);
 /* RGBA: min(value), max(flash-width), flash(extension), background, tint. */
 void n3ds_meter_program(struct native_generic_material *m,const float constants[5][4],int negative_flash);

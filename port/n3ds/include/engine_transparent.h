@@ -42,6 +42,7 @@ typedef char native_transparent_group_depth[offsetof(struct transparent_geometry
 typedef char native_transparent_group_pose[offsetof(struct transparent_geometry_group,node_matrices)==0x60?1:-1];
 void n3ds_water_bsp_draw(const struct transparent_geometry_group *);
 void n3ds_water_bsp_release(void);
+int n3ds_water_bsp_has_resident(void);
 void n3ds_transparent_begin_view(void);
 void n3ds_transparent_draw_queued(void);
 void n3ds_model_draw_group(const struct transparent_geometry_group *group);

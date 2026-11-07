@@ -12,6 +12,8 @@ void n3ds_engine_tags_unload(void);
 boolean n3ds_engine_bsp_load(struct scenario_structure_bsp_reference *reference);
 void n3ds_engine_bsp_unload(struct scenario_structure_bsp_reference *reference);
 boolean n3ds_engine_cache_read(unsigned long offset, unsigned long bytes, void *destination);
+/* Render-thread snapshot of a validated range in the current map. */
+int n3ds_engine_cache_read_path(unsigned int offset,unsigned int bytes,char path[128]);
 int n3ds_engine_cache_stream_tests(void);
 int n3ds_engine_cache_stream_live(void);
 /* Read-only diagnostics for bounds/lifetime verification. */

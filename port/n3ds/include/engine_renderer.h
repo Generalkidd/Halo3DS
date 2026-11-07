@@ -1,7 +1,12 @@
 #ifndef HALO_N3DS_ENGINE_RENDERER_H
 #define HALO_N3DS_ENGINE_RENDERER_H
+#include "engine_renderer_features.h"
 /* Matches skin.v.pica: 87 bone vectors leave room for camera and constants. */
 enum { NATIVE_GPU_MODEL_BONES = 29 };
+#if defined(HALO_N3DS_PERFORMANCE_PROFILE) || defined(HALO_N3DS_PRESENT_INTERPOLATION)
+/* Nominal top-screen interval for profiling and optional draw admission. */
+#define N3DS_TOP_REFRESH_MS (1000.0 / 59.831)
+#endif
 struct native_render_vertex;
 void n3ds_gpu_world_budget(int enabled);
 struct native_screen_effect {float enhancement,desaturation,tint[3],noise;int additive,video,video_overbright;};
@@ -24,8 +29,8 @@ int n3ds_gpu_model_depth_transform_draw(const void *,const unsigned short *,unsi
 int n3ds_gpu_model_cloak_transform_draw(const void *,const unsigned short *,unsigned int,const float *,unsigned int,int,const float *,float,int,int);
 /* Fixed-width ABI boundary: original engine uses long32, platform uses int32. */
 struct native_render_vertex { float position[3], color[3], uv[2]; };
-/* All live buffer owners use this binding path. Reuse concerns descriptors,
- * never mutable vertex contents; callers still flush written bytes as before. */
+/* Single-stream binding reuse concerns descriptors, never vertex contents.
+ * Callers still flush written bytes as before. */
 int n3ds_gpu_vertex_buffer_bind(const void *data,unsigned int stride,unsigned int attributes,unsigned int permutation);
 /* Constant colors use PICA RGBA8 byte order (R in the low byte). Map lifetime
  * owns the optional immutable multipurpose texture through queued draws. */
@@ -46,7 +51,15 @@ struct native_water_wave_vertex {struct native_render_vertex vertex;float wave[4
  * apply angle-addition identities without per-vertex CPU trigonometry. */
 struct native_water_material {void *base,*cube;float perpendicular[4],parallel[4];unsigned int flags;int sky;const float *wave_phase;};
 int n3ds_gpu_water_draw(const struct native_render_vertex *,const unsigned short *,unsigned int,const struct native_water_material *);
+/* These paths take owner-validated, flushed linear indices that stay live
+ * until the next GPU fence. Other callers keep the checked staging path. */
+int n3ds_gpu_water_draw_resident(const struct native_render_vertex *,const unsigned short *,unsigned int,const struct native_water_material *);
 int n3ds_gpu_water_tests(void);
+/* Preserve order: only adjacent native water/glass draws may retain state.
+ * Break before other transparent paths or depth prepasses; end at view end. */
+void n3ds_gpu_surface_batch_begin(void);
+void n3ds_gpu_surface_batch_break(void);
+void n3ds_gpu_surface_batch_end(void);
 int n3ds_gpu_model_detail_tests(void);
 int n3ds_gpu_model_reflection_tests(void);
 /* Immutable stream revisions stay GPU-resident; NULL requests frame fallback.
@@ -60,6 +73,10 @@ int n3ds_gpu_model_rigid_draw(const struct native_render_vertex *,const unsigned
 struct native_skin_vertex { float position[3],normal[3],uv[2],bones[4]; };
 int n3ds_gpu_model_skin_draw(const struct native_skin_vertex *,const unsigned short *,unsigned int,
     const float *rows,unsigned int nodes,const float uv[2],int sky,int decal,int two_sided,const struct native_model_material *);
+int n3ds_gpu_model_scenery_draw_resident(const void *,const unsigned short *,unsigned int,
+    const float *rows,unsigned int instances,const float uv[2],int two_sided,const struct native_model_material *);
+int n3ds_gpu_model_compact_draw_resident(const void *,const unsigned short *,unsigned int,
+    const float *rows,unsigned int nodes,const float uv[2],int two_sided,int skinned,const struct native_model_material *);
 int n3ds_gpu_model_cpu_draw(const struct native_render_vertex *,const unsigned short *,unsigned int,
     int sky,int decal,int two_sided,const struct native_model_material *);
 int n3ds_gpu_model_cpu_relative_draw(const struct native_render_vertex *,const unsigned short *,unsigned int,
@@ -102,9 +119,30 @@ void n3ds_gpu_programs_dispose(void);
 void n3ds_gpu_renderer_dispose(void);
 int n3ds_gpu_frame_begin(void);
 int n3ds_gpu_frame_active(void);
+/* True only while an active frame uses mono scanout; stable through a text pass. */
+int n3ds_gpu_frame_is_mono(void);
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+/* On success, complete one rasterizer frame and present it before waiting.
+ * Its ordinary frame begin consumes the native reservation. */
+int n3ds_gpu_midpoint_try_begin(void);
+/* Includes the reservation until its rasterizer frame is presented. */
+int n3ds_gpu_midpoint_active(void);
+/* Read after the following keyframe. The transfer path owns the bounded wait. */
+int n3ds_gpu_midpoint_latched(void);
+int n3ds_gpu_midpoint_compatible(void);
+long long n3ds_gpu_present_cost_ticks(int midpoint);
+unsigned int n3ds_gpu_keyframe_latches(void);
+long long n3ds_gpu_next_top_blank(long long now);
+long long n3ds_gpu_top_refresh_ticks(void);
+#endif
 int n3ds_gpu_bottom_owned(void);
 void n3ds_gpu_hud_screen(int bottom);
 void n3ds_gpu_hud_screen_restore(void);
+int n3ds_platform_console_model(void); /* CFG_SystemModel, or -1 if unavailable. */
+int n3ds_platform_stereo_supported(void);
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+int n3ds_platform_is_new_2ds_xl(void);
+#endif
 float n3ds_platform_3d_slider(void);
 void n3ds_gpu_stereo_level(float level);
 void n3ds_gpu_stereo_eye(int right,float offset);
@@ -153,10 +191,21 @@ int n3ds_gpu_geometry_draw(const struct native_render_vertex *vertices,
 int n3ds_gpu_geometry_draw_resident(const struct native_render_vertex *vertices,
     const unsigned short *indices,unsigned int count);
 struct shader;
+#ifdef HALO_N3DS_TEXTURE_PREFETCH
+struct bitmap_data;
+const struct bitmap_data *n3ds_engine_bsp_prefetch_bitmap(const struct shader *shader, short bitmap_index, int extra);
+#endif
 struct vertex_buffer;
+struct native_bsp_index_run { unsigned int index_count; unsigned short cluster; };
+struct native_bsp_material_visibility {
+    const unsigned int *single_owner_clusters;
+    const struct native_bsp_index_run *runs;
+    unsigned int run_count;
+};
 void n3ds_engine_bsp_draw(const struct shader *shader,short bitmap_index,
     const unsigned short *indices,unsigned int count,const struct vertex_buffer *source,
-    int lightmap_group,short lightmap_index,const struct vertex_buffer *lightmap_source);
+    int lightmap_group,short lightmap_index,const struct vertex_buffer *lightmap_source,
+    const struct native_bsp_material_visibility *visibility);
 int n3ds_gpu_model_decal_draw(const struct native_render_vertex *vertices,
     const unsigned short *indices,unsigned int count,int sky,int two_sided);
 int n3ds_gpu_model_decal_tests(void);
@@ -165,6 +214,13 @@ int n3ds_gpu_indexed_draw(const void *vertices,const unsigned short *indices,
 /* Frame-owned immutable copy; remains valid through both eye views and is
  * retired only by the next frame's GPU wait. NULL outside an active frame. */
 const unsigned short *n3ds_gpu_indices_upload(const unsigned short *indices,unsigned int count);
+/* Reuse a complete slice in a live renderer arena, or stage external indices
+ * once. Persistent callers must still honor the residency epoch below. */
+const unsigned short *n3ds_gpu_indices_prepare(const unsigned short *indices,unsigned int count);
+/* An immutable index upload survives until the residency epoch changes.
+ * An epoch of zero disables residency. */
+unsigned long long n3ds_gpu_index_residency_epoch(void);
+const unsigned short *n3ds_gpu_indices_upload_resident(const unsigned short *indices,unsigned int count);
 struct native_render_vertex *n3ds_gpu_model_vertices_allocate(unsigned int count);
 unsigned long long n3ds_gpu_model_frame_serial(void);
 void n3ds_gpu_model_cache_release(void);

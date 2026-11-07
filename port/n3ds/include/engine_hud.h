@@ -28,9 +28,17 @@ int n3ds_gpu_menu_plasma_tests(void);
 void n3ds_gpu_hud_dispose(void);
 void n3ds_gpu_hud_frame_begin(void);
 /* Non-overlapping native CPU stages during the original HUD pass. */
+#if defined(HALO_N3DS_PERFORMANCE_PROFILE) || defined(HALO_N3DS_RENDERER_TESTS)
+#define HALO_N3DS_HUD_PROFILE 1
 void n3ds_gpu_hud_profile_reset(void);
 void n3ds_gpu_hud_profile_add(unsigned int stage,long long ticks);
 void n3ds_gpu_hud_profile_read(long long ticks[4]);
+#define HUD_PROFILE_BEGIN() long long hud_profile_start=n3ds_engine_ticks()
+#define HUD_PROFILE_END(stage) n3ds_gpu_hud_profile_add(stage,n3ds_engine_ticks()-hud_profile_start)
+#else
+#define HUD_PROFILE_BEGIN() ((void)0)
+#define HUD_PROFILE_END(stage) ((void)0)
+#endif
 int n3ds_gpu_hud_meter(const struct native_hud_meter *,const struct native_text_vertex [4],float,float,int,int);
 void n3ds_gpu_sensor_begin(void);
 int n3ds_gpu_sensor_blip(void *,float,float,float,const float [3]);

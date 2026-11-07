@@ -1,5 +1,6 @@
 #ifndef N3DS_ENGINE_CHICAGO_H
 #define N3DS_ENGINE_CHICAGO_H
+#include "engine_generic.h"
 /* Fixed-width native GPU boundary. */
 /* Biased adds need additional stages; keep them on the bounded bake path. */
 static inline int n3ds_chicago_native_function(int function)
@@ -19,6 +20,7 @@ struct native_chicago_material {
     unsigned int meter_tint; /* Native C3D RGBA packing. */
     int vertex_color; /* Already evaluated view-dependent generic RGBA. */
     int generic_lit_lerp; /* Two-map generic fragment combiner; color is lighting/fog. */
+    struct native_generic_recipe generic; /* Exact one-stage UV combiner, or zero. */
     int shield_mask; /* Scalar animation in map0 alpha; authored mask in map1. */
     unsigned int shield_tint; /* Native C3D RGBA packing. */
 };
