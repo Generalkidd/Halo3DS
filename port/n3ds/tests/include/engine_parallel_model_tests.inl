@@ -1,4 +1,5 @@
 #ifdef HALO_N3DS_RENDERER_TESTS
+long long n3ds_engine_tick_frequency(void);
 int n3ds_model_parallel_tests(void)
 {
     const unsigned int size=4097;
