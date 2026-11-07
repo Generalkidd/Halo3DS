@@ -103,6 +103,10 @@ void render_sky(
 	struct model *model;
 	struct animation_graph *animation_graph;
 	short i;
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+	extern int n3ds_presentation_midpoint_active(void);
+	int midpoint = n3ds_presentation_midpoint_active();
+#endif
 
 	if (render.visible_sky_model)
 	{
@@ -138,10 +142,16 @@ void render_sky(
 
 						if (animation->node_count == model->nodes.count)
 						{
-							real phase = (real)fmod(
-								(double)(render.time_delta_since_tick_sec / sky_animation->period + render_sky_globals[i]),
-								1.0);
-							render_sky_globals[i] = phase;
+							real phase = render_sky_globals[i];
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+							if (!midpoint)
+#endif
+							{
+								phase = (real)fmod(
+									(double)(render.time_delta_since_tick_sec / sky_animation->period + phase),
+									1.0);
+								render_sky_globals[i] = phase;
+							}
 							overlay_animation_apply_continuous(
 								animation,
 								animation->frame_count * phase,

@@ -140,6 +140,10 @@ void render_particles(
 	struct build_sprite_data sprite_data;
 	real_point3d position;
 	real_vector3d direction;
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+	extern int n3ds_presentation_midpoint_active(void);
+	int midpoint = n3ds_presentation_midpoint_active();
+#endif
 
 	rendered_particle_count = 0;
 	profile_enter(render_particles_section);
@@ -276,7 +280,10 @@ void render_particles(
                         unsigned int native_slot=(unsigned short)rendered_particle->particle_index;
                         if(particle->object_index==NONE && ((native_dense &&
                            (native_original?(native_slot&3)!=0:(native_slot&3)==3)) || native_draw_count>=native_draw_cap)) {
-                            particle->last_rendered_frame_index=render.frame_index;
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+                            if(!midpoint)
+#endif
+                                particle->last_rendered_frame_index=render.frame_index;
                             ++native_omitted;++rendered_particle;continue;
                         }
                         ++native_selected;if(particle->object_index==NONE)++native_draw_count;
@@ -398,8 +405,10 @@ void render_particles(
 									fade,
 									flags);
 
-								particle->last_rendered_frame_index =
-									render.frame_index;
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+								if (!midpoint)
+#endif
+									particle->last_rendered_frame_index = render.frame_index;
 							}
 						}
 
@@ -408,12 +417,15 @@ void render_particles(
 
 					/* Native thinning/LOD can leave an empty group. Do not
 					 * feed a NaN radius into later material processing. */
-					((struct shader_effect_definition *)sprite_data.shader)->
-						secondary_map_radius =
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+					if (!midpoint)
+#endif
+						((struct shader_effect_definition *)sprite_data.shader)->
+							secondary_map_radius =
 #ifdef HALO_N3DS
-						built_particle_count ? total_radius / built_particle_count : 0.f;
+							built_particle_count ? total_radius / built_particle_count : 0.f;
 #else
-                        total_radius / built_particle_count;
+							total_radius / built_particle_count;
 #endif
 					build_sprites_end(&sprite_data);
 				}

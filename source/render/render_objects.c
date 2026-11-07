@@ -110,6 +110,12 @@ symbols in this file:
 #include "saved games/game_state.h"
 #include "scenario/scenario.h"
 #include "structures/structure_bsp_definitions.h"
+#ifdef HALO_N3DS
+#include "engine_diagnostics.h"
+#endif
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+#include "engine_presentation.h"
+#endif
 
 /* ---------- constants */
 
@@ -315,6 +321,10 @@ boolean debug_inactive_objects = FALSE;
 
 static boolean reported_rendered_object_overflow = FALSE;
 
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+#include "engine_presentation_poses.inl"
+#endif
+
 /* ---------- public code */
 
 void render_objects_initialize(
@@ -393,7 +403,7 @@ struct render_lighting *object_get_cached_render_lighting(
 
 void n3ds_render_objects_with_environment(void (*environment)(const void *),const void *context)
 {
-#if defined(HALO_N3DS)
+#if N3DS_MISSION_PROFILE
     extern long long n3ds_engine_ticks(void);
     extern void n3ds_object_profile(unsigned int,long long);
     long long native_stamp;
@@ -404,11 +414,11 @@ void n3ds_render_objects_with_environment(void (*environment)(const void *),cons
 	profile_enter(render_objects_section);
 
 	rasterizer_models_begin(FALSE);
-#if defined(HALO_N3DS)
+#if N3DS_MISSION_PROFILE
     native_stamp=n3ds_engine_ticks();
 #endif
 	find_rendered_objects();
-#if defined(HALO_N3DS)
+#if N3DS_MISSION_PROFILE
     n3ds_object_profile(3,n3ds_engine_ticks()-native_stamp);
 #endif
 
@@ -416,13 +426,13 @@ void n3ds_render_objects_with_environment(void (*environment)(const void *),cons
 
 	do
 	{
-#if defined(HALO_N3DS)
+#if N3DS_MISSION_PROFILE
         native_stamp=n3ds_engine_ticks();
 #endif
 		if (first_person_pass != (environment ? TRUE : rasterizer_debug_options.draw_first_person_weapon_first))
 		{
 			first_person_weapon_draw();
-#if defined(HALO_N3DS)
+#if N3DS_MISSION_PROFILE
             n3ds_object_profile(4,n3ds_engine_ticks()-native_stamp);
 #endif
 		}
@@ -434,19 +444,23 @@ void n3ds_render_objects_with_environment(void (*environment)(const void *),cons
                 n3ds_gpu_model_batch_flush();
 #endif
                 environment(context);
-#ifdef HALO_N3DS
+#if N3DS_MISSION_PROFILE
                 native_stamp=n3ds_engine_ticks();
 #endif
             }
 			process_rendered_objects(&data);
-#if defined(HALO_N3DS)
+#if N3DS_MISSION_PROFILE
             n3ds_object_profile(5,n3ds_engine_ticks()-native_stamp);
 #endif
 		}
 
 		first_person_pass = !first_person_pass;
 	}
-	while (first_person_pass);
+	while (first_person_pass
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+		&& !n3ds_presentation_midpoint_rejected()
+#endif
+	);
 
 	rasterizer_models_end();
 
@@ -497,6 +511,11 @@ static boolean object_is_first_person_camera(
 static void find_rendered_objects(
 	void)
 {
+	void (*get_bounding_sphere)(long, real_point3d *, real *) = object_get_render_bounding_sphere;
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+	if (n3ds_presentation_midpoint_active() && !render.camera.mirrored)
+		get_bounding_sphere = native_pose_render_bounding_sphere;
+#endif
 	object_marker_begin();
 
 	render_object_globals.rendered_object_count = structure_visibility_find_objects(
@@ -504,7 +523,7 @@ static void find_rendered_objects(
 		MAXIMUM_RENDERED_OBJECTS,
 		cluster_get_first_collideable_object,
 		cluster_get_next_collideable_object,
-		object_get_render_bounding_sphere,
+		get_bounding_sphere,
 		object_unmarked_function,
 		object_mark_function);
 
@@ -514,7 +533,7 @@ static void find_rendered_objects(
 		MAXIMUM_RENDERED_OBJECTS - render_object_globals.rendered_object_count,
 		cluster_get_first_noncollideable_object,
 		cluster_get_next_noncollideable_object,
-		object_get_render_bounding_sphere,
+		get_bounding_sphere,
 		object_unmarked_function,
 		object_mark_function);
 
@@ -539,18 +558,17 @@ static real object_get_level_of_detail_pixels(
 #ifdef HALO_N3DS
     object_get_bounding_sphere(object_index, &center, &radius);
     real pixels=render_frustum_sphere_diameter_in_pixels(&render.frustum,&center,radius);
-    /* Tiny non-colliding scenery adds hundreds of submissions in foliage-rich
-     * levels. Use a stable per-instance cutoff (not a per-frame sample) so the
-     * density thins over a distance band. Solid cover, children, widgets and
-     * cinematic movie stars are never affected. */
+    /* Original consoles use a stable per-instance cutoff for tiny decorative
+     * scenery. New models retain full density at the native world resolution.
+     * Solid cover, children, widgets and movie stars are never affected. */
     struct object_datum *native_object=object_get(object_index);
-    if(native_object->object.type==_object_type_scenery &&
+    extern int n3ds_input_platform_original_model(void);
+    if(n3ds_input_platform_original_model() && native_object->object.type==_object_type_scenery &&
        native_object->object.first_child_object_index==NONE && native_object->object.first_widget_index==NONE &&
        !TEST_FLAG(native_object->object.flags,_object_movie_star_bit) &&
        object_definition_get(native_object->definition_index)->object.collision_model.index==NONE) {
-        extern int n3ds_input_platform_original_model(void);
         unsigned int hash=(unsigned int)object_index*2654435761u;
-        float cutoff=(n3ds_input_platform_original_model()?48.f:10.f)+(float)(hash>>30)*(n3ds_input_platform_original_model()?8.f:2.f);
+        float cutoff=48.f+(float)(hash>>30)*8.f;
         if(pixels<cutoff)return -1.f;
     }
     /* Movie-star flags force maximum detail even on tiny background actors.
@@ -711,15 +729,30 @@ static void render_object_list(
 						}
 					}
 
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+					real_matrix4x3 const *node_matrices = object_get_node_matrices(object_index);
+					real_point3d midpoint_center = object->object.bounding_sphere_center;
+					if (model_effect.type == _render_model_effect_type_none && !render.camera.mirrored &&
+						n3ds_presentation_midpoint_active())
+						node_matrices = native_pose_for_draw(object_index, object, definition, node_matrices, &midpoint_center);
+#endif
 					render_model(
 						definition->object.model.index,
 						level_of_detail_pixels,
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+						node_matrices,
+#else
 						object_get_node_matrices(object_index),
+#endif
 						object->object.region_permutations,
 						object->object.outgoing_change_colors,
 						object->object.outgoing_function_values,
 						data->lighting,
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+						&midpoint_center,
+#else
 						&object->object.bounding_sphere_center,
+#endif
 						object->object.bounding_sphere_radius,
 						&model_effect,
 						object_index,
@@ -1314,6 +1347,9 @@ static void process_rendered_objects(
 		rendered_object_index < render_object_globals.rendered_object_count;
 		rendered_object_index++)
 	{
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+		if (n3ds_presentation_midpoint_rejected()) break;
+#endif
 		data->object_index =
 			render_object_globals.rendered_object_indices[rendered_object_index];
 		render_object(data);
