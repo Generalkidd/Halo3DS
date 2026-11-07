@@ -112,6 +112,7 @@ symbols in this file:
 #include "structures/structure_bsp_definitions.h"
 #ifdef HALO_N3DS
 #include "engine_diagnostics.h"
+#include "engine_dependency_trace.h"
 #endif
 #ifdef HALO_N3DS_PRESENT_INTERPOLATION
 #include "engine_presentation.h"
@@ -417,7 +418,13 @@ void n3ds_render_objects_with_environment(void (*environment)(const void *),cons
 #if N3DS_MISSION_PROFILE
     native_stamp=n3ds_engine_ticks();
 #endif
+	#ifdef HALO_N3DS
+	n3ds_trace_event(N3DS_TRACE_OBJECT_DISCOVERY_BEGIN,0,0);
+	#endif
 	find_rendered_objects();
+	#ifdef HALO_N3DS
+	n3ds_trace_event(N3DS_TRACE_OBJECT_DISCOVERY_END,(unsigned int)render_object_globals.rendered_object_count,0);
+	#endif
 #if N3DS_MISSION_PROFILE
     n3ds_object_profile(3,n3ds_engine_ticks()-native_stamp);
 #endif
@@ -431,7 +438,13 @@ void n3ds_render_objects_with_environment(void (*environment)(const void *),cons
 #endif
 		if (first_person_pass != (environment ? TRUE : rasterizer_debug_options.draw_first_person_weapon_first))
 		{
+			#ifdef HALO_N3DS
+			n3ds_trace_event(N3DS_TRACE_OBJECT_RENDER_BEGIN,0,0); /* First-person weapon. */
+			#endif
 			first_person_weapon_draw();
+			#ifdef HALO_N3DS
+			n3ds_trace_event(N3DS_TRACE_OBJECT_RENDER_END,0,0);
+			#endif
 #if N3DS_MISSION_PROFILE
             n3ds_object_profile(4,n3ds_engine_ticks()-native_stamp);
 #endif
@@ -448,7 +461,13 @@ void n3ds_render_objects_with_environment(void (*environment)(const void *),cons
                 native_stamp=n3ds_engine_ticks();
 #endif
             }
+			#ifdef HALO_N3DS
+			n3ds_trace_event(N3DS_TRACE_OBJECT_RENDER_BEGIN,1,0); /* World objects; environment excluded. */
+			#endif
 			process_rendered_objects(&data);
+			#ifdef HALO_N3DS
+			n3ds_trace_event(N3DS_TRACE_OBJECT_RENDER_END,1,0);
+			#endif
 #if N3DS_MISSION_PROFILE
             n3ds_object_profile(5,n3ds_engine_ticks()-native_stamp);
 #endif
