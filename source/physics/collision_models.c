@@ -16,6 +16,12 @@ COLLISION_MODELS.C
 #include "objects/object_types.h"
 #include "objects/objects.h"
 #include "tag_files/tag_groups.h"
+#ifdef HALO_N3DS
+#include "engine_algorithm_profile.h"
+#define NATIVE_CPU_ADD(metric, value) n3ds_algorithm_profile_add(metric, value)
+#else
+#define NATIVE_CPU_ADD(metric, value) ((void)0)
+#endif
 
 /* ---------- constants */
 
@@ -90,6 +96,7 @@ boolean collision_model_test_sphere(
 	real_point3d transformed_center;
 	real_matrix4x3 inverted_matrix;
 
+	NATIVE_CPU_ADD(N3DS_ALG_CPU_COLLISION_SPHERE, 1);
 	for (node_index = 0; node_index < instance->model->nodes.count; ++node_index)
 	{
 		collision_node = TAG_BLOCK_GET_ELEMENT(&instance->model->nodes, node_index, struct collision_node);
@@ -108,6 +115,8 @@ boolean collision_model_test_sphere(
 				{
 					matrix4x3_inverse(&instance->matrices[node_index], &inverted_matrix);
 					matrix4x3_transform_point(&inverted_matrix, center, &transformed_center);
+					NATIVE_CPU_ADD(N3DS_ALG_CPU_COLLISION_INVERSE, 1);
+					NATIVE_CPU_ADD(N3DS_ALG_CPU_COLLISION_POINT_XFORM, 1);
 				}
 			}
 		}
@@ -126,6 +135,7 @@ boolean collision_model_test_point(
 	short perm;
 	real_point3d transformed_point;
 
+	NATIVE_CPU_ADD(N3DS_ALG_CPU_COLLISION_POINT, 1);
 	for (i = 0; i < instance->model->nodes.count; i++)
 	{
 		collision_node = TAG_BLOCK_GET_ELEMENT(&instance->model->nodes, i, struct collision_node);
@@ -143,6 +153,7 @@ boolean collision_model_test_point(
 				if (collision_bsp->bsp3d.nodes.count > 0)
 				{
 					matrix4x3_inverse_transform_point(&instance->matrices[i], point, &transformed_point);
+					NATIVE_CPU_ADD(N3DS_ALG_CPU_COLLISION_POINT_XFORM, 1);
 
 					if (bsp3d_test_point(&collision_bsp->bsp3d, 0, &transformed_point) == NONE)
 					{
@@ -168,6 +179,7 @@ boolean collision_model_test_vector(
 	short node_index;
 	boolean return_value = FALSE;
 
+	NATIVE_CPU_ADD(N3DS_ALG_CPU_COLLISION_VECTOR, 1);
 	collision_log_usage(3);
 	collision_log_start_time(&collision_model_test_vector_time);
 
@@ -198,6 +210,9 @@ boolean collision_model_test_vector(
 					matrix4x3_inverse(&instance->matrices[node_index], &inverted_matrix);
 					matrix4x3_transform_point(&inverted_matrix, point, &transformed_point);
 					matrix4x3_transform_vector(&inverted_matrix, vector, &transformed_vector);
+					NATIVE_CPU_ADD(N3DS_ALG_CPU_COLLISION_INVERSE, 1);
+					NATIVE_CPU_ADD(N3DS_ALG_CPU_COLLISION_POINT_XFORM, 1);
+					NATIVE_CPU_ADD(N3DS_ALG_CPU_COLLISION_VECTOR_XFORM, 1);
 
 					if (collision_bsp_test_vector(flags, collision_bsp, 0, NULL, &transformed_point, &transformed_vector, result->bsp_result.t, &result->bsp_result))
 					{
@@ -234,6 +249,7 @@ boolean collision_model_test_pill(
 	boolean return_val;
 	real scaled_radius;
 
+	NATIVE_CPU_ADD(N3DS_ALG_CPU_COLLISION_PILL, 1);
 	result->bsp_result.t = FLT_MAX;
 
 	return_val = FALSE;
@@ -257,6 +273,9 @@ boolean collision_model_test_pill(
 					matrix4x3_inverse(&instance->matrices[i], &inverted_matrix);
 					matrix4x3_transform_point(&inverted_matrix, point, &transformed_point);
 					matrix4x3_transform_vector(&inverted_matrix, vector, &transformed_vector);
+					NATIVE_CPU_ADD(N3DS_ALG_CPU_COLLISION_INVERSE, 1);
+					NATIVE_CPU_ADD(N3DS_ALG_CPU_COLLISION_POINT_XFORM, 1);
+					NATIVE_CPU_ADD(N3DS_ALG_CPU_COLLISION_VECTOR_XFORM, 1);
 
 					scaled_radius = inverted_matrix.scale * radius;
 
@@ -301,6 +320,7 @@ boolean collision_model_get_features_in_sphere(
 	real scaled_radius;
 	const real_matrix4x3 *matrix;
 
+	NATIVE_CPU_ADD(N3DS_ALG_CPU_COLLISION_FEATURES, 1);
 	return_val = FALSE;
 
 	for (i = 0; i < instance->model->nodes.count; i++)
@@ -322,6 +342,8 @@ boolean collision_model_get_features_in_sphere(
 					matrix = &instance->matrices[i];
 					matrix4x3_inverse(matrix, &inverted_matrix);
 					matrix4x3_transform_point(&inverted_matrix, center, &transformed_center);
+					NATIVE_CPU_ADD(N3DS_ALG_CPU_COLLISION_INVERSE, 1);
+					NATIVE_CPU_ADD(N3DS_ALG_CPU_COLLISION_POINT_XFORM, 1);
 
 					scaled_radius = inverted_matrix.scale * radius;
 
