@@ -12,7 +12,7 @@ public static class CommandLine
 
         Usage:
           halo3ds-setup guided
-          halo3ds-setup prepare --source PATH --destination PATH --game PATH [--compatibility PATH] [--quiet]
+          halo3ds-setup prepare --source PATH --destination PATH --game PATH [--compatibility PATH] [--candidate-textures] [--quiet]
           halo3ds-setup update --destination PATH --game PATH [--quiet]
           halo3ds-setup verify --source PATH [--quiet]
           halo3ds-setup --help
@@ -29,6 +29,8 @@ public static class CommandLine
         --destination    Existing SD-card root or output folder. Never formatted.
         --game           Halo3DS.3dsx to install (required; not compiled by this tool).
         --compatibility  Matching default.xbe or ntsc2276-hud-strings.bin, if needed.
+        --candidate-textures  Developer opt-in: also prepare RGBA8 .ntx4 archives.
+                              Legacy .ntx files remain available. Prepare only.
         --quiet          Suppress progress; retain the result and any errors.
 
         Quote paths containing spaces. Press Ctrl+C to cancel safely.
@@ -58,7 +60,7 @@ public static class CommandLine
             // Explicit paths avoid accidentally installing a stale executable
             // found in the current directory or next to a different setup app.
             var result = Installer.Run(new(command.Source ?? "", command.Destination!, command.Game!,
-                command.Compatibility, command.Name == "update"), progress, ct);
+                command.Compatibility, command.Name == "update", command.CandidateTextures), progress, ct);
             output.WriteLine(command.Name == "update"
                 ? $"Launcher updated: {result.Destination}"
                 : $"Prepared {result.Prepared} map(s); reused {result.AlreadyCorrect}. Destination: {result.Destination}");
@@ -84,7 +86,7 @@ public static class CommandLine
         if (name is not ("prepare" or "update" or "verify")) throw new UsageException($"Unknown command '{name}'.");
         if (args.Length == 2 && args[1] is "--help" or "-h") return null;
         var values = new Dictionary<string, string>(StringComparer.Ordinal);
-        bool quiet = false;
+        bool quiet = false, candidateTextures = false;
         for (int i = 1; i < args.Length; i++)
         {
             string option = args[i];
@@ -92,6 +94,12 @@ public static class CommandLine
             {
                 if (quiet) throw new UsageException("Duplicate option --quiet.");
                 quiet = true; continue;
+            }
+            if (option == "--candidate-textures")
+            {
+                if (name != "prepare") throw new UsageException("--candidate-textures is only valid for prepare.");
+                if (candidateTextures) throw new UsageException("Duplicate option --candidate-textures.");
+                candidateTextures = true; continue;
             }
             bool allowed = option switch
             {
@@ -109,7 +117,7 @@ public static class CommandLine
         void Require(string key) { if (Get(key) == null) throw new UsageException($"{name} requires {key}."); }
         if (name != "update") Require("--source");
         if (name != "verify") { Require("--destination"); Require("--game"); }
-        return new(name, Get("--source"), Get("--destination"), Get("--game"), Get("--compatibility"), quiet);
+        return new(name, Get("--source"), Get("--destination"), Get("--game"), Get("--compatibility"), quiet, candidateTextures);
     }
 
     static void Verify(string source, TextWriter output, IProgress<SetupProgress>? progress, CancellationToken ct)
@@ -138,7 +146,8 @@ public static class CommandLine
         output.WriteLine($"Verified {names.Count} source map(s) for Xbox build {Data.Build}. HUD, DSP and installed files were not checked.");
     }
 
-    sealed record Options(string Name, string? Source, string? Destination, string? Game, string? Compatibility, bool Quiet);
+    sealed record Options(string Name, string? Source, string? Destination, string? Game, string? Compatibility, bool Quiet,
+        bool CandidateTextures);
     sealed class UsageException(string message) : Exception(message);
 
     sealed class TerminalProgress(TextWriter writer) : IProgress<SetupProgress>
