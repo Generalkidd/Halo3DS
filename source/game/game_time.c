@@ -73,6 +73,7 @@ symbols in this file:
 #include "player_queues_new.h"
 #ifdef HALO_N3DS
 #include "engine_algorithm_profile.h"
+#include "engine_dependency_trace.h"
 #endif
 
 /* ---------- constants */
@@ -595,8 +596,13 @@ void game_time_update(
 					{
 						#ifdef HALO_N3DS
 						n3ds_algorithm_profile_tick(game_time_globals->local_time);
+						n3ds_trace_tick(game_time_globals->local_time);
+						n3ds_trace_event(N3DS_TRACE_TICK_BEGIN,0,0);
 						#endif
 						game_tick();
+						#ifdef HALO_N3DS
+						n3ds_trace_event(N3DS_TRACE_TICK_END,0,0);
+						#endif
 #ifdef HALO_LINUX
 						render_interpolation_tick();
 #endif
@@ -618,8 +624,13 @@ void game_time_update(
 
 		#ifdef HALO_N3DS
 		n3ds_algorithm_profile_tick(game_time_globals->local_time);
+		n3ds_trace_tick(game_time_globals->local_time);
+		n3ds_trace_event(N3DS_TRACE_FRAME_UPDATE_BEGIN,0,0);
 		#endif
 		game_frame(game_time_get_speed()*time_delta_sec);
+		#ifdef HALO_N3DS
+		n3ds_trace_event(N3DS_TRACE_FRAME_UPDATE_END,0,0);
+		#endif
 	}
 	else
 	{
