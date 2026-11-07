@@ -72,6 +72,9 @@ symbols in this file:
 #include "scenario/scenario_definitions.h"
 #include "text/draw_string.h"
 #include "text/text_group.h"
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+#include "engine_presentation.h"
+#endif
 
 /* ---------- constants */
 
@@ -305,6 +308,11 @@ void cinematic_set_title_delayed(
 void cinematic_render(
 	void)
 {
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+	boolean advance = !n3ds_presentation_midpoint_active();
+#else
+	const boolean advance = TRUE;
+#endif
 	if ((cinematic_globals->show_letterbox ||
 		cinematic_globals->letterbox_amount > 0.0f) &&
 		!ui_widgets_active())
@@ -314,34 +322,34 @@ void cinematic_render(
 		real letterbox_amount;
 
 		game_time = game_time_get();
-		elapsed_ticks =
-			game_time - cinematic_globals->letterbox_last_game_time;
-		cinematic_globals->letterbox_last_game_time = game_time;
+		elapsed_ticks = game_time - cinematic_globals->letterbox_last_game_time;
+		if (!advance)
+			elapsed_ticks = 0;
+		letterbox_amount = cinematic_globals->letterbox_amount;
 		if (cinematic_globals->show_letterbox)
 		{
-			cinematic_globals->letterbox_amount +=
-				(real)elapsed_ticks * (1.0f / (real)TICKS_PER_SECOND);
-			letterbox_amount =
-				MIN(cinematic_globals->letterbox_amount, 1.0f);
+			letterbox_amount += (real)elapsed_ticks * (1.0f / (real)TICKS_PER_SECOND);
+			letterbox_amount = MIN(letterbox_amount, 1.0f);
 		}
 		else
 		{
-			cinematic_globals->letterbox_amount =
-				cinematic_globals->letterbox_amount -
-				(real)elapsed_ticks * (1.0f / (real)TICKS_PER_SECOND);
-			letterbox_amount =
-				MAX(cinematic_globals->letterbox_amount, 0.0f);
+			letterbox_amount -= (real)elapsed_ticks * (1.0f / (real)TICKS_PER_SECOND);
+			letterbox_amount = MAX(letterbox_amount, 0.0f);
 		}
 
-		cinematic_globals->letterbox_amount = letterbox_amount;
+		if (advance)
+		{
+			cinematic_globals->letterbox_last_game_time = game_time;
+			cinematic_globals->letterbox_amount = letterbox_amount;
+		}
 
-		if (cinematic_globals->letterbox_amount > 0.0f)
+		if (letterbox_amount > 0.0f)
 		{
 			rectangle2d bar;
 			real bar_height;
 			real viewport_height;
 
-			bar_height = cinematic_globals->letterbox_amount * 0.125f;
+			bar_height = letterbox_amount * 0.125f;
 			viewport_height = (real)(
 				render.camera.viewport_bounds.y1 -
 				render.camera.viewport_bounds.y0);
@@ -496,16 +504,14 @@ void cinematic_render(
 				rasterizer_text_set_shadow_color(0);
 			}
 
-			active_title->time += game_time_get_paused()
-				? 0
-				: game_time_get_elapsed();
-
-			if (!game_in_editor() &&
-				(real)active_title->time >=
-					title->up_time + title->fade_out_time)
+			if (advance)
 			{
-				active_title->title_index = NONE;
-				active_title->time = NONE;
+				active_title->time += game_time_get_paused() ? 0 : game_time_get_elapsed();
+				if (!game_in_editor() && (real)active_title->time >= title->up_time + title->fade_out_time)
+				{
+					active_title->title_index = NONE;
+					active_title->time = NONE;
+				}
 			}
 		}
 	}
