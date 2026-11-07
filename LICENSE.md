@@ -119,3 +119,6 @@ express Statement of Purpose.
  d. Affirmer understands and acknowledges that Creative Commons is not a
     party to this document and has no duty or obligation with respect to
     this CC0 or use of the Work.
+
+The portal projection cache incorporates work by Kevin Boggs under the
+[MIT License](LICENSE-KEVIN-MIT.md).
