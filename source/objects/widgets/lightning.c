@@ -157,7 +157,8 @@ typedef char intermediate_lightning_point_valid_offset_assert[
 static void lightning_offset_marker_position(
 	real_point3d *position,
 	real_matrix4x3 const *matrix,
-	real_vector3d const *random_position_bounds);
+	real_vector3d const *random_position_bounds,
+	unsigned long *seed);
 
 /* ---------- globals */
 
@@ -229,7 +230,8 @@ void lightning_render(
 static void lightning_offset_marker_position(
 	real_point3d *position,
 	real_matrix4x3 const *matrix,
-	real_vector3d const *random_position_bounds)
+	real_vector3d const *random_position_bounds,
+	unsigned long *seed)
 {
 	real random_x;
 	real random_y;
@@ -240,9 +242,9 @@ static void lightning_offset_marker_position(
 	match_assert("c:\\halo\\SOURCE\\objects\\widgets\\lightning.c", 117, matrix);
 	match_assert("c:\\halo\\SOURCE\\objects\\widgets\\lightning.c", 118, random_position_bounds);
 
-	random_z = real_seed_random(get_global_local_random_seed_address());
-	random_y = real_seed_random(get_global_local_random_seed_address());
-	random_x = real_seed_random(get_global_local_random_seed_address());
+	random_z = real_seed_random(seed);
+	random_y = real_seed_random(seed);
+	random_x = real_seed_random(seed);
 
 	set_real_vector3d(
 		&offset,
@@ -272,6 +274,16 @@ void lightning_submit(
 		struct lightning_datum *lightning = lightning_get(lightning_index);
 		struct lightning_definition *definition = lightning_definition_get(lightning->definition_index);
 		struct object_marker marker;
+		unsigned long *seed = get_global_local_random_seed_address();
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+		extern int n3ds_presentation_midpoint_active(void);
+		unsigned long midpoint_seed;
+		if (n3ds_presentation_midpoint_active())
+		{
+			midpoint_seed = *seed;
+			seed = &midpoint_seed;
+		}
+#endif
 
 		if (definition->markers.count > 0 &&
 			object_get_marker_by_name(
@@ -323,7 +335,8 @@ void lightning_submit(
 							lightning_offset_marker_position(
 								&points[0].position,
 								&marker.matrix,
-								&marker_definition->random_position_bounds);
+								&marker_definition->random_position_bounds,
+								seed);
 							points[0].width = marker_definition->thickness;
 							points[0].color = marker_definition->tint;
 							points[0].valid = TRUE;
@@ -346,7 +359,7 @@ void lightning_submit(
 								{
 									struct lightning_vertex *vertices = rasterizer_dynamic_vertices_lock(vertex_buffer_index);
 									real one_over_point_count = 1.f/point_count;
-									real u_offset = real_seed_random(get_global_local_random_seed_address());
+									real u_offset = real_seed_random(seed);
 									real thickness_scale = 1.f;
 									real_rgb_color const *tint = global_real_rgb_white;
 									real brightness_scale = 1.f;
@@ -480,7 +493,8 @@ void lightning_submit(
 							lightning_offset_marker_position(
 								&points[point_count+segment_point_count].position,
 								&marker.matrix,
-								&next_marker_definition->random_position_bounds);
+								&next_marker_definition->random_position_bounds,
+								seed);
 							points[point_count+segment_point_count].width = next_marker_definition->thickness;
 							points[point_count+segment_point_count].color = next_marker_definition->tint;
 							points[point_count+segment_point_count].valid = TRUE;
@@ -525,7 +539,7 @@ void lightning_submit(
 									match_assert("c:\\halo\\SOURCE\\objects\\widgets\\lightning.c", 426, !points[point_count+segment_point_index].valid);
 
 									jitter = real_seed_random_range(
-										get_global_local_random_seed_address(),
+										seed,
 										-1.f,
 										1.f)*jitter_offset;
 									scale_vector3d(&up, jitter, &offset);

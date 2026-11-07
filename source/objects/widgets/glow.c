@@ -1444,12 +1444,18 @@ void glow_submit(
 {
 	if (object_index != NONE && glow_index != NONE)
 	{
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+		extern int n3ds_presentation_midpoint_active(void);
+		if (!n3ds_presentation_midpoint_active())
+#endif
+		{
 			struct glow_datum *glow = glow_get(glow_index);
 			struct glow_definition *definition = glow_definition_get(glow->definition_index);
 			struct object_marker marker;
 
-			glow_update(glow_get(glow_index), object_index);
-		object_get_marker_by_name(object_index, definition->attachment_marker, &marker, 1);
+			glow_update(glow, object_index);
+			object_get_marker_by_name(object_index, definition->attachment_marker, &marker, 1);
+		}
 		glow_render(object_index, glow_index);
 	}
 
