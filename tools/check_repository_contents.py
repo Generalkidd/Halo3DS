@@ -10,7 +10,7 @@ import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
 FORBIDDEN = {
-    '.map', '.nrl', '.ntx', '.xbe', '.iso', '.xiso', '.3dsx', '.cia', '.elf',
+    '.map', '.nrl', '.ntx', '.ntx4', '.ngm', '.xbe', '.iso', '.xiso', '.3dsx', '.cia', '.elf',
     '.exe', '.dll', '.pdb', '.lib', '.o', '.a', '.zip', '.7z', '.rar', '.dmp',
     '.pfx', '.p12', '.key', '.log', '.shbin',
 }
