@@ -1494,6 +1494,12 @@ static void main_new_map(
 #endif
 	ui_widgets_disable_pause_game(30);
 #ifdef HALO_N3DS
+#ifdef HALO_N3DS_TEXTURE_PREFETCH
+    if (!main_globals.main_menu_scenario_loaded && local_player_get_next(NONE) != NONE) {
+        extern void n3ds_engine_mission_texture_prewarm(void);
+        n3ds_engine_mission_texture_prewarm();
+    }
+#endif
     {extern void n3ds_gpu_loading_enable(int);n3ds_gpu_loading_enable(FALSE);}
 #endif
 
