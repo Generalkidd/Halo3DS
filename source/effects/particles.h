@@ -172,6 +172,10 @@ void particles_stop_on_first_person_weapon(
 	short local_player_index);
 real particle_get_radius(
 	long particle_index);
+/* Caller already owns a validated live particle and its definition. */
+real particle_radius_from_data(
+	struct particle_datum const *particle,
+	struct particle_definition const *definition);
 boolean valid_real_argb_color(
 	real_argb_color const *color);
 void particles_disconnect_from_structure_bsp(

@@ -126,6 +126,9 @@ int n3ds_file_rename(const char *from, const char *to)
 int n3ds_input_platform_initialize(void) { return 1; }
 int n3ds_input_platform_original_model(void) { return original; }
 void n3ds_input_platform_dispose(void) {}
+static long long input_time_ms;
+long long n3ds_engine_ticks(void) { return input_time_ms; }
+long long n3ds_engine_tick_frequency(void) { return 1000; }
 void n3ds_input_platform_poll(struct native_input_sample *s)
 {
     *s = (struct native_input_sample){0};
@@ -614,6 +617,115 @@ static void tune_aim(void)
     n3ds_controls_set(&saved);
 }
 
+static unsigned int gesture_targets(unsigned int x,unsigned int y)
+{
+    if(x>=NATIVE_TOUCH_RELOAD_X && x<NATIVE_TOUCH_RELOAD_X+NATIVE_TOUCH_RELOAD_WIDTH &&
+       y>=NATIVE_TOUCH_RELOAD_Y && y<NATIVE_TOUCH_RELOAD_Y+NATIVE_TOUCH_RELOAD_HEIGHT)
+        return NATIVE_TOUCH_RELOAD;
+    return y<NATIVE_TOUCH_AIM_BOTTOM ? NATIVE_TOUCH_AIM|NATIVE_TOUCH_JUMP : 0;
+}
+
+static void touch_sample(unsigned int held,unsigned short x,unsigned short y,unsigned int elapsed)
+{
+    const struct native_input_sample sample={.held=held,.touch_x=x,.touch_y=y};
+    input_time_ms+=elapsed;
+    n3ds_engine_input_sample(&sample);
+}
+
+static void touch_gestures(void)
+{
+    const struct gamepad_state *pad=input_get_gamepad_state(0);
+    struct native_control_settings saved,tuned;
+    n3ds_controls_get(&saved);
+    tuned=saved;tuned.touch_aim=0;
+    n3ds_controls_set(&tuned);
+    n3ds_input_gameplay_controls(1);
+    n3ds_input_touch_handler(gesture_targets);
+
+    /* Jump only after both contacts end, with no repeat on a third tap. */
+    touch_sample(NATIVE_KEY_TOUCH,100,100,0);
+    touch_sample(0,0,0,32);
+    CHECK(!pad->buttons[_gamepad_analog_button_a]);
+    touch_sample(NATIVE_KEY_TOUCH,105,100,150);
+    CHECK(!pad->buttons[_gamepad_analog_button_a]);
+    touch_sample(0,0,0,32);
+    CHECK(pad->buttons[_gamepad_analog_button_a]==1);
+    touch_sample(NATIVE_KEY_TOUCH,105,100,60);
+    touch_sample(0,0,0,32);
+    CHECK(!pad->buttons[_gamepad_analog_button_a]);
+
+    /* A long gap, held contact, drag or widely separated tap cannot jump. */
+    touch_sample(NATIVE_KEY_TOUCH,105,100,351);
+    touch_sample(0,0,0,32);
+    CHECK(!pad->buttons[_gamepad_analog_button_a]);
+    touch_sample(NATIVE_KEY_TOUCH,105,100,60);
+    touch_sample(0,0,0,201);
+    CHECK(!pad->buttons[_gamepad_analog_button_a]);
+    touch_sample(NATIVE_KEY_TOUCH,105,100,60);
+    touch_sample(0,0,0,32);
+    touch_sample(NATIVE_KEY_TOUCH,105,100,60);
+    touch_sample(NATIVE_KEY_TOUCH,114,100,32);
+    touch_sample(0,0,0,32);
+    CHECK(!pad->buttons[_gamepad_analog_button_a]);
+    touch_sample(NATIVE_KEY_TOUCH,105,100,60);
+    touch_sample(0,0,0,32);
+    touch_sample(NATIVE_KEY_TOUCH,130,100,60);
+    touch_sample(0,0,0,32);
+    CHECK(!pad->buttons[_gamepad_analog_button_a]);
+
+    /* Reload consumes a new contact and cannot turn into jump or aim. */
+    touch_sample(NATIVE_KEY_TOUCH,160,16,60);
+    CHECK(n3ds_input_touch_reload_pressed());
+    CHECK(!pad->buttons[_gamepad_analog_button_x] && !pad->buttons[_gamepad_analog_button_a]);
+    touch_sample(NATIVE_KEY_TOUCH,105,100,32);
+    CHECK(!n3ds_input_touch_reload_pressed() && !pad->sticks[1].x && !pad->sticks[1].y);
+    touch_sample(0,0,0,32);
+    CHECK(!pad->buttons[_gamepad_analog_button_a]);
+
+    tuned.touch_aim=1;
+    n3ds_controls_set(&tuned);
+    touch_sample(NATIVE_KEY_TOUCH,160,41,60);
+    touch_sample(NATIVE_KEY_TOUCH,161,40,32);
+    CHECK(pad->sticks[1].x && pad->sticks[1].y);
+    touch_sample(NATIVE_KEY_TOUCH,161,36,32);
+    CHECK(!n3ds_input_touch_reload_pressed() && !pad->sticks[1].x && !pad->sticks[1].y);
+    touch_sample(NATIVE_KEY_TOUCH,160,45,32);
+    CHECK(!n3ds_input_touch_reload_pressed() && !pad->sticks[1].x && !pad->sticks[1].y);
+    touch_sample(0,0,0,32);
+
+    /* Pause, suppression and a new gameplay owner cancel an unfinished pair. */
+    touch_sample(NATIVE_KEY_TOUCH,105,100,60);
+    touch_sample(0,0,0,32);
+    n3ds_input_gameplay_controls(0);
+    touch_sample(0,0,0,32);
+    n3ds_input_gameplay_controls(1);
+    touch_sample(NATIVE_KEY_TOUCH,105,100,60);
+    touch_sample(0,0,0,32);
+    CHECK(!pad->buttons[_gamepad_analog_button_a]);
+    n3ds_input_gameplay_controls(0);
+    touch_sample(NATIVE_KEY_TOUCH,160,16,32);
+    CHECK(!n3ds_input_touch_reload_pressed());
+    n3ds_input_gameplay_controls(1);
+    touch_sample(NATIVE_KEY_TOUCH,160,16,32);
+    CHECK(!n3ds_input_touch_reload_pressed());
+    touch_sample(0,0,0,32);
+    touch_sample(NATIVE_KEY_TOUCH,105,100,60);
+    touch_sample(0,0,0,32);
+    CHECK(!pad->buttons[_gamepad_analog_button_a]);
+    input_suppress();input_update();
+    touch_sample(NATIVE_KEY_TOUCH,105,100,60);
+    touch_sample(0,0,0,32);
+    CHECK(!pad->buttons[_gamepad_analog_button_a]);
+    n3ds_input_cancel_touch_actions();
+    touch_sample(NATIVE_KEY_TOUCH,105,100,60);
+    touch_sample(0,0,0,32);
+    CHECK(!pad->buttons[_gamepad_analog_button_a]);
+
+    n3ds_input_touch_handler(NULL);
+    n3ds_input_gameplay_controls(0);
+    n3ds_controls_set(&saved);
+}
+
 static void test_save_failure(int retry, int committed_button)
 {
     open_buttons(0);
@@ -682,6 +794,7 @@ int main(int argc, char **argv)
         reused_widget_address();
         main_menu_shortcut();
         remap_movement();
+        touch_gestures();
         if (!original) tune_aim();
     } else if (!strcmp(scenario, "customize")) customize();
     else if (!strcmp(scenario, "read-primary")) expect_l_binding(_gamepad_analog_button_a);

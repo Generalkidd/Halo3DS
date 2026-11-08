@@ -31,12 +31,14 @@ static int hologram_model_draw(int kind,const struct native_generic_material *ba
 {
     if(!kind || !posed) return 0;
     float bounds[4]={1e30f,1e30f,-1e30f,-1e30f};
-    for(unsigned int i=0;i<count;++i) for(int a=0;a<2;++a) {
-        bounds[a]=MIN(bounds[a],posed[i].uv[a]);bounds[a+2]=MAX(bounds[a+2],posed[i].uv[a]);
-    }
-    for(int a=0;a<2;++a) if(bounds[a+2]-bounds[a]<.0001f) bounds[a+2]=bounds[a]+.0001f;
     void *mixture=NULL;
     if(kind==2) {
+        /* Only body consumes the third UV set and its stream-bake bounds.
+         * Hair uses texture1 and projected texture0; leave unused UVs zero. */
+        for(unsigned int i=0;i<count;++i) for(int a=0;a<2;++a) {
+            bounds[a]=MIN(bounds[a],posed[i].uv[a]);bounds[a+2]=MAX(bounds[a+2],posed[i].uv[a]);
+        }
+        for(int a=0;a<2;++a) if(bounds[a+2]-bounds[a]<.0001f) bounds[a+2]=bounds[a]+.0001f;
         /* Bake only lerp(streamA,streamB,body.a). Keep the full-resolution
          * body colour and noise out of this 8x8 animation approximation. */
         struct native_generic_material streams={0};streams.maps=3;streams.stages=1;
@@ -59,7 +61,7 @@ static int hologram_model_draw(int kind,const struct native_generic_material *ba
         memcpy(v->position,posed[i].position,sizeof(v->position));
         for(int a=0;a<2;++a) {
             const float *r=bake->transform[1][a];v->uv[1][a]=r[0]*posed[i].uv[0]+r[1]*posed[i].uv[1]+r[3];
-            v->uv[2][a]=(posed[i].uv[a]-bounds[a])/(bounds[a+2]-bounds[a]);
+            if(kind==2) v->uv[2][a]=(posed[i].uv[a]-bounds[a])/(bounds[a+2]-bounds[a]);
         }
         float visibility=hologram_visibility(v->position,&fog_constants)*native.fade;
         for(int c=0;c<3;++c)v->position[c]-=relative_origin[c];

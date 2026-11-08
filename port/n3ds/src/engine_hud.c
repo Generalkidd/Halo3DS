@@ -49,8 +49,14 @@ static unsigned int touch_action(unsigned int x,unsigned int y)
 {
     long unit=touch_unit();
     if(unit==NONE || x>=320) return 0;
+    int actions_enabled=!cinematic_in_progress() && player_input_enabled();
+    if(hud_visible && actions_enabled &&
+       x>=NATIVE_TOUCH_RELOAD_X && x<NATIVE_TOUCH_RELOAD_X+NATIVE_TOUCH_RELOAD_WIDTH &&
+       y>=NATIVE_TOUCH_RELOAD_Y && y<NATIVE_TOUCH_RELOAD_Y+NATIVE_TOUCH_RELOAD_HEIGHT)
+        return NATIVE_TOUCH_RELOAD;
     if(y<NATIVE_TOUCH_AIM_BOTTOM) {
-        if(!player_control_camera_control_is_active()) return 0;
+        unsigned int action=actions_enabled?NATIVE_TOUCH_JUMP:0;
+        if(!player_control_camera_control_is_active()) return action;
         /* A10's calibration/tutorial can hide every HUD element while the
          * player must look around. Full unit control can remain disabled.
          * Feed the original look path, including its tutorial action tests;
@@ -60,10 +66,10 @@ static unsigned int touch_action(unsigned int x,unsigned int y)
             n3ds_log("TOUCH AIM: available during gameplay with HUD hidden");
             reported_generation=control_generation;
         }
-        return NATIVE_TOUCH_AIM;
+        return action|NATIVE_TOUCH_AIM;
     }
     /* Invisible buttons remain inactive and cannot steal a drag gesture. */
-    if(!hud_visible || cinematic_in_progress() || !player_input_enabled()) return 0;
+    if(!hud_visible || !actions_enabled) return 0;
     if(y<184 || y>=236) return 0;
     int grenade=x>=8 && x<104?0:x>=112 && x<208?1:-1;
     if(grenade>=0) {
@@ -90,7 +96,7 @@ static void panel_rect(int x,int y,int w,int h,unsigned int color)
 static void panel_text(int x,int y,const char *text,unsigned int color)
 {
     /* Small 5x7 face at native LCD resolution; each glyph has seven row masks. */
-    static const char letters[]="FLIGHTON-RAPSM0123456789";
+    static const char letters[]="FLIGHTON-RAPSM0123456789ED";
     static const unsigned char glyphs[][7]={
         {31,16,16,30,16,16,16},{16,16,16,16,16,16,31},{31,4,4,4,4,4,31},
         {14,17,16,23,17,17,14},{17,17,17,31,17,17,17},{31,4,4,4,4,4,4},
@@ -99,7 +105,8 @@ static void panel_text(int x,int y,const char *text,unsigned int color)
         {15,16,16,14,1,1,30},{17,27,21,21,17,17,17},
         {14,17,19,21,25,17,14},{4,12,4,4,4,4,14},{14,17,1,2,4,8,31},
         {30,1,1,14,1,1,30},{2,6,10,18,31,2,2},{31,16,16,30,1,1,30},
-        {14,16,16,30,17,17,14},{31,1,2,4,8,8,8},{14,17,17,14,17,17,14},{14,17,17,15,1,1,14}};
+        {14,16,16,30,17,17,14},{31,1,2,4,8,8,8},{14,17,17,14,17,17,14},{14,17,17,15,1,1,14},
+        {31,16,16,30,16,16,31},{30,17,17,17,17,17,30}};
     for(;*text;++text,x+=12) {
         const char *g=strchr(letters,*text);if(!g) continue;
         for(int j=0;j<7;++j) for(int i=0;i<5;++i) if(glyphs[g-letters][j]&(16>>i)) panel_rect(x+i*2,y+j*2,2,2,color);
@@ -117,6 +124,9 @@ static void draw_touch_panel(void)
     int key=state|(counts[0]<<4)|(counts[1]<<12)|((selected+1)<<20);
     if(key!=panel_state) {
         memset(panel_pixels,0,sizeof(panel_pixels));
+        panel_rect(NATIVE_TOUCH_RELOAD_ATLAS_X,0,NATIVE_TOUCH_RELOAD_WIDTH,NATIVE_TOUCH_RELOAD_HEIGHT,0x71b9ffff);
+        panel_rect(NATIVE_TOUCH_RELOAD_ATLAS_X+2,2,NATIVE_TOUCH_RELOAD_WIDTH-4,NATIVE_TOUCH_RELOAD_HEIGHT-4,0x12283eff);
+        panel_text(NATIVE_TOUCH_RELOAD_ATLAS_X+13,9,"RELOAD",0x71b9ffff);
         unsigned int color=state?0x71b9ffff:0x516172ff;
         panel_rect(216,0,96,52,color);panel_rect(218,2,92,48,0x12283eff);
         panel_text(228,6,"LIGHT",color);panel_text(228,31,state==2?"ON":state==1?"OFF":"-",color);
@@ -133,8 +143,9 @@ static void draw_touch_panel(void)
         extern void n3ds_log(const char *);char message[128];
         snprintf(message,sizeof(message),"TOUCH CONTROL: flashlight state=%d unit=%08lx grenades=%d,%d selected=%d",state,unit,counts[0],counts[1],selected);n3ds_log(message);
     }
-    n3ds_hud_screen(1);assert(n3ds_gpu_touch_panel(panel_pixels,panel_revision));
+    n3ds_hud_screen(1);
     n3ds_gpu_hud_layout(0);
+    assert(n3ds_gpu_touch_panel(panel_pixels,panel_revision));
     /* Draw the same atlas sprites selected by each grenade's original HUD tag.
      * Keep their aspect ratio, counts and full-size touch areas. */
     for(int g=0;g<2;++g) {
@@ -230,8 +241,12 @@ void n3ds_hud_draw_screen(void)
     if(!midpoint) {
 #endif
         long player=local_player_get_player_index(0);
-        control_unit=player==NONE?NONE:player_get(player)->unit_index;
-        control_generation=n3ds_engine_cache_generation();
+        long unit=player==NONE?NONE:player_get(player)->unit_index;
+        unsigned int generation=n3ds_engine_cache_generation();
+        if(unit!=control_unit || generation!=control_generation || game_time_get_paused())
+            n3ds_input_cancel_touch_actions();
+        control_unit=unit;
+        control_generation=generation;
         n3ds_input_touch_handler(touch_action);draw_touch_panel();
 #ifdef HALO_N3DS_PRESENT_INTERPOLATION
     }

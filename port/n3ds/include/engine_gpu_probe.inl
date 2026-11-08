@@ -8,8 +8,19 @@ enum { PROBE_DRAWS, PROBE_ELEMENTS, PROBE_TERRAIN_DRAWS, PROBE_TERRAIN_ELEMENTS,
 #ifdef HALO_N3DS_OPAQUE_COLOR_READS
     PROBE_READ_ELIGIBLE, PROBE_READ_ELIDED, PROBE_READ_MASK_WRITES, PROBE_READ_EXTRA_FLUSHES,
 #endif
+#ifdef HALO_N3DS_UNUSED_TEXTURE_UNITS
+    PROBE_TEXTURE_DRAWS, PROBE_TEXTURE_UNITS, PROBE_TEXTURE_WRITES,
+#endif
     PROBE_COUNTERS };
-#ifdef HALO_N3DS_OPAQUE_COLOR_READS
+#ifdef HALO_N3DS_TEXTURE_VRAM_MIRRORS
+enum { PROBE_VRAM_MODE = 3 };
+static const unsigned char probe_modes[] = {0, PROBE_VRAM_MODE, 0, PROBE_VRAM_MODE, 0};
+static const char *const probe_mode_names[] = {"reference", "quarter-pixels", "no-effects", "texture-vram-mirrors"};
+#elif defined(HALO_N3DS_UNUSED_TEXTURE_UNITS)
+enum { PROBE_TEXTURE_UNITS_MODE = 3 };
+static const unsigned char probe_modes[] = {0, PROBE_TEXTURE_UNITS_MODE, 0, PROBE_TEXTURE_UNITS_MODE, 0};
+static const char *const probe_mode_names[] = {"reference", "quarter-pixels", "no-effects", "unused-texture-units"};
+#elif defined(HALO_N3DS_OPAQUE_COLOR_READS)
 enum { PROBE_OPAQUE_COLOR_MODE = 3 };
 static const unsigned char probe_modes[] = {0, PROBE_OPAQUE_COLOR_MODE, 0, PROBE_OPAQUE_COLOR_MODE, 0};
 static const char *const probe_mode_names[] = {"reference", "quarter-pixels", "no-effects", "opaque-color-reads"};
@@ -28,6 +39,9 @@ static struct {
     u32 queue_ticks[GPU_PROBE_SAMPLES];
     u64 wait_ticks;
     unsigned int draws[PROBE_COUNTERS], minimum[PROBE_COUNTERS], maximum[PROBE_COUNTERS];
+#ifdef HALO_N3DS_TEXTURE_VRAM_MIRRORS
+    unsigned int mirror_resident, mirror_bytes, mirror_uploads, mirror_failures;
+#endif
     int chord_held, active, selected, recording, terrain;
 } gpu_probe;
 
@@ -79,6 +93,14 @@ void n3ds_gpu_probe_view(const struct native_gpu_probe_view *view, int chord_hel
         gpu_probe.phase = gpu_probe.warmup = gpu_probe.samples = gpu_probe.missing = 0;
         gpu_probe.wait_ticks = 0;
         gpu_probe.active = 1;
+#ifdef HALO_N3DS_TEXTURE_VRAM_MIRRORS
+        n3ds_gpu_texture_mirror_stats(&gpu_probe.mirror_resident,&gpu_probe.mirror_bytes,
+            &gpu_probe.mirror_uploads,&gpu_probe.mirror_failures);
+        if (!gpu_probe.mirror_resident) {
+            gpu_probe_abort("texture-mirrors-not-ready");
+            return;
+        }
+#endif
         char message[192];
         snprintf(message, sizeof(message),
             "GPU PROBE START: run=%u tick=%d generation=%u bsp=%d camera=%.3f,%.3f,%.3f",
@@ -125,6 +147,22 @@ static void gpu_probe_report_phase(void)
         gpu_probe.queue_ticks[GPU_PROBE_SAMPLES - 1] * tick_to_ms,
         gpu_probe.wait_ticks * tick_to_ms / GPU_PROBE_SAMPLES);
     n3ds_log(message);
+#ifdef HALO_N3DS_TEXTURE_VRAM_MIRRORS
+    snprintf(message, sizeof(message),
+        "GPU PROBE VRAM: run=%u phase=%u resident_images=%u duplicate_bytes=%u warmup_uploads=%u preparation_failures=%u residency=frozen",
+        gpu_probe.run, gpu_probe.phase + 1, gpu_probe.mirror_resident,
+        gpu_probe.mirror_bytes, gpu_probe.mirror_uploads, gpu_probe.mirror_failures);
+    n3ds_log(message);
+#endif
+#ifdef HALO_N3DS_UNUSED_TEXTURE_UNITS
+    snprintf(message, sizeof(message),
+        "GPU PROBE TEXTURE UNITS: run=%u phase=%u reduced_draws=%u..%u omitted_units=%u..%u mask_writes=%u..%u",
+        gpu_probe.run, gpu_probe.phase + 1,
+        gpu_probe.minimum[PROBE_TEXTURE_DRAWS], gpu_probe.maximum[PROBE_TEXTURE_DRAWS],
+        gpu_probe.minimum[PROBE_TEXTURE_UNITS], gpu_probe.maximum[PROBE_TEXTURE_UNITS],
+        gpu_probe.minimum[PROBE_TEXTURE_WRITES], gpu_probe.maximum[PROBE_TEXTURE_WRITES]);
+    n3ds_log(message);
+#endif
 #ifdef HALO_N3DS_FRAMEBUFFER_REUSE
     snprintf(message, sizeof(message),
         "GPU PROBE FRAMEBUFFER: run=%u phase=%u target_binds=%u..%u redundant_rebinds_skipped=%u..%u",
@@ -161,6 +199,15 @@ static void gpu_probe_begin(int midpoint, u64 waited)
         return;
     }
     gpu_probe.selected = 0;
+#ifdef HALO_N3DS_TEXTURE_VRAM_MIRRORS
+    unsigned int resident,bytes,uploads,failures;
+    n3ds_gpu_texture_mirror_stats(&resident,&bytes,&uploads,&failures);
+    if (resident!=gpu_probe.mirror_resident || bytes!=gpu_probe.mirror_bytes ||
+        uploads!=gpu_probe.mirror_uploads || failures!=gpu_probe.mirror_failures) {
+        gpu_probe_abort("texture-mirror-residency-changed");
+        return;
+    }
+#endif
     if (gpu_probe.pending_submission) {
         u32 ticks;
         int ready = n3ds_c3d_gpu_probe_sample(gpu_probe.pending_submission, &ticks);
@@ -186,7 +233,11 @@ static void gpu_probe_begin(int midpoint, u64 waited)
                     char message[112];
                     snprintf(message, sizeof(message),
                         "GPU PROBE COMPLETE: run=%u missing=%u rendering=%s", gpu_probe.run, gpu_probe.missing,
-#ifdef HALO_N3DS_OPAQUE_COLOR_READS
+#ifdef HALO_N3DS_TEXTURE_VRAM_MIRRORS
+                        "texture-vram-mirrors"
+#elif defined(HALO_N3DS_UNUSED_TEXTURE_UNITS)
+                        "unused-texture-units"
+#elif defined(HALO_N3DS_OPAQUE_COLOR_READS)
                         "opaque-color-reads"
 #elif defined(HALO_N3DS_FRAMEBUFFER_REUSE)
                         "framebuffer-reuse"

@@ -663,7 +663,7 @@ int n3ds_engine_mission_render(long unit_index,long time,long long tick_start)
 #endif
         if(eligible && !result)
             presentation_observe(tick_start,key_begin,textures,submitted,rejection);
-        presentation_report();
+        presentation_report(time, eligible);
         return result;
     }
 #endif

@@ -59,6 +59,7 @@
  X(N3DS_ALG_CPU_MIDPOINT_QUAT_BUILD, "midpoint_endpoint_quaternion_build") \
  X(N3DS_ALG_CPU_MIDPOINT_QUAT_PRESSURE, "midpoint_endpoint_quaternion_allocation_failure") \
  X(N3DS_ALG_CPU_VISIBILITY, "visibility_compute_calls") \
+ X(N3DS_ALG_CPU_VISIBILITY_REUSED, "visibility_unchanged_view_reuses") \
  X(N3DS_ALG_CPU_VIS_CLUSTER, "visibility_cluster_visit_calls") \
  X(N3DS_ALG_CPU_VIS_RECTANGLE, "visibility_rectangle_calls") \
  X(N3DS_ALG_CPU_VIS_PLANES, "visibility_planes_calls") \
@@ -122,6 +123,8 @@
  X(N3DS_ALG_CPU_NORMAL_MISS, "model_normal_miss_calls") \
  X(N3DS_ALG_CPU_NORMAL_EVICT, "model_normal_budget_evict_calls") \
  X(N3DS_ALG_CPU_NORMAL_VERTICES, "model_normal_batch_vertices_calls") \
- X(N3DS_ALG_CPU_NORMAL_COPY, "model_normal_matrix_copy_bytes")
+ X(N3DS_ALG_CPU_NORMAL_COPY, "model_normal_matrix_copy_bytes") \
+ X(N3DS_ALG_CPU_PATH_EDGE_CACHE_HIT, "path_edge_cache_hits") \
+ X(N3DS_ALG_CPU_PATH_EDGE_CACHE_BUILD, "path_edge_cache_builds")
 
 #endif

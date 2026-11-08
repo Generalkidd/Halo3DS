@@ -1,13 +1,13 @@
 /* Extend the pinned Citro3D render queue without modifying the SDK checkout.
  * This object supplies renderqueue.c's symbols ahead of the stock archive. */
-#if defined(HALO_N3DS_PRESENT_INTERPOLATION) || defined(HALO_N3DS_DEPENDENCY_TRACE) || defined(HALO_N3DS_GPU_PROBE)
+#if defined(HALO_N3DS_PRESENT_INTERPOLATION) || defined(HALO_N3DS_DEPENDENCY_TRACE) || defined(HALO_N3DS_GPU_PROBE) || defined(HALO_N3DS_TEXTURE_VRAM_MIRRORS)
 #include <3ds.h>
 #include <c3d/uniforms.h>
 #include "engine_dependency_trace.h"
 static void halo_c3d_set_event_callback(GSPGPU_Event, ThreadFunc, void *, bool);
 static void halo_c3d_set_queue_callback(gxCmdQueue_s *, void (*)(gxCmdQueue_s *), void *);
 static void halo_c3d_run_queue(gxCmdQueue_s *);
-#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+#if defined(HALO_N3DS_PRESENT_INTERPOLATION) || defined(HALO_N3DS_TEXTURE_VRAM_MIRRORS)
 static bool halo_c3d_wait_queue(gxCmdQueue_s *, s64);
 #define gxCmdQueueWait halo_c3d_wait_queue
 #endif
@@ -18,11 +18,12 @@ static bool halo_c3d_wait_queue(gxCmdQueue_s *, s64);
 #undef gspSetEventCallback
 #undef gxCmdQueueSetCallback
 #undef gxCmdQueueRun
-#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+#if defined(HALO_N3DS_PRESENT_INTERPOLATION) || defined(HALO_N3DS_TEXTURE_VRAM_MIRRORS)
 #undef gxCmdQueueWait
-
-static u32 top_vblank_tick;
 static unsigned int queue_callback_pending;
+#endif
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+static u32 top_vblank_tick;
 void n3ds_gpu_top_swap_posted(void);
 #endif
 
@@ -93,6 +94,8 @@ static void halo_c3d_queue_finish(gxCmdQueue_s *queue)
 #ifdef HALO_N3DS_PRESENT_INTERPOLATION
     if (top_swap)
         n3ds_gpu_top_swap_posted();
+#endif
+#if defined(HALO_N3DS_PRESENT_INTERPOLATION) || defined(HALO_N3DS_TEXTURE_VRAM_MIRRORS)
     __atomic_store_n(&queue_callback_pending, 0, __ATOMIC_RELEASE);
 #endif
 }
@@ -105,7 +108,7 @@ static void halo_c3d_set_queue_callback(gxCmdQueue_s *queue, void (*callback)(gx
 static void halo_c3d_run_queue(gxCmdQueue_s *queue)
 {
     if (queue->lastEntry < queue->numEntries) {
-#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+#if defined(HALO_N3DS_PRESENT_INTERPOLATION) || defined(HALO_N3DS_TEXTURE_VRAM_MIRRORS)
         __atomic_store_n(&queue_callback_pending, 1, __ATOMIC_RELEASE);
 #endif
         /* Publish correlation before the callback can run, including queues
@@ -118,7 +121,7 @@ static void halo_c3d_run_queue(gxCmdQueue_s *queue)
     gxCmdQueueRun(queue);
 }
 
-#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+#if defined(HALO_N3DS_PRESENT_INTERPOLATION) || defined(HALO_N3DS_TEXTURE_VRAM_MIRRORS)
 static bool halo_c3d_wait_queue(gxCmdQueue_s *queue, s64 timeout_ticks)
 {
     /* Pinned libctru gxqueue.c adds timeout directly to system ticks despite
@@ -132,6 +135,35 @@ static bool halo_c3d_wait_queue(gxCmdQueue_s *queue, s64 timeout_ticks)
         svcSleepThread(10000);
     }
     return true;
+}
+#endif
+
+#ifdef HALO_N3DS_TEXTURE_VRAM_MIRRORS
+int n3ds_c3d_texture_mirror_wait_idle(void)
+{
+    /* Queue idle alone precedes the SDK completion callback. Transfers and
+     * descriptor retirement require both, including during applet shutdown. */
+    return !inFrame && C3Di_WaitAndClearQueue(-1);
+}
+
+int n3ds_c3d_texture_mirror_copy(void *source,void *destination,unsigned int bytes)
+{
+    if(inFrame || inSafeTransfer || aptShouldClose() || !gspHasGpuRight() ||
+       !C3Di_WaitAndClearQueue(-1))return 0;
+    gxCmdQueue_s *queue=&C3Di_GetContext()->gxQueue;
+    /* Unlike the void SDK convenience API, reject a failed enqueue before
+     * publishing a supposedly complete mirror. No DMA has started here. */
+    Result queued=GX_TextureCopy(source,0,destination,0,bytes,8);
+    if(R_FAILED(queued) || queue->numEntries!=1) {
+        gxCmdQueueClear(queue);
+        return 0;
+    }
+    inSafeTransfer=true;
+    halo_c3d_run_queue(queue);
+    /* This negative-timeout wait cannot expire. Both source and destination
+     * remain owned until commands AND their callback have retired. */
+    if(!C3Di_WaitAndClearQueue(-1))abort();
+    return 1;
 }
 #endif
 

@@ -2587,6 +2587,9 @@ void object_compute_node_matrices(
 			short node_stack_index = node_stack[node_index++];
 			short next_sibling_node_index;
 			struct model_node *node = TAG_BLOCK_GET_ELEMENT(&model->nodes, node_stack_index, struct model_node);
+#ifdef HALO_N3DS
+			boolean root_matrix_valid = FALSE;
+#endif
 			
 			if (node_stack_index==0)
 			{
@@ -2671,7 +2674,12 @@ void object_compute_node_matrices(
 					object_nodes[node_stack_index] = node_matrix;
 				}
 
+#ifdef HALO_N3DS
+				root_matrix_valid = valid_real_matrix4x3(&object_nodes[node_stack_index]);
+				if (!root_matrix_valid)
+#else
 				if (!valid_real_matrix4x3(&object_nodes[node_stack_index]))
+#endif
 				{
 					real_matrix4x3 const *validated_root_node_matrix;
 
@@ -2796,7 +2804,12 @@ void object_compute_node_matrices(
 				}
 			}
 
-			if (node_stack_index==0)
+			if (node_stack_index==0
+#ifdef HALO_N3DS
+				/* Recheck only after the failure diagnostics have run. */
+				&& !root_matrix_valid
+#endif
+			)
 			{
 				real_matrix4x3 *final_matrix = &object_nodes[node_stack_index];
 				if (!valid_real_matrix4x3(final_matrix))
@@ -4301,6 +4314,11 @@ void objects_update(
 			last_active_cluster_bits,
 			active_cluster_bits,
 			cluster_count);
+	}
+	else if (structure_decals_reconnect_pending())
+	{
+		/* Cluster bit numbers can match across different BSPs. */
+		structure_decals_update(last_active_cluster_bits, active_cluster_bits, cluster_count);
 	}
 
 	object_header = (struct object_header_datum *)object_header_data->data;

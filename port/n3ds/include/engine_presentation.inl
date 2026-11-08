@@ -7,6 +7,9 @@ struct presentation_snapshot {
     long unit_index;
     short zoom;
     director_perspective perspective;
+    unsigned int cluster_mode;
+    short cluster_index;
+    boolean cluster_known;
 };
 
 enum { MIDPOINT_SAMPLE_MAX_AGE = 30 };
@@ -93,7 +96,7 @@ static int presentation_camera_midpoint(const struct render_camera *a,
     return 1;
 }
 
-static int presentation_window_midpoint(const struct presentation_snapshot *current,
+static int presentation_window_midpoint(struct presentation_snapshot *current,
     struct render_window *midpoint)
 {
     const struct presentation_snapshot *previous = &presentation.previous;
@@ -110,13 +113,34 @@ static int presentation_window_midpoint(const struct presentation_snapshot *curr
             &current->window.rasterizer_camera, &midpoint->rasterizer_camera))
         return 0;
 
+    /* The generation check above fixes the BSP. Reuse the previous result
+     * only under the same floating-point mode used to classify its point. */
+    const unsigned int mode = __builtin_arm_get_fpscr() & 0x03ffff00u;
+    const real_point3d *from_point = &previous->window.render_camera.position;
+    const real_point3d *to_point = &current->window.render_camera.position;
+    struct location location;
+    short from_cluster;
+    if (previous->cluster_known && previous->cluster_mode == mode) {
+        from_cluster = previous->cluster_index;
+    } else {
+        scenario_location_from_point(&location, from_point);
+        from_cluster = location.cluster_index;
+    }
+    current->cluster_mode = mode;
+    current->cluster_known = TRUE;
+    current->cluster_index = from_cluster;
+    if (memcmp(from_point, to_point, sizeof(*to_point))) {
+        scenario_location_from_point(&location, to_point);
+        current->cluster_index = location.cluster_index;
+    }
+
     /* Leave portal and fog transitions to the regular frame. */
-    struct location from, to, between;
-    scenario_location_from_point(&from, &previous->window.render_camera.position);
-    scenario_location_from_point(&to, &current->window.render_camera.position);
-    scenario_location_from_point(&between, &midpoint->render_camera.position);
-    return from.cluster_index != NONE && from.cluster_index == to.cluster_index &&
-        from.cluster_index == between.cluster_index;
+    if (from_cluster == NONE || from_cluster != current->cluster_index)
+        return 0;
+    if (!memcmp(&midpoint->render_camera.position, to_point, sizeof(*to_point)))
+        return 1;
+    scenario_location_from_point(&location, &midpoint->render_camera.position);
+    return location.cluster_index == from_cluster;
 }
 
 static int presentation_budget_fits(long long tick_start)
@@ -180,22 +204,28 @@ static void presentation_observe(long long tick_start, long long key_begin,
     }
 }
 
-static void presentation_report(void)
+static void presentation_report(long time, int eligible)
 {
-    static unsigned int frames;
+    static unsigned int frames, eligible_frames;
+    static long long previous_report;
+    eligible_frames += !!eligible;
     if (++frames < 30)
         return;
-    frames = 0;
-    char message[360];
+    const long long now = n3ds_engine_ticks();
     double ms = 1000.0 / n3ds_engine_tick_frequency();
+    const double wall_ms = previous_report ? (now - previous_report) * ms : 0.0;
+    previous_report = now;
+    char message[448];
     unsigned int key_latches = n3ds_gpu_keyframe_latches();
     snprintf(message, sizeof(message),
-        "MIDPOINT PRESENT: submitted=%u latched=%u key_latched=%u budget=%u context=%u busy=%u texture=%u deadline=%u key_cpu_ms=%.2f key_queue_ms=%.2f mid_cpu_ms=%.2f mid_queue_ms=%.2f discarded_cpu_ms=%.2f",
+        "MIDPOINT PRESENT: time=%ld frames=%u eligible=%u wall_ms=%.2f submitted=%u latched=%u key_latched=%u budget=%u context=%u busy=%u texture=%u deadline=%u key_cpu_ms=%.2f key_queue_ms=%.2f mid_cpu_ms=%.2f mid_queue_ms=%.2f discarded_cpu_ms=%.2f",
+        time, frames, eligible_frames, wall_ms,
         presentation.submitted, presentation.latched, key_latches-presentation.last_key_latches, presentation.budget_skips,
         presentation.context_skips, presentation.busy_skips, presentation.texture_skips, presentation.deadline_skips,
         presentation.key_prepare_ticks*ms, presentation.queue_ticks[0]*ms,
         presentation.midpoint_prepare_ticks*ms, presentation.queue_ticks[1]*ms, presentation.rejected_ticks*ms);
     n3ds_log(message);
+    frames = eligible_frames = 0;
     presentation.last_key_latches = key_latches;
     presentation.submitted = presentation.latched = presentation.budget_skips =
         presentation.context_skips = presentation.busy_skips = presentation.texture_skips = presentation.deadline_skips = 0;

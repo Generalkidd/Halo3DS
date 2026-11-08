@@ -212,6 +212,7 @@ void n3ds_glass_model_draw(const struct shader *shader,short permutation,
     int pose_ready=0;
     const struct model_vertex_uncompressed *cached=NULL;
     const struct native_render_vertex *posed=NULL;
+    const unsigned short *gpu_indices=NULL;
     const real_vector2d unit_scale={1,1};
     for(int pass=0;pass<3;++pass) {
         if(pass==0 && g->tint_map.index==NONE && !g->tint.red && !g->tint.green && !g->tint.blue) continue;
@@ -269,7 +270,10 @@ void n3ds_glass_model_draw(const struct shader *shader,short permutation,
             }
         }
         n3ds_gpu_geometry_flush(v,count*sizeof(*v));
-        assert(n3ds_gpu_glass_sky_draw(v,indices,index_count,pass,!!(g->flags&4),!!(p->geometry_flags&(1<<4))));
+        /* All layers use the same immutable triangles. Stage only once,
+         * after the first layer has passed texture admission. */
+        if(!gpu_indices) {gpu_indices=n3ds_gpu_indices_prepare(indices,index_count);assert(gpu_indices);}
+        assert(n3ds_gpu_glass_sky_draw(v,gpu_indices,index_count,pass,!!(g->flags&4),!!(p->geometry_flags&(1<<4))));
     }
     static const void *seen[16];static int seen_count;int i;
     for(i=0;i<seen_count && seen[i]!=shader;++i) {}

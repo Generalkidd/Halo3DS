@@ -37,11 +37,18 @@ void n3ds_engine_input_sample(const struct native_input_sample *sample);
 #ifdef HALO_N3DS_GPU_PROBE
 unsigned int n3ds_input_last_held(void);
 #endif
-enum { NATIVE_TOUCH_GRENADE=1, NATIVE_TOUCH_FLASHLIGHT=2, NATIVE_TOUCH_AIM=4,
-       NATIVE_TOUCH_AIM_BOTTOM=176 };
+enum {
+    NATIVE_TOUCH_GRENADE=1, NATIVE_TOUCH_FLASHLIGHT=2, NATIVE_TOUCH_AIM=4,
+    NATIVE_TOUCH_JUMP=8, NATIVE_TOUCH_RELOAD=16, NATIVE_TOUCH_AIM_BOTTOM=176,
+    NATIVE_TOUCH_RELOAD_WIDTH=96, NATIVE_TOUCH_RELOAD_HEIGHT=32,
+    NATIVE_TOUCH_RELOAD_X=(320-NATIVE_TOUCH_RELOAD_WIDTH)/2, NATIVE_TOUCH_RELOAD_Y=6,
+    NATIVE_TOUCH_RELOAD_ATLAS_X=320
+};
 /* The handler gates touches against live gameplay. AIM is queried throughout
- * an aim gesture; button actions are queried only on a fresh press. */
+ * a gesture; button actions are applied only on a fresh press. */
 void n3ds_input_touch_handler(unsigned int (*handler)(unsigned int,unsigned int));
+void n3ds_input_cancel_touch_actions(void);
+int n3ds_input_touch_reload_pressed(void);
 int halo_engine_input_tests(void);
 int halo_engine_touch_aim_tests(void);
 int halo_engine_model_controls_tests(void);

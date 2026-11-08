@@ -283,8 +283,8 @@ static void queue_event(
 	{
 		event->controller_index = controller_index;
 		csmemmove(
-			event_manager_globals.state.events[controller_index],
 			&event_manager_globals.state.events[controller_index][1],
+			event_manager_globals.state.events[controller_index],
 			sizeof(event_manager_globals.state.events[controller_index]) - sizeof(struct event_record));
 		event_manager_globals.state.events[controller_index][0] = *event;
 		if (event->type != _event_type_null)

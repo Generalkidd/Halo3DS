@@ -34,7 +34,21 @@ struct plasma_volume {
 };
 static struct plasma_volume volumes[2];
 static unsigned int generation,draws;
-static const struct shader *reported;
+enum { PLASMA_REPORT_LIMIT=32 };
+static const struct shader *reported[PLASMA_REPORT_LIMIT],*last_reported;
+static unsigned int reported_count;
+static int plasma_report_material(const struct shader *shader)
+{
+    if(shader==last_reported) return 0;
+    last_reported=shader;
+    /* Diagnostics only: alternating materials must not rescan the tag table
+     * and enqueue another message every draw. Stop admitting reports at the
+     * fixed limit; never evict an entry and restart logging churn. */
+    for(unsigned int i=0;i<reported_count;++i) if(reported[i]==shader) return 0;
+    if(reported_count==PLASMA_REPORT_LIMIT) return 0;
+    reported[reported_count++]=shader;
+    return 1;
+}
 #ifdef HALO_N3DS_PLASMA_SHIELD_TEST
 static unsigned int test_draws;
 unsigned int n3ds_plasma_test_draws(void) {return test_draws;}
@@ -125,11 +139,11 @@ void n3ds_plasma_model_draw(const struct shader *shader,short permutation,
     const struct plasma_shader *s=(const void *)shader;
     assert(shader->base.type==10 && n3ds_cache_resolve(view,s,sizeof(*s))==s);
     if(generation!=n3ds_engine_cache_generation()) {
-        volumes[0].bitmap=volumes[1].bitmap=NULL;generation=n3ds_engine_cache_generation();draws=0;reported=NULL;
+        volumes[0].bitmap=volumes[1].bitmap=NULL;generation=n3ds_engine_cache_generation();draws=0;
+        reported_count=0;last_reported=NULL;
     }
     float intensity=animation_value(&p->animation,s->intensity_source,s->intensity_exponent,1);
-    if(reported!=shader) {
-        reported=shader;
+    if(plasma_report_material(shader)) {
         for(long t=0;t<view->tag_header->tag_count;++t) if(view->instances[t].base_address==shader) {
             char message[224];snprintf(message,sizeof(message),"NATIVE PLASMA MATERIAL: intensity=%.3f name=%.160s",intensity,view->instances[t].name);n3ds_log(message);break;
         }

@@ -130,7 +130,10 @@ void n3ds_water_model_draw(const struct shader *shader,short permutation,
             const struct native_render_vertex *posed=pose?pose+i:&temporary;
             memcpy(out[i].position,posed->position,12);memset(out[i].uv,0,sizeof(out[i].uv));
             float base[4]={1,1,1,1};
-            if(sample.textures[0]) n3ds_gpu_generic_sample(&sample,0,v->texcoord.x*p->base_map_scale.i,v->texcoord.y*p->base_map_scale.j,base);
+            /* Reflection consumes base alpha only when the mask is enabled.
+             * Keep texture admission above unchanged for midpoint handling. */
+            if(sample.textures[0] && (!pass || (w->flags&1)))
+                n3ds_gpu_generic_sample(&sample,0,v->texcoord.x*p->base_map_scale.i,v->texcoord.y*p->base_map_scale.j,base);
             if(!pass) {memcpy(out[i].color,base,16);continue;}
             real_vector3d normal={0};float eye[3],reflection[3],n2=0,e2=0,dot=0;
             if(normals)normal=normals[i];

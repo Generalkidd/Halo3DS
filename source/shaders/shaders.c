@@ -581,6 +581,16 @@ extern unsigned long long n3ds_gpu_model_frame_serial(void);
 extern unsigned int n3ds_engine_cache_generation(void);
 #endif
 
+static inline real shader_texture_animation_wave(short function, real phase, real time, real period)
+{
+#ifdef HALO_N3DS
+	/* Periodic function zero returns one without reading the time input. */
+	if (function == 0)
+		return 1.f;
+#endif
+	return periodic_function_evaluate(function, (phase + time) / period);
+}
+
 void shader_texture_animation_evaluate(
 	struct shader_texture_animation const *texture_animation,
 	struct render_animation const *render_animation,
@@ -704,17 +714,17 @@ void shader_texture_animation_evaluate(
     }
 #endif
 
-	u_input = periodic_function_evaluate(
+	u_input = shader_texture_animation_wave(
 		texture_animation->u_function,
-		(texture_animation->u_phase + time_value) / u_period) *
+		texture_animation->u_phase, time_value, u_period) *
 		texture_animation->u_scale * u_input;
-	v_input = periodic_function_evaluate(
+	v_input = shader_texture_animation_wave(
 		texture_animation->v_function,
-		(texture_animation->v_phase + time_value) / v_period) *
+		texture_animation->v_phase, time_value, v_period) *
 		texture_animation->v_scale * v_input;
-	r_input = periodic_function_evaluate(
+	r_input = shader_texture_animation_wave(
 		texture_animation->r_function,
-		(texture_animation->r_phase + time_value) / r_period) *
+		texture_animation->r_phase, time_value, r_period) *
 		texture_animation->r_scale * r_input;
 
 	u_input = (u_offset - texture_animation->r_center.x) + u_input;

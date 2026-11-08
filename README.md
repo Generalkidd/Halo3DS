@@ -14,6 +14,10 @@ Press **SELECT** or tap **Controller Settings** on the main or pause menu.
 On New 3DS and New 2DS models, **L fires** and **ZL throws grenades** by default.
 On original 3DS and 2DS models, **L fires** and **R throws grenades**.
 
+During gameplay, double-tap in the bottom screen's aiming area to jump, or tap
+**RELOAD** at the top centre of the touch screen to reload your weapon. These
+shortcuts also work with touch drag aiming turned off.
+
 - **Layout:** Preview a preset, then press **A** or tap **Apply** to replace
   this model's bindings. You can also set the menu's face-button convention.
   On New models, **Classic ZR fire** restores the previous default layout.

@@ -40,10 +40,10 @@ static void n3ds_lens_flares_draw(void)
             energy*=range>0?PIN((d->far_fade_distance-depth)/range,0.f,1.f):(depth<d->far_fade_distance);
         }
         float functions[4]={1,1,1,1};
-        real_vector3d direction=uncompress_int32_to_real_vector3d(p->compressed_direction);
         real_vector3d unit=offset;normalize3d(&unit);
         float range=d->runtime_cosine_falloff_angle-d->runtime_cosine_cutoff_angle;
         if(fabsf(range)>1e-6f) {
+            real_vector3d direction=uncompress_int32_to_real_vector3d(p->compressed_direction);
             functions[1]=PIN((-dot_product3d(&camera->forward,&direction)-d->runtime_cosine_cutoff_angle)/range,0.f,1.f);
             functions[2]=PIN((-dot_product3d(&direction,&unit)-d->runtime_cosine_cutoff_angle)/range,0.f,1.f);
             functions[3]=PIN((dot_product3d(&camera->forward,&unit)-d->runtime_cosine_cutoff_angle)/range,0.f,1.f);

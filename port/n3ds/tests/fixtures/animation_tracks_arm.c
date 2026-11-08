@@ -138,6 +138,28 @@ static int compare_sample(real frame)
 
 int animation_tracks_fixture(void)
 {
+	/* A decoded end key becomes the next interval's raw first key. Check
+	 * cache state as well as output, including the default-key sentinel. */
+	for (unsigned int kind = NATIVE_ANIMATION_ROTATION; kind <= NATIVE_ANIMATION_SCALE; ++kind)
+	{
+		set_frame_data(1, 3, 6);
+		union native_animation_track_value out;
+		CHECK(native_animation_track_sample(&animation, 2.5f, 0, 0, kind, &out));
+		struct native_animation_track *track = native_animation_track_get(&animation, 0, 0, kind);
+		CHECK(track && track->decoded_mask == 3);
+		union native_animation_track_value raw_end = track->decoded[1];
+		native_animation_track_interval(track, 4.f);
+		CHECK(track->decoded_mask == 1 && !memcmp(&track->decoded[0], &raw_end, sizeof(raw_end)));
+		CHECK(compare_sample(4.f) && compare_sample(4.25f));
+		CHECK(native_animation_track_sample(&animation, 6.5f, 0, 0, kind, &out));
+		track = native_animation_track_get(&animation, 0, 0, kind);
+		CHECK(track && track->end_key == NONE && track->decoded_mask == 3);
+		raw_end = track->decoded[1];
+		native_animation_track_interval(track, .5f);
+		CHECK(track->first_key == NONE && track->decoded_mask == 1 &&
+			!memcmp(&track->decoded[0], &raw_end, sizeof(raw_end)));
+		CHECK(compare_sample(.5f));
+	}
 	static const real samples[] = {0.f, .25f, 1.75f, 2.f, 2.125f, 3.875f, 4.f, 4.125f,
 		5.75f, 6.f, 6.75f, 6.25f, 5.f, 3.f, 1.f, 0.f, 6.75f, .5f};
 	for (unsigned int skew = 0; skew < 4; ++skew)

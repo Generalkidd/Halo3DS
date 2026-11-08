@@ -328,6 +328,106 @@ int main(void)
 '''
 
 
+QUEUE_CALLBACK_PLATFORM = r'''
+#include <assert.h>
+#include <stdbool.h>
+#include <stdint.h>
+typedef uint64_t u64;
+typedef int64_t s64;
+typedef struct {int unused;} gxCmdQueue_s;
+static gxCmdQueue_s queue;
+static unsigned int queue_callback_pending;
+static int inFrame, sleeps, release_after, queue_waits;
+static bool queue_ready=true;
+static u64 ticks;
+static bool gxCmdQueueWait(gxCmdQueue_s *q,s64 timeout)
+{assert(q==&queue); (void)timeout; ++queue_waits; return queue_ready;}
+static u64 svcGetSystemTick(void) {return ticks;}
+static void svcSleepThread(s64 ns)
+{
+    assert(ns==10000); ticks+=2;
+    if(++sleeps==release_after)queue_callback_pending=0;
+}
+static bool C3Di_WaitAndClearQueue(s64 timeout);
+'''
+
+QUEUE_CALLBACK_CHECKS = r'''
+static bool C3Di_WaitAndClearQueue(s64 timeout)
+{return halo_c3d_wait_queue(&queue,timeout);}
+int main(void)
+{
+    queue_callback_pending=1; release_after=3;
+    assert(!halo_c3d_wait_queue(&queue,0) && !sleeps);
+    assert(n3ds_c3d_texture_mirror_wait_idle() && sleeps==3);
+    queue_callback_pending=1; sleeps=0; release_after=20;
+    assert(!halo_c3d_wait_queue(&queue,10) && sleeps==5);
+    sleeps=0; release_after=3;
+    assert(halo_c3d_wait_queue(&queue,20) && sleeps==3);
+    queue_ready=false; sleeps=0;
+    assert(!halo_c3d_wait_queue(&queue,-1) && !sleeps);
+    inFrame=1; int before=queue_waits;
+    assert(!n3ds_c3d_texture_mirror_wait_idle() && before==queue_waits);
+    return 0;
+}
+'''
+
+MIRROR_COPY_PLATFORM = r'''
+#include <assert.h>
+#include <stdbool.h>
+#include <stdlib.h>
+typedef int Result;
+typedef struct {unsigned int numEntries;} gxCmdQueue_s;
+typedef struct {gxCmdQueue_s gxQueue;} C3D_Context;
+static C3D_Context context;
+static int inFrame,inSafeTransfer,closing,owned=1,enqueue_fail,extra_entry;
+static int dma_live,submitted,waits,callback_retired;
+static unsigned int source,destination;
+#define R_FAILED(r) ((r)<0)
+static int aptShouldClose(void) {return closing;}
+static int gspHasGpuRight(void) {return owned;}
+static C3D_Context *C3Di_GetContext(void) {return &context;}
+static void gxCmdQueueClear(gxCmdQueue_s *q) {q->numEntries=0;}
+static int C3Di_WaitAndClearQueue(int timeout)
+{
+    assert(timeout==-1); ++waits;
+    if(dma_live) {dma_live=0; inSafeTransfer=0; callback_retired=1;}
+    gxCmdQueueClear(&context.gxQueue); return 1;
+}
+static Result GX_TextureCopy(void *src,unsigned int gap0,void *dst,unsigned int gap1,unsigned int bytes,unsigned int flags)
+{
+    assert(src==&source && dst==&destination && !gap0 && !gap1 && bytes==16 && flags==8);
+    if(enqueue_fail)return -1;
+    context.gxQueue.numEntries=1+extra_entry;return 0;
+}
+static void halo_c3d_run_queue(gxCmdQueue_s *q)
+{
+    assert(q==&context.gxQueue && q->numEntries==1 && inSafeTransfer && !dma_live);
+    dma_live=1; ++submitted;
+}
+'''
+
+MIRROR_COPY_CHECKS = r'''
+int main(void)
+{
+    assert(n3ds_c3d_texture_mirror_copy(&source,&destination,16));
+    assert(submitted==1 && waits==2 && callback_retired && !dma_live && !inSafeTransfer);
+    enqueue_fail=1;
+    assert(!n3ds_c3d_texture_mirror_copy(&source,&destination,16) && submitted==1);
+    enqueue_fail=0; extra_entry=1;
+    assert(!n3ds_c3d_texture_mirror_copy(&source,&destination,16) && submitted==1 && !context.gxQueue.numEntries);
+    extra_entry=0; owned=0; int before=waits;
+    assert(!n3ds_c3d_texture_mirror_copy(&source,&destination,16) && waits==before);
+    owned=1; closing=1;
+    assert(!n3ds_c3d_texture_mirror_copy(&source,&destination,16) && waits==before);
+    closing=0; inFrame=1;
+    assert(!n3ds_c3d_texture_mirror_copy(&source,&destination,16) && waits==before);
+    inFrame=0; inSafeTransfer=1;
+    assert(!n3ds_c3d_texture_mirror_copy(&source,&destination,16) && waits==before);
+    return 0;
+}
+'''
+
+
 def extract_function(path, declaration):
     """Find the definition and its column-zero closing brace."""
     text = path.read_text()
@@ -344,6 +444,13 @@ def main():
     capture_start = renderer.index('enum { CAPTURE_WIDTH=')
     capture_body = renderer[capture_start:renderer.index('\n#endif', capture_start)] + '\n'
     fixtures = (
+        ('mirror-copy', MIRROR_COPY_PLATFORM
+         + extract_function(adapter, 'int n3ds_c3d_texture_mirror_copy(')
+         + MIRROR_COPY_CHECKS),
+        ('queue-callback', QUEUE_CALLBACK_PLATFORM
+         + extract_function(adapter, 'static bool halo_c3d_wait_queue(gxCmdQueue_s *queue, s64 timeout_ticks)')
+         + extract_function(adapter, 'int n3ds_c3d_texture_mirror_wait_idle(')
+         + QUEUE_CALLBACK_CHECKS),
         ('capture', CAPTURE_PLATFORM
          + extract_function(adapter, 'int n3ds_c3d_capture_wait_idle(')
          + extract_function(adapter, 'int n3ds_c3d_capture_transfer(')

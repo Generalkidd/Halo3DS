@@ -137,7 +137,7 @@ void render_sky(
 					{
 						struct animation *animation = TAG_BLOCK_GET_ELEMENT(
 							&animation_graph->animations,
-							i,
+							sky_animation->animation_index,
 							struct animation);
 
 						if (animation->node_count == model->nodes.count)

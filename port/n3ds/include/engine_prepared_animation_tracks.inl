@@ -249,6 +249,8 @@ static void native_animation_track_interval(struct native_animation_track *track
 		return;
 	}
 
+	short previous_end_key = track->end_key;
+	byte previous_decoded_mask = track->decoded_mask;
 	short frame_index = (short)fast_ftol(floor(frame));
 	short last = track->count - 1;
 	if (frame_index < track->frames[0])
@@ -274,6 +276,14 @@ static void native_animation_track_interval(struct native_animation_track *track
 		track->end_key = key + 1;
 	}
 	track->decoded_mask = 0;
+	/* Forward playback commonly starts at the previous interval's end key.
+	 * Reuse its raw decoded value; exact-frame normalization still happens
+	 * only on the output copy in native_animation_track_sample. */
+	if ((previous_decoded_mask & FLAG(1)) && track->first_key == previous_end_key)
+	{
+		track->decoded[0] = track->decoded[1];
+		track->decoded_mask = FLAG(0);
+	}
 }
 
 static const union native_animation_track_value *native_animation_track_endpoint(

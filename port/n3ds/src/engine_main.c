@@ -13,7 +13,13 @@
 #include "engine_parallel.h"
 #include "engine_action_replay.h"
 
-#ifdef HALO_N3DS_OPAQUE_COLOR_READS
+#ifdef HALO_N3DS_TEXTURE_VRAM_MIRRORS
+#define ENGINE_LOG_NAME "halo-texture-vram-mirrors.log"
+#define ENGINE_LOG_PREVIOUS "halo-texture-vram-mirrors.previous.log"
+#elif defined(HALO_N3DS_UNUSED_TEXTURE_UNITS)
+#define ENGINE_LOG_NAME "halo-unused-texture-units.log"
+#define ENGINE_LOG_PREVIOUS "halo-unused-texture-units.previous.log"
+#elif defined(HALO_N3DS_OPAQUE_COLOR_READS)
 #define ENGINE_LOG_NAME "halo-opaque-color-reads.log"
 #define ENGINE_LOG_PREVIOUS "halo-opaque-color-reads.previous.log"
 #elif defined(HALO_N3DS_FRAMEBUFFER_REUSE)
@@ -22,6 +28,9 @@
 #elif defined(HALO_N3DS_GPU_PROBE)
 #define ENGINE_LOG_NAME "halo-gpu-probe.log"
 #define ENGINE_LOG_PREVIOUS "halo-gpu-probe.previous.log"
+#elif defined(HALO_N3DS_A30_BENCHMARK)
+#define ENGINE_LOG_NAME "halo-a30-benchmark.log"
+#define ENGINE_LOG_PREVIOUS "halo-a30-benchmark.previous.log"
 #else
 #define ENGINE_LOG_NAME "halo-source-engine.log"
 #define ENGINE_LOG_PREVIOUS "halo-source-engine.previous.log"

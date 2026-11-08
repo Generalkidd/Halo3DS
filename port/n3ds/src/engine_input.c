@@ -14,18 +14,36 @@ unsigned int n3ds_input_last_held(void) { return last_sample.held; }
 static boolean initialized, active, suppressed;
 static boolean touch_was_down;
 static boolean touch_aiming;
+static boolean touch_reload;
+static struct {
+    long long down_at,first_release;
+    unsigned short x,y,first_x,first_y;
+    boolean tracking,pending,second;
+} touch_jump;
+static long long tap_hold_limit,tap_gap_limit;
+long long n3ds_engine_ticks(void),n3ds_engine_tick_frequency(void);
 static int original_model,gameplay_controls,sampled_gameplay_controls;
 static unsigned int previous_buttons,blocked_buttons;
 static const unsigned int remappable_buttons=NATIVE_KEY_A|NATIVE_KEY_B|NATIVE_KEY_X|NATIVE_KEY_Y|
     NATIVE_KEY_L|NATIVE_KEY_R|NATIVE_KEY_ZL|NATIVE_KEY_ZR|
     NATIVE_KEY_DUP|NATIVE_KEY_DDOWN|NATIVE_KEY_DLEFT|NATIVE_KEY_DRIGHT;
 void n3ds_log(const char *message);
-void n3ds_input_gameplay_controls(int enabled) { gameplay_controls=!!enabled; }
+void n3ds_input_cancel_touch_actions(void)
+{
+    touch_jump.tracking=touch_jump.pending=FALSE;
+    touch_reload=FALSE;
+}
+void n3ds_input_gameplay_controls(int enabled)
+{
+    if(!enabled && gameplay_controls) n3ds_input_cancel_touch_actions();
+    gameplay_controls=!!enabled;
+}
 int n3ds_input_gameplay_controls_active(void) { return gameplay_controls; }
+int n3ds_input_touch_reload_pressed(void) { return touch_reload && active && !suppressed && gameplay_controls; }
 static unsigned short touch_last_x,touch_last_y;
 /* Small drags respond sooner; player_control separately lifts the stick-rate
  * ceiling for touch only, before zoom/stun scaling. */
-enum { TOUCH_AIM_GAIN=8192, DEFAULT_STICK_DEADZONE=9000 };
+enum { TOUCH_AIM_GAIN=8192, DEFAULT_STICK_DEADZONE=9000, TAP_MOTION_PIXELS=8, TAP_GAP_PIXELS=24 };
 static point2d cstick_default, cstick_aim, touch_look, combined_aim;
 static unsigned int touch_motion, cstick_motion;
 void n3ds_input_resolve_aim_sources(unsigned int cstick_look_axes)
@@ -55,7 +73,39 @@ void n3ds_input_player_aim(unsigned int cstick_look_axes,point2d *right,point2d 
 }
 static unsigned int (*touch_handler)(unsigned int,unsigned int);
 void n3ds_input_touch_handler(unsigned int (*handler)(unsigned int,unsigned int))
-{ if(handler!=touch_handler) touch_aiming=FALSE;touch_handler=handler; }
+{
+    if(handler!=touch_handler) {
+        touch_aiming=FALSE;
+        n3ds_input_cancel_touch_actions();
+    }
+    touch_handler=handler;
+}
+static int touch_near(int x,int y,int origin_x,int origin_y,int radius)
+{
+    int dx=x-origin_x,dy=y-origin_y;
+    return dx*dx+dy*dy<=radius*radius;
+}
+static void touch_jump_begin(unsigned short x,unsigned short y)
+{
+    touch_jump.down_at=n3ds_engine_ticks();
+    touch_jump.second=touch_jump.pending && touch_jump.down_at-touch_jump.first_release<=tap_gap_limit &&
+        touch_near(x,y,touch_jump.first_x,touch_jump.first_y,TAP_GAP_PIXELS);
+    touch_jump.pending=FALSE;
+    touch_jump.tracking=TRUE;
+    touch_jump.x=x;touch_jump.y=y;
+}
+static int touch_jump_release(void)
+{
+    touch_jump.tracking=FALSE;
+    long long now=n3ds_engine_ticks();
+    if(now-touch_jump.down_at>tap_hold_limit ||
+       !(touch_handler(touch_jump.x,touch_jump.y)&NATIVE_TOUCH_JUMP)) return 0;
+    if(touch_jump.second) return 1;
+    touch_jump.first_release=now;
+    touch_jump.first_x=touch_jump.x;touch_jump.first_y=touch_jump.y;
+    touch_jump.pending=TRUE;
+    return 0;
+}
 _Static_assert(sizeof(struct gamepad_state)==40, "Original gamepad ABI");
 
 short fix_dead_zone(short value, short dead_range)
@@ -132,7 +182,13 @@ void n3ds_engine_input_sample(const struct native_input_sample *sample)
     boolean touching=(sample->held&NATIVE_KEY_TOUCH)!=0;
     boolean touch_pressed=touching && !touch_was_down;
     touch_was_down=touching;
-    if (!active) { touch_aiming=FALSE;memset(&gamepad,0,sizeof(gamepad)); return; }
+    touch_reload=FALSE;
+    if (!active) {
+        touch_aiming=FALSE;
+        n3ds_input_cancel_touch_actions();
+        memset(&gamepad,0,sizeof(gamepad));
+        return;
+    }
     if(gameplay_controls!=sampled_gameplay_controls) {
         /* A button held to leave a menu must not trigger its gameplay action.
          * Also start a fresh virtual hold for a different physical button that
@@ -152,24 +208,33 @@ void n3ds_engine_input_sample(const struct native_input_sample *sample)
     long touch_dx=0,touch_dy=0;
     int touch_aim_enabled=n3ds_controls_touch_aim_enabled(original_model);
     if(!touching || suppressed || !touch_aim_enabled) touch_aiming=FALSE;
-    if(touch_pressed && !suppressed && touch_handler && sample->touch_x<320 && sample->touch_y<240) {
-        unsigned int action=touch_handler(sample->touch_x,sample->touch_y);
+    if(touch_pressed) {
+        unsigned int action=!suppressed && touch_handler && sample->touch_x<320 && sample->touch_y<240 ?
+            touch_handler(sample->touch_x,sample->touch_y):0;
         if(action&NATIVE_TOUCH_GRENADE) pressed|=1u<<_gamepad_analog_button_black;
         if(action&NATIVE_TOUCH_FLASHLIGHT) pressed|=1u<<_gamepad_analog_button_white;
+        if(gameplay_controls && (action&NATIVE_TOUCH_JUMP)) touch_jump_begin(sample->touch_x,sample->touch_y);
+        else n3ds_input_cancel_touch_actions();
+        touch_reload=gameplay_controls && (action&NATIVE_TOUCH_RELOAD);
         touch_aiming=touch_aim_enabled && (action&NATIVE_TOUCH_AIM) && sample->touch_y<NATIVE_TOUCH_AIM_BOTTOM;
         touch_last_x=sample->touch_x;touch_last_y=sample->touch_y;
-    } else if(touch_aiming) {
+    } else if(touching && (touch_aiming || touch_jump.tracking)) {
         /* Cancel until release on leaving the aim area or entering a menu.
-         * Crossing the button row cannot trigger a button or resume aiming. */
-        if(sample->touch_x>=320 || sample->touch_y>=NATIVE_TOUCH_AIM_BOTTOM ||
-           !touch_handler || !(touch_handler(sample->touch_x,sample->touch_y)&NATIVE_TOUCH_AIM)) touch_aiming=FALSE;
-        else {
+         * Crossing a button cannot trigger it or resume aiming. */
+        unsigned int action=sample->touch_x<320 && sample->touch_y<NATIVE_TOUCH_AIM_BOTTOM ?
+            touch_handler(sample->touch_x,sample->touch_y):0;
+        if(!(action&NATIVE_TOUCH_JUMP) ||
+           !touch_near(sample->touch_x,sample->touch_y,touch_jump.x,touch_jump.y,TAP_MOTION_PIXELS))
+            touch_jump.tracking=FALSE;
+        if(!(action&NATIVE_TOUCH_AIM)) touch_aiming=FALSE;
+        if(touch_aiming) {
             touch_dx=((long)sample->touch_x-touch_last_x)*TOUCH_AIM_GAIN;
             touch_dy=((long)touch_last_y-sample->touch_y)*TOUCH_AIM_GAIN;
             if(n3ds_controls_invert_y(1)) touch_dy=-touch_dy;
             touch_last_x=sample->touch_x;touch_last_y=sample->touch_y;
         }
-    }
+    } else if(!touching && touch_jump.tracking && touch_jump_release())
+        pressed|=1u<<_gamepad_analog_button_a;
     for (i=0;i<NUMBER_OF_GAMEPAD_BUTTONS;++i) {
         boolean down=(pressed&(1u<<i))!=0;
         update_ticks(&gamepad.buttons[i],down);
@@ -210,6 +275,10 @@ boolean input_initialize(void)
     touch_motion=cstick_motion=0;
     initialized=active=TRUE; suppressed=FALSE;
     touch_was_down=touch_aiming=FALSE;touch_handler=NULL;
+    n3ds_input_cancel_touch_actions();
+    long long frequency=n3ds_engine_tick_frequency();
+    tap_hold_limit=frequency/5;
+    tap_gap_limit=frequency*7/20;
     return TRUE;
 }
 void input_dispose(void)
@@ -218,6 +287,7 @@ void input_dispose(void)
     initialized=active=suppressed=FALSE;
     gameplay_controls=0;
     touch_was_down=touch_aiming=FALSE;touch_handler=NULL;
+    n3ds_input_cancel_touch_actions();
     memset(&gamepad,0,sizeof(gamepad)); memset(&last_sample,0,sizeof(last_sample));
 }
 void input_frame_begin(void)
@@ -234,11 +304,12 @@ void input_frame_end(void) { assert(initialized); }
 /* Original main samples at frame_begin, then update clears per-frame suppression.
  * Polling here too would double the held duration and lose first-press events. */
 void input_update(void) { assert(initialized); suppressed=FALSE; }
-void input_suppress(void) { suppressed=TRUE;touch_aiming=FALSE; }
+void input_suppress(void) { suppressed=TRUE;touch_aiming=FALSE;n3ds_input_cancel_touch_actions(); }
 void input_activate(void) { active=TRUE; }
 void input_deactivate(void)
 {
     active=FALSE;touch_aiming=FALSE;
+    n3ds_input_cancel_touch_actions();
     sampled_gameplay_controls=gameplay_controls;
     previous_buttons=blocked_buttons=0;
     cstick_default=cstick_aim=touch_look=combined_aim=(point2d){0};

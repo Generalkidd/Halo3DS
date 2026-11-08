@@ -198,6 +198,11 @@ static int texture_prefetch_collect(enum texture_lane lane)
     struct native_texture_read_result stats;
     int ready=n3ds_texture_reader_poll(&stats);
     if(!ready) return 0;
+    /* Worker totals and the submitting lane below describe the same work;
+     * they must not be added together as frame latency. Charge background
+     * work when collected, even if it began before the last profile reset.
+     * Publication below is charged to the collecting lane, which may be a
+     * demand draw consuming an earlier queued/prefetched result. */
     TEXTURE_PROFILE(texture_profile.worker_read_ticks+=stats.read_ticks);
     TEXTURE_PROFILE(texture_profile.worker_prepare_ticks+=stats.prepare_ticks);
     TEXTURE_PROFILE(texture_profile.worker_read_bytes+=stats.bytes);

@@ -4,9 +4,16 @@
 #include "cseries.h"
 #include "math/matrix_math.h"
 #include "memory/data.h"
+#include "engine_algorithm_features.h"
 void n3ds_log(const char *);
 long long n3ds_engine_ticks(void),n3ds_engine_tick_frequency(void);
-__attribute__((naked)) void n3ds_matrix4x3_multiply(const real_matrix4x3 *a,const real_matrix4x3 *b,real_matrix4x3 *out)
+#if HALO_N3DS_ALGO_VFP_SCHEDULE == N3DS_ALGORITHM_REFERENCE
+#define MATRIX_REFERENCE n3ds_matrix4x3_multiply
+#elif HALO_N3DS_ALGO_VFP_SCHEDULE == N3DS_ALGORITHM_VERIFY
+#define MATRIX_REFERENCE n3ds_matrix4x3_multiply_reference
+#endif
+#ifdef MATRIX_REFERENCE
+__attribute__((naked)) void MATRIX_REFERENCE(const real_matrix4x3 *a,const real_matrix4x3 *b,real_matrix4x3 *out)
 {
  __asm__ volatile(
  "add ip, r1, #4\n"
@@ -86,6 +93,146 @@ __attribute__((naked)) void n3ds_matrix4x3_multiply(const real_matrix4x3 *a,cons
  "vstr s15, [r2]\n"
  "bx lr\n");
 }
+#undef MATRIX_REFERENCE
+#endif
+
+#if HALO_N3DS_ALGO_VFP_SCHEDULE != N3DS_ALGORITHM_REFERENCE
+#if HALO_N3DS_ALGO_VFP_SCHEDULE == N3DS_ALGORITHM_CANDIDATE
+#define MATRIX_SCHEDULED n3ds_matrix4x3_multiply
+#else
+#define MATRIX_SCHEDULED n3ds_matrix4x3_multiply_scheduled
+#endif
+/* Keep A's basis in s0-s8 and its scale in s15. Read each B row before
+ * storing that row of the result. A's translation is read before the final
+ * row is stored. This also supports out == a, out == b, and all three equal.
+ * Each accumulator retains the reference multiply and add order. */
+#define MATRIX_ROW \
+    "vldmia ip!, {s9-s11}\n" \
+    "vmul.f32 s12, s9, s0\n" \
+    "vmul.f32 s13, s9, s1\n" \
+    "vmul.f32 s14, s9, s2\n" \
+    "vmla.f32 s12, s10, s3\n" \
+    "vmla.f32 s13, s10, s4\n" \
+    "vmla.f32 s14, s10, s5\n" \
+    "vmla.f32 s12, s11, s6\n" \
+    "vmla.f32 s13, s11, s7\n" \
+    "vmla.f32 s14, s11, s8\n"
+
+__attribute__((naked)) void MATRIX_SCHEDULED(const real_matrix4x3 *a,
+    const real_matrix4x3 *b, real_matrix4x3 *out)
+{
+    __asm__ volatile(
+        "add ip, r0, #4\n"
+        "vldmia ip, {s0-s8}\n"
+        "vldr s15, [r0]\n"
+        "add ip, r1, #4\n"
+        "add r3, r2, #4\n"
+        MATRIX_ROW
+        "vstmia r3!, {s12-s14}\n"
+        MATRIX_ROW
+        "vstmia r3!, {s12-s14}\n"
+        MATRIX_ROW
+        "vstmia r3!, {s12-s14}\n"
+        MATRIX_ROW
+        "vmul.f32 s12, s12, s15\n"
+        "vmul.f32 s13, s13, s15\n"
+        "vmul.f32 s14, s14, s15\n"
+        "add ip, r0, #40\n"
+        "vldmia ip, {s9-s11}\n"
+        "vadd.f32 s12, s12, s9\n"
+        "vadd.f32 s13, s13, s10\n"
+        "vadd.f32 s14, s14, s11\n"
+        "vstmia r3, {s12-s14}\n"
+        "vldr s13, [r1]\n"
+        "vmul.f32 s15, s15, s13\n"
+        "vstr s15, [r2]\n"
+        "bx lr\n");
+}
+#undef MATRIX_ROW
+#undef MATRIX_SCHEDULED
+#endif
+
+#if HALO_N3DS_ALGO_VFP_SCHEDULE != N3DS_ALGORITHM_REFERENCE
+_Static_assert(offsetof(real_orientation, translation) == 16 &&
+    offsetof(real_orientation, scale) == 28 && sizeof(real_orientation) == 32,
+    "VFP orientation input layout");
+_Static_assert(offsetof(real_matrix4x3, forward) == 4 &&
+    offsetof(real_matrix4x3, position) == 40 && sizeof(real_matrix4x3) == 52,
+    "VFP orientation output layout");
+
+/* The caller has checked that the orientation and matrix are disjoint.
+ * Preserve the scalar operation order within every output, then store the
+ * nine axes as a block. Only caller-saved VFP registers are used. */
+__attribute__((naked)) void n3ds_matrix4x3_from_orientation(real_matrix4x3 *out,
+    const real_orientation *orientation)
+{
+    __asm__ volatile(
+        "vldmia r1, {s0-s3}\n"
+        "vmul.f32 s4, s0, s0\n"
+        "vmul.f32 s5, s1, s1\n"
+        "vmul.f32 s6, s2, s2\n"
+        "vmul.f32 s7, s3, s3\n"
+        "mov ip, #0x40000000\n"
+        "vmov s8, ip\n"
+        "mov ip, #0\n"
+        "vmov s9, ip\n"
+        "vadd.f32 s4, s4, s5\n"
+        "vadd.f32 s4, s4, s6\n"
+        "vadd.f32 s4, s4, s7\n"
+        "vcmp.f32 s4, #0\n"
+        "vmrs APSR_nzcv, fpscr\n"
+        /* Keep the reference ARM division and its FP status for zero norm. */
+        "vdiv.f32 s8, s8, s4\n"
+        "vmovne.f32 s9, s8\n"
+        "vmul.f32 s4, s0, s9\n"
+        "vmul.f32 s5, s1, s9\n"
+        "vmul.f32 s6, s2, s9\n"
+        "vmul.f32 s7, s0, s4\n"  /* xx */
+        "vmul.f32 s8, s1, s5\n"  /* yy */
+        "vmul.f32 s9, s2, s6\n"  /* zz */
+        "vmul.f32 s10, s3, s4\n" /* wx */
+        "vmul.f32 s11, s3, s5\n" /* wy */
+        "vmul.f32 s12, s3, s6\n" /* wz */
+        "vmul.f32 s13, s0, s5\n" /* xy */
+        "vmul.f32 s14, s0, s6\n" /* xz */
+        "vmul.f32 s15, s1, s6\n" /* yz */
+        "mov ip, #0x3f800000\n"
+        "vadd.f32 s0, s8, s9\n"
+        "vadd.f32 s4, s7, s9\n"
+        "vsub.f32 s1, s13, s12\n"
+        "vadd.f32 s3, s13, s12\n"
+        "vadd.f32 s2, s14, s11\n"
+        "vsub.f32 s6, s14, s11\n"
+        "vadd.f32 s8, s7, s8\n"
+        "vmov s12, ip\n"
+        "vsub.f32 s5, s15, s10\n"
+        "vadd.f32 s7, s15, s10\n"
+        "vsub.f32 s0, s12, s0\n"
+        "vsub.f32 s4, s12, s4\n"
+        "vsub.f32 s8, s12, s8\n"
+        "add r2, r1, #16\n"
+        "vldmia r2, {s9-s12}\n"
+        "add r2, r0, #4\n"
+        "vstmia r2!, {s0-s8}\n"
+        "vstmia r2, {s9-s11}\n"
+        "vstr s12, [r0]\n"
+        "bx lr\n");
+}
+#endif
+
+#if HALO_N3DS_ALGO_VFP_SCHEDULE == N3DS_ALGORITHM_VERIFY
+void n3ds_matrix4x3_multiply(const real_matrix4x3 *a, const real_matrix4x3 *b, real_matrix4x3 *out)
+{
+    real_matrix4x3 expected;
+    n3ds_matrix4x3_multiply_reference(a, b, &expected);
+    n3ds_matrix4x3_multiply_scheduled(a, b, out);
+    if (memcmp(out, &expected, sizeof(expected))) {
+        n3ds_log("FATAL: scheduled VFP matrix multiply differs from reference");
+        abort();
+    }
+}
+#endif
+
 static __attribute__((noinline)) void reference(const real_matrix4x3 *a,const real_matrix4x3 *b,real_matrix4x3 *r)
 {
  real_matrix4x3 t;
@@ -179,7 +326,15 @@ int n3ds_transform_tests(void)
 
 /* Load the complete transform once into caller-saved VFPv2 registers.
  * Preserve CE evaluation order, non-unit scales and in-place inputs. */
-__attribute__((naked)) real_point3d *n3ds_matrix4x3_transform_point(const real_matrix4x3 *m,const real_point3d *v,real_point3d *out)
+#if HALO_N3DS_ALGO_VFP_SCHEDULE == N3DS_ALGORITHM_REFERENCE
+#define POINT_REFERENCE n3ds_matrix4x3_transform_point
+#define VECTOR_REFERENCE n3ds_matrix4x3_transform_vector
+#elif HALO_N3DS_ALGO_VFP_SCHEDULE == N3DS_ALGORITHM_VERIFY
+#define POINT_REFERENCE n3ds_matrix4x3_transform_point_reference
+#define VECTOR_REFERENCE n3ds_matrix4x3_transform_vector_reference
+#endif
+#ifdef POINT_REFERENCE
+__attribute__((naked)) real_point3d *POINT_REFERENCE(const real_matrix4x3 *m,const real_point3d *v,real_point3d *out)
 {
  __asm__ volatile(
  "vldmia r0, {s0-s12}\n"
@@ -214,7 +369,7 @@ __attribute__((naked)) real_point3d *n3ds_matrix4x3_transform_point(const real_m
 
 /* Load the complete transform once into caller-saved VFPv2 registers.
  * Preserve CE evaluation order, non-unit scales and in-place inputs. */
-__attribute__((naked)) real_vector3d *n3ds_matrix4x3_transform_vector(const real_matrix4x3 *m,const real_vector3d *v,real_vector3d *out)
+__attribute__((naked)) real_vector3d *VECTOR_REFERENCE(const real_matrix4x3 *m,const real_vector3d *v,real_vector3d *out)
 {
  __asm__ volatile(
  "vldmia r0, {s0-s12}\n"
@@ -243,3 +398,104 @@ __attribute__((naked)) real_vector3d *n3ds_matrix4x3_transform_vector(const real
  "1: .float 1.0\n"
 );
 }
+#undef POINT_REFERENCE
+#undef VECTOR_REFERENCE
+#endif
+
+#if HALO_N3DS_ALGO_VFP_SCHEDULE != N3DS_ALGORITHM_REFERENCE
+#if HALO_N3DS_ALGO_VFP_SCHEDULE == N3DS_ALGORITHM_CANDIDATE
+#define POINT_SCHEDULED n3ds_matrix4x3_transform_point
+#define VECTOR_SCHEDULED n3ds_matrix4x3_transform_vector
+#else
+#define POINT_SCHEDULED n3ds_matrix4x3_transform_point_scheduled
+#define VECTOR_SCHEDULED n3ds_matrix4x3_transform_vector_scheduled
+#endif
+
+/* Load the scale constant before the transform. Preserve the reference's
+ * scale comparison, conditional input scaling and separate rounding. */
+#define TRANSFORM_INPUT(last) \
+    "vldr s13, 1f\n" \
+    "vldmia r0, {s0-" #last "}\n" \
+    "vcmp.f32 s0, s13\n" \
+    "vmrs APSR_nzcv, FPSCR\n" \
+    "vldmia r1, {s13-s15}\n" \
+    "vmulne.f32 s13, s13, s0\n" \
+    "vmulne.f32 s14, s14, s0\n" \
+    "vmulne.f32 s15, s15, s0\n"
+#define TRANSFORM_RETURN \
+    "mov r0, r2\n" \
+    "bx lr\n" \
+    ".align 2\n" \
+    "1: .float 1.0\n"
+
+__attribute__((naked)) real_point3d *POINT_SCHEDULED(const real_matrix4x3 *m,
+    const real_point3d *v, real_point3d *out)
+{
+    __asm__ volatile(
+        TRANSFORM_INPUT(s12)
+        "vmul.f32 s7, s7, s15\n"
+        "vmul.f32 s8, s8, s15\n"
+        "vmul.f32 s9, s9, s15\n"
+        "vmla.f32 s7, s4, s14\n"
+        "vmla.f32 s8, s5, s14\n"
+        "vmla.f32 s9, s6, s14\n"
+        "vmla.f32 s7, s1, s13\n"
+        "vmla.f32 s8, s2, s13\n"
+        "vmla.f32 s9, s3, s13\n"
+        "vadd.f32 s7, s7, s10\n"
+        "vadd.f32 s8, s8, s11\n"
+        "vadd.f32 s9, s9, s12\n"
+        "vstmia r2, {s7-s9}\n"
+        TRANSFORM_RETURN);
+}
+
+__attribute__((naked)) real_vector3d *VECTOR_SCHEDULED(const real_matrix4x3 *m,
+    const real_vector3d *v, real_vector3d *out)
+{
+    __asm__ volatile(
+        TRANSFORM_INPUT(s9)
+        "vmul.f32 s1, s13, s1\n"
+        "vmul.f32 s2, s13, s2\n"
+        "vmul.f32 s3, s13, s3\n"
+        "vmla.f32 s1, s14, s4\n"
+        "vmla.f32 s2, s14, s5\n"
+        "vmla.f32 s3, s14, s6\n"
+        "vmla.f32 s1, s15, s7\n"
+        "vmla.f32 s2, s15, s8\n"
+        "vmla.f32 s3, s15, s9\n"
+        "vstmia r2, {s1-s3}\n"
+        TRANSFORM_RETURN);
+}
+#undef TRANSFORM_INPUT
+#undef TRANSFORM_RETURN
+#undef POINT_SCHEDULED
+#undef VECTOR_SCHEDULED
+#endif
+
+#if HALO_N3DS_ALGO_VFP_SCHEDULE == N3DS_ALGORITHM_VERIFY
+real_point3d *n3ds_matrix4x3_transform_point(const real_matrix4x3 *m,
+    const real_point3d *v, real_point3d *out)
+{
+    real_point3d expected;
+    n3ds_matrix4x3_transform_point_reference(m, v, &expected);
+    real_point3d *result = n3ds_matrix4x3_transform_point_scheduled(m, v, out);
+    if (result != out || memcmp(out, &expected, sizeof(expected))) {
+        n3ds_log("FATAL: scheduled VFP point transform differs from reference");
+        abort();
+    }
+    return result;
+}
+
+real_vector3d *n3ds_matrix4x3_transform_vector(const real_matrix4x3 *m,
+    const real_vector3d *v, real_vector3d *out)
+{
+    real_vector3d expected;
+    n3ds_matrix4x3_transform_vector_reference(m, v, &expected);
+    real_vector3d *result = n3ds_matrix4x3_transform_vector_scheduled(m, v, out);
+    if (result != out || memcmp(out, &expected, sizeof(expected))) {
+        n3ds_log("FATAL: scheduled VFP vector transform differs from reference");
+        abort();
+    }
+    return result;
+}
+#endif

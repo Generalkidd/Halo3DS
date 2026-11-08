@@ -192,6 +192,21 @@ static float generic_fog_visibility(const struct generic_fog_constants *constant
     }
     return visible;
 }
+/* Lit lerp consumes fog visibility and diffuse lighting, not facing or
+ * reflection. Preserve the view path's subtraction and accumulation order. */
+static float generic_position_visibility(const float position[3],const struct generic_fog_constants *constants)
+{
+    const struct render_fog *fog=&global_window_parameters.fog;
+    float depth=0,plane=0;
+    if(constants->atmospheric || constants->planar)
+        for(int c=0;c<3;++c) {
+            float eye=global_window_parameters.camera.position.n[c]-position[c];
+            depth-=eye*global_window_parameters.camera.forward.n[c];
+        }
+    if(constants->planar)
+        for(int c=0;c<3;++c) plane+=fog->plane.n.n[c]*position[c];
+    return generic_fog_visibility(constants,depth,plane);
+}
 /* Original generic vertex programs47/57: oD1.rgb=abs(dot(normal,-forward))
  * times fog visibility; oD1.a=(1-facing)*visibility. Reflection uses the
  * positional eye vector instead. These are intentionally different vectors. */
@@ -208,13 +223,17 @@ static void generic_view(real_vector3d normal,const float position[3],
         reflected[c]=global_window_parameters.camera.position.n[c]-position[c];
         dot+=normal.n[c]*reflected[c];
         facing-=normal.n[c]*global_window_parameters.camera.forward.n[c];
-        depth-=reflected[c]*global_window_parameters.camera.forward.n[c];
-        plane+=fog->plane.n.n[c]*position[c];
     }
+    /* These coordinates affect only enabled fog modes. Keep each accumulation
+     * in its original component order, before reflection overwrites the eye. */
+    if(fog_constants->atmospheric || fog_constants->planar)
+        for(int c=0;c<3;++c) depth-=reflected[c]*global_window_parameters.camera.forward.n[c];
+    if(fog_constants->planar)
+        for(int c=0;c<3;++c) plane+=fog->plane.n.n[c]*position[c];
     for(int c=0;c<3;++c) reflected[c]=2*dot*normal.n[c]-reflected[c];
     float visible=generic_fog_visibility(fog_constants,depth,plane);
     facing=PIN(fabsf(facing),0.f,1.f);
-    memset(vertex,0,2*4*sizeof(float));vertex[0][3]=visible;
+    vertex[0][0]=vertex[0][1]=vertex[0][2]=0;vertex[0][3]=visible;
     for(int c=0;c<3;++c) vertex[1][c]=facing*visible;
     vertex[1][3]=(1-facing)*visible;
 }
@@ -363,7 +382,8 @@ void n3ds_generic_model_draw(const struct shader *shader,short permutation,
     int hologram=classification.hologram;
     if(hologram_model_draw(hologram,&bake,native,vertices,posed,count,indices,index_count)) return;
     if(n3ds_presentation_midpoint_rejected()) return;
-    const real_vector3d *normals=(g->fade_mode || per_vertex)?
+    const int view_inputs=per_vertex && !native_lerp && (!shield || cube);
+    const real_vector3d *normals=(g->fade_mode || view_inputs)?
         n3ds_model_normal_stream(cached,count,&parameters->skinning,parameters->unique_identifier):NULL;
     float relative_origin[3]={0};if(!native.sky)n3ds_gpu_camera_origin(relative_origin);
     /* Cinematic screen-mapped holograms: keep every posed vertex and triangle,
@@ -418,16 +438,10 @@ void n3ds_generic_model_draw(const struct shader *shader,short permutation,
                 shade_cell=y*8+x;
                 if(shade_valid[shade_cell]) {memcpy(vertices[i].color,shade_colors[shade_cell],sizeof(vertices[i].color));continue;}
             }
-            float inputs[2][4],reflected[3],samples[4][4]={{0}};
-            if(!g->fade_mode) normal=normals?normals[i]:generic_normal(vertex,&parameters->skinning);
-            generic_view(normal,skinned->position,inputs,reflected,&fog_constants);
-            /* Generic vertex0 is diffuse model lighting. Use the same bounded
-             * lighting approximation as opaque models; keep its alpha as the
-             * original fog visibility, rather than inventing a white input. */
-            memcpy(inputs[0],skinned->color,3*sizeof(float));
-            if(native.sky) inputs[0][0]=inputs[0][1]=inputs[0][2]=1;
             if(native_lerp) {
-                memcpy(vertices[i].color,inputs[0],sizeof(vertices[i].color));
+                memcpy(vertices[i].color,skinned->color,3*sizeof(float));
+                if(native.sky) vertices[i].color[0]=vertices[i].color[1]=vertices[i].color[2]=1;
+                vertices[i].color[3]=generic_position_visibility(skinned->position,&fog_constants);
                 vertices[i].color[3]*=vertices[i].uv[2][0];
                 for(int m=0;m<2;++m) for(int axis=0;axis<2;++axis) {
                     const float *row=bake.transform[m][axis];
@@ -435,6 +449,20 @@ void n3ds_generic_model_draw(const struct shader *shader,short permutation,
                 }
                 continue;
             }
+            float inputs[2][4],reflected[3],samples[4][4]={{0}};
+            if(view_inputs) {
+                if(!g->fade_mode) normal=normals?normals[i]:generic_normal(vertex,&parameters->skinning);
+                generic_view(normal,skinned->position,inputs,reflected,&fog_constants);
+            } else {
+                /* Non-cube shield evaluation consumes samples, not vertex
+                 * facing. Only the final fog/fade step uses this alpha. */
+                inputs[0][3]=generic_position_visibility(skinned->position,&fog_constants);
+            }
+            /* Generic vertex0 is diffuse model lighting. Use the same bounded
+             * lighting approximation as opaque models; keep its alpha as the
+             * original fog visibility, rather than inventing a white input. */
+            memcpy(inputs[0],skinned->color,3*sizeof(float));
+            if(native.sky) inputs[0][0]=inputs[0][1]=inputs[0][2]=1;
             for(int m=0;m<bake.maps;++m) {
                 if(!m && cube) n3ds_cube_sample(cube,reflected,samples[m]);
                 else if(!m && (g->flags&8)) {

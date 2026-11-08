@@ -146,8 +146,11 @@ void object_list_add(
 	long object_index)
 {
 	struct object_list_header_datum *list = object_list_header_get(object_list_index);
+	long previous_head = list->first_reference_index;
 	reference_list_add(object_list_data, &list->first_reference_index, object_index);
-	list->count++;
+	/* A full reference pool leaves the list unchanged. */
+	if (list->first_reference_index != previous_head)
+		list->count++;
 
 	return;
 }

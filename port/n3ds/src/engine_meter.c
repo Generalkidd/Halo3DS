@@ -55,6 +55,9 @@ void n3ds_meter_model_draw(const struct shader *shader,short permutation,
     for(int c=0;c<4;++c) native.meter_tint|=(unsigned int)(constants[4][c]*255.f+.5f)<<(c*8);
     struct native_chicago_vertex *v=n3ds_gpu_chicago_allocate(count);assert(v);
     const struct model_vertex_uncompressed *cached=type==5?n3ds_model_decode_stream(data,count):NULL;
+    /* The meter skins with unit UV scale. Decoded bounds already use the
+     * same vertex order and min/max operations; retain the scan on a miss. */
+    int bounds_prepared=cached && n3ds_model_uv_bounds(cached,count,bounds);
     const real_vector2d scale={1,1};
     const struct native_render_vertex *posed=n3ds_model_skin_stream(cached,count,&p->skinning,&scale,p->unique_identifier);
     float relative_origin[3]={0};if(!native.sky)n3ds_gpu_camera_origin(relative_origin);
@@ -68,7 +71,8 @@ void n3ds_meter_model_draw(const struct shader *shader,short permutation,
         for(int c=0;c<3;++c)v[i].position[c]=skinned->position[c]-relative_origin[c];
         memset(v[i].uv,0,sizeof(v[i].uv));
         for(int axis=0;axis<2;++axis) {
-            float uv=v[i].uv[0][axis]=skinned->uv[axis];bounds[axis]=MIN(bounds[axis],uv);bounds[axis+2]=MAX(bounds[axis+2],uv);
+            float uv=v[i].uv[0][axis]=skinned->uv[axis];
+            if(!bounds_prepared) {bounds[axis]=MIN(bounds[axis],uv);bounds[axis+2]=MAX(bounds[axis+2],uv);}
         }
     }
     for(int axis=0;axis<2;++axis) if(bounds[axis+2]-bounds[axis]<.0001f) bounds[axis+2]=bounds[axis]+.0001f;

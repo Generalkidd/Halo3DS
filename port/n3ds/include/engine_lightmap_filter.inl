@@ -22,10 +22,13 @@ static int lightmap_reduce(const byte *source,unsigned int bytes,unsigned int w,
     if(!source || !out || !distance || w<4 || h<4 || w>1024 || h>1024 ||
        tw<8 || th<8 || tw>512 || th>512 || (w&(w-1)) || (h&(h-1)) ||
        (tw&(tw-1)) || (th&(th-1)) || bytes<w*h*2) return 0;
+    /* Validated dimensions are powers of two; coordinate divisions are exact
+     * shifts. Retain the variable sample-count divisions used for averaging. */
+    unsigned int tx_shift=__builtin_ctz(tw),ty_shift=__builtin_ctz(th);
     for(unsigned int x=0;x<w;++x) {long s[2];bitmap_swizzle_vector2d(w,h,x,0,s);xs[x]=s[0];}
     for(unsigned int y=0;y<h;++y) {long s[2];bitmap_swizzle_vector2d(w,h,0,y,s);ys[y]=s[1];}
     for(unsigned int y=0;y<th;++y) for(unsigned int x=0;x<tw;++x) {
-        unsigned int r=0,g=0,b=0,n=0,x0=x*w/tw,x1=MAX(x0+1,(x+1)*w/tw),y0=y*h/th,y1=MAX(y0+1,(y+1)*h/th);
+        unsigned int r=0,g=0,b=0,n=0,x0=(x*w)>>tx_shift,x1=MAX(x0+1,((x+1)*w)>>tx_shift),y0=(y*h)>>ty_shift,y1=MAX(y0+1,((y+1)*h)>>ty_shift);
         for(unsigned int sy=y0;sy<y1;++sy) for(unsigned int sx=x0;sx<x1;++sx) {
             unsigned int at=xs[sx]|ys[sy];if(lightmap_padding(source,at)) continue;
             unsigned int v=lightmap_word(source,at),a=v>>11,c=(v>>5)&63,d=v&31;
@@ -37,11 +40,11 @@ static int lightmap_reduce(const byte *source,unsigned int bytes,unsigned int w,
     /* Extend the nearest retained lighting into empty reduced cells. This
      * keeps bilinear samples at chart edges away from the debug checker. */
     for(unsigned int pass=0;pass<2;++pass) for(unsigned int i=0;i<tw*th;++i) {
-        unsigned int at=pass?tw*th-1-i:i,x=at%tw,y=at/tw;
+        unsigned int at=pass?tw*th-1-i:i,x=at&(tw-1),y=at>>tx_shift;
         unsigned int near[2]={pass?(x+1<tw?at+1:at):(x?at-1:at),pass?(y+1<th?at+tw:at):(y?at-tw:at)};
         for(unsigned int k=0;k<2;++k) if((unsigned int)distance[near[k]]+1<distance[at]) {
             distance[at]=distance[near[k]]+1;
-            out[lightmap_tile(x,y,tw,th)]=out[lightmap_tile(near[k]%tw,near[k]/tw,tw,th)];
+            out[lightmap_tile(x,y,tw,th)]=out[lightmap_tile(near[k]&(tw-1),near[k]>>tx_shift,tw,th)];
         }
     }
     return 1;

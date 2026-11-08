@@ -111,6 +111,7 @@ void structure_decals_initialize_for_new_map(
 	void);
 void structure_decals_reconnect_to_structure_bsp(
 	void);
+boolean structure_decals_reconnect_pending(void);
 void structure_decals_disconnect_from_structure_bsp(
 	void);
 void structure_decals_dispose_from_old_map(

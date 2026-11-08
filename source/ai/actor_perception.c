@@ -6001,12 +6001,28 @@ static void actor_perception_refresh(
 
 	if (pvs != NULL)
 	{
+#ifdef HALO_N3DS
+		const long cluster_count = structure_bsp->clusters.count;
+		for (long base = 0; base < cluster_count; base += LONG_BITS)
+		{
+			unsigned long visible = pvs[base >> LONG_BITS_BITS];
+			const long remaining = cluster_count - base;
+			if (remaining < LONG_BITS)
+				visible &= (1UL << remaining) - 1;
+
+			/* Clear the lowest bit each time to preserve cluster and object order. */
+			while (visible)
+			{
+				const short cluster_index = base + __builtin_ctzl(visible);
+				visible &= visible - 1;
+#else
 		short cluster_index;
 
 		for (cluster_index = 0; cluster_index < structure_bsp->clusters.count; cluster_index++)
 		{
 			if (BIT_VECTOR_TEST_FLAG(pvs, cluster_index))
 			{
+#endif
 				long reference_index;
 				long object_index;
 

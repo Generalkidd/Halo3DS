@@ -295,8 +295,12 @@ void render_particles(
                         }
                         ++native_selected;if(particle->object_index==NONE)++native_draw_count;
 #endif
-						real radius =
-							particle_get_radius(rendered_particle->particle_index);
+                        real radius =
+#ifdef HALO_N3DS
+                            particle_radius_from_data(particle, definition);
+#else
+                            particle_get_radius(rendered_particle->particle_index);
+#endif
 
 #if defined(HALO_N3DS) && HALO_N3DS_ALGO_MIDPOINT_PARTICLES != N3DS_ALGORITHM_REFERENCE
 						real_matrix4x3 const *midpoint_parent = NULL;

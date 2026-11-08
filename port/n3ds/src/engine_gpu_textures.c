@@ -53,6 +53,7 @@ unsigned int n3ds_gpu_texture_content_id(void *resource)
         if(immutable[link-1].resource==resource) return immutable[link-1].id;
     return 0;
 }
+#include "engine_texture_vram.inl"
 static unsigned int publish_identity(void *resource,unsigned int first,unsigned int limit)
 {
     C3D_Tex *texture=resource;
@@ -74,6 +75,9 @@ unsigned int n3ds_gpu_texture_publish_immutable(void *resource)
 static void forget_identity(void *resource)
 {
     if(!resource) return;
+#ifdef HALO_N3DS_TEXTURE_VRAM_MIRRORS
+    texture_mirror_forget(resource);
+#endif
     unsigned short *link=immutable_bucket+identity_bucket(resource);
     while(*link) {
         unsigned int i=*link-1;
@@ -136,26 +140,39 @@ int n3ds_gpu_textures_initialize(void)
     for (unsigned int stage = 0; stage < 3; ++stage) n3ds_gpu_texture_bind(stage,NULL);
     return 1;
 }
-static inline __attribute__((always_inline)) int bind_descriptor(unsigned int stage,void *resource,C3D_Tex sampler)
+static inline __attribute__((always_inline)) int bind_descriptor(unsigned int stage,void *resource,
+    const C3D_Tex *owner,u32 param)
 {
-    if (!initialized || stage >= 3) return 0;
-    int cube=C3D_TexGetType(&sampler)==GPU_TEX_CUBE_MAP || C3D_TexGetType(&sampler)==GPU_TEX_SHADOW_CUBE;
-    if(stage && C3D_TexGetType(&sampler)!=GPU_TEX_2D) return 0;
+    GPU_TEXTURE_MODE_PARAM type=(param>>28)&7u;
+    int cube=type==GPU_TEX_CUBE_MAP || type==GPU_TEX_SHADOW_CUBE;
+    if(stage && type!=GPU_TEX_2D) return 0;
     ++bind_requests;
+    void *data=owner->data;
+#ifdef HALO_N3DS_TEXTURE_VRAM_MIRRORS
+    texture_mirror_request(resource);
+    if(!cube) data=texture_mirror_storage(resource,texture_mirror_identity(resource),data);
+#endif
     unsigned int identity=bound_valid[stage] && resource==bound[stage] ?
         bound_identity[stage] : n3ds_gpu_texture_content_id(resource);
     int changed=!bound_valid[stage];
     if(cube) {
-        if(!sampler.cube) return 0;
-        changed=changed || memcmp(&bound_cube[stage],sampler.cube,sizeof(C3D_TexCube));
-        bound_cube[stage]=*sampler.cube;sampler.cube=&bound_cube[stage];
+        if(!owner->cube) return 0;
+        changed=changed || memcmp(&bound_cube[stage],owner->cube,sizeof(C3D_TexCube));
+        bound_cube[stage]=*owner->cube;
+        data=&bound_cube[stage];
     }
-    changed=changed || memcmp(&bound_sampler[stage],&sampler,sizeof(sampler));
+    /* Compare the effective fields in place. An immutable image owner can
+     * still change its sampler parameters between draws. */
+    C3D_Tex *sampler=bound_sampler+stage;
     /* Mutable pixel contents require a real bind even with unchanged sampler
      * bits. A newly published allocation also invalidates address reuse. */
-    if(changed || (resource && !identity) || identity!=bound_identity[stage]) {
-        bound_sampler[stage]=sampler;bound_valid[stage]=1;bound_identity[stage]=identity;
-        C3D_TexBind(stage,&bound_sampler[stage]);++bind_updates;
+    if(changed || (resource && !identity) || identity!=bound_identity[stage] ||
+       sampler->data!=data || sampler->param!=param || sampler->dim!=owner->dim ||
+       sampler->fmt!=owner->fmt || sampler->size!=owner->size ||
+       sampler->border!=owner->border || sampler->lodParam!=owner->lodParam) {
+        *sampler=*owner;sampler->data=data;sampler->param=param;
+        bound_valid[stage]=1;bound_identity[stage]=identity;
+        C3D_TexBind(stage,sampler);++bind_updates;
     }
     bound[stage] = resource;
     return 1;
@@ -163,12 +180,14 @@ static inline __attribute__((always_inline)) int bind_descriptor(unsigned int st
 int n3ds_gpu_texture_bind(unsigned int stage,void *resource)
 {
     if(!initialized || stage>=3) return 0;
-    return bind_descriptor(stage,resource,*(C3D_Tex *)(resource?resource:&neutral));
+    const C3D_Tex *owner=resource?resource:&neutral;
+    return bind_descriptor(stage,resource,owner,owner->param);
 }
 int n3ds_gpu_texture_bind_sampler(unsigned int stage,void *resource,unsigned int flags)
 {
     if(!initialized || stage>=3 || (flags&~31u)) return 0;
-    C3D_Tex sampler=*(C3D_Tex *)(resource?resource:&neutral);
+    const C3D_Tex *owner=resource?resource:&neutral;
+    C3D_Tex sampler={.param=owner->param};
     if(flags&NATIVE_SAMPLER_PROJECTIVE) {
         if(stage || C3D_TexGetType(&sampler)!=GPU_TEX_2D) return 0;
         sampler.param=(sampler.param&~(7u<<28))|(GPU_TEX_PROJECTION<<28);
@@ -177,7 +196,7 @@ int n3ds_gpu_texture_bind_sampler(unsigned int stage,void *resource,unsigned int
         flags&NATIVE_SAMPLER_MIN_POINT?GPU_NEAREST:GPU_LINEAR);
     C3D_TexSetWrap(&sampler,flags&NATIVE_SAMPLER_CLAMP_U?GPU_CLAMP_TO_EDGE:GPU_REPEAT,
         flags&NATIVE_SAMPLER_CLAMP_V?GPU_CLAMP_TO_EDGE:GPU_REPEAT);
-    return bind_descriptor(stage,resource,sampler);
+    return bind_descriptor(stage,resource,owner,sampler.param);
 }
 void *n3ds_gpu_texture_bound(unsigned int stage)
 {
@@ -236,6 +255,9 @@ void n3ds_gpu_textures_dispose(void)
 {
     if (!initialized) return;
     if (!n3ds_gpu_texture_barrier()) abort();
+#ifdef HALO_N3DS_TEXTURE_VRAM_MIRRORS
+    texture_mirror_dispose();
+#endif
     {extern void n3ds_log(const char *);char message[120];
      snprintf(message,sizeof(message),"NATIVE SAMPLERS: requests=%u descriptor_updates=%u",bind_requests,bind_updates);n3ds_log(message);}
     for(unsigned int i=0;i<PLASMA_TEXTURE_SLOTS;++i) if(plasma_textures[i].resource) {

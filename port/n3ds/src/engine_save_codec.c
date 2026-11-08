@@ -5,9 +5,10 @@
 #include <string.h>
 #include <stdio.h>
 #include "engine_parallel.h"
+#include "../../../source/memory/crc.h"
 #define LZ4_HEAPMODE 1
 #include "../vendor/lz4/lz4.c"
-enum { SAVE_BLOCK=32768, SAVE_LIMIT=0x345000, SAVE_BLOCKS=(SAVE_LIMIT+SAVE_BLOCK-1)/SAVE_BLOCK };
+enum { SAVE_PAGE=4096, SAVE_BLOCK=32768, SAVE_LIMIT=0x345000, SAVE_BLOCKS=(SAVE_LIMIT+SAVE_BLOCK-1)/SAVE_BLOCK };
 struct save_snapshot {
     unsigned int refs,bytes,packed,checksum,raw;
     /* Packed blocks store offsets. Raw blocks store individual checksums. */
@@ -26,6 +27,50 @@ static unsigned int snapshot_checksum(const struct save_snapshot *s)
     unsigned int metadata=n3ds_save_memory_crc(&s->bytes,8,s->blocks,sizeof(s->blocks));
     return s->raw?metadata:metadata ^ n3ds_save_memory_crc(s->data,s->packed,NULL,0);
 }
+static int snapshot_page_is_zero(const unsigned char *data)
+{
+    const uint32_t *words=__builtin_assume_aligned(data,sizeof(uint32_t));
+    for(unsigned int i=0;i<SAVE_PAGE/sizeof(*words);i+=4) {
+        uint32_t group[4];
+        memcpy(group,words+i,sizeof(group));
+        if(group[0]|group[1]|group[2]|group[3]) return 0;
+    }
+    return 1;
+}
+static uint32_t snapshot_crc_zero_page(uint32_t crc)
+{
+    /* Advancing 4096 zero bytes is linear in the running, uncomplemented
+     * CRC. Start with the advanced high bit and shift it through the
+     * reflected CRC polynomial for each remaining input bit. */
+    uint32_t result=0,term=UINT32_C(0x09fe548f);
+    while(crc) {
+        if(crc>>31) result^=term;
+        crc<<=1;
+        term=(term>>1)^((term&1)?UINT32_C(0xedb88320):0);
+    }
+    return result;
+}
+static unsigned int snapshot_raw_crc(const unsigned char *data,unsigned int bytes)
+{
+    if(bytes<SAVE_PAGE || ((uintptr_t)data&(sizeof(uint32_t)-1)))
+        return n3ds_save_memory_crc(data,bytes,NULL,0);
+
+    /* Verify each page's bytes before advancing the checksum. This also
+     * detects changes to pages in an already captured snapshot. */
+    unsigned int pages=bytes/SAVE_PAGE,nonzero=0;
+    for(unsigned int i=0;i<pages;++i)
+        if(!snapshot_page_is_zero(data+i*SAVE_PAGE)) nonzero|=1u<<i;
+    if(!nonzero && bytes==SAVE_BLOCK) return UINT32_C(0xfee00359);
+
+    unsigned long crc;
+    crc_new(&crc);
+    for(unsigned int i=0;i<pages;++i,data+=SAVE_PAGE,bytes-=SAVE_PAGE) {
+        if(nonzero&(1u<<i)) crc_checksum_buffer(&crc,data,SAVE_PAGE);
+        else crc=snapshot_crc_zero_page(crc);
+    }
+    if(bytes) crc_checksum_buffer(&crc,data,bytes);
+    return crc;
+}
 int n3ds_save_snapshot_validate(const void *snapshot)
 {
     const struct save_snapshot *s=snapshot;
@@ -34,7 +79,7 @@ int n3ds_save_snapshot_validate(const void *snapshot)
        s->checksum!=snapshot_checksum(s)) return 0;
     if(s->raw) {
         for(unsigned int i=0,offset=0;offset<s->bytes;++i,offset+=SAVE_BLOCK)
-            if(s->blocks[i]!=n3ds_save_memory_crc(s->data+offset,snapshot_block_bytes(s,offset),NULL,0)) return 0;
+            if(s->blocks[i]!=snapshot_raw_crc(s->data+offset,snapshot_block_bytes(s,offset))) return 0;
     }
     return 1;
 }
@@ -78,10 +123,17 @@ static int capture_raw_blocks(void *context,unsigned int begin,unsigned int end)
 {
     struct raw_capture *capture=context;
     struct save_snapshot *s=capture->snapshot;
+    unsigned int block_count=(s->bytes+SAVE_BLOCK-1)/SAVE_BLOCK;
+    unsigned int half=(block_count+1)/2;
+    /* For the even two-core split, distribute dense and sparse arena
+     * regions across both ranges. Serial and unequal splits stay sequential. */
+    int alternate=(begin==0 && end==half) || (begin==half && end==block_count);
     for(unsigned int i=begin;i<end;++i) {
-        unsigned int offset=i*SAVE_BLOCK,bytes=snapshot_block_bytes(s,offset);
+        unsigned int index=i;
+        if(alternate) index=i<half?i*2:(i-half)*2+1;
+        unsigned int offset=index*SAVE_BLOCK,bytes=snapshot_block_bytes(s,offset);
         memcpy(s->data+offset,capture->input+offset,bytes);
-        s->blocks[i]=n3ds_save_memory_crc(s->data+offset,bytes,NULL,0);
+        s->blocks[index]=snapshot_raw_crc(s->data+offset,bytes);
     }
     return 1;
 }
@@ -130,7 +182,7 @@ int n3ds_save_snapshot_read(const void *snapshot,unsigned int offset,void *out,u
  if(!s || offset%SAVE_BLOCK || offset>=s->bytes || bytes!=snapshot_block_bytes(s,offset))return 0;
  unsigned int i=offset/SAVE_BLOCK;
  if(s->raw) {
-  if(s->blocks[i]!=n3ds_save_memory_crc(s->data+offset,bytes,NULL,0))return 0;
+  if(s->blocks[i]!=snapshot_raw_crc(s->data+offset,bytes))return 0;
   memcpy(out,s->data+offset,bytes);return 1;
  }
  unsigned int start=s->blocks[i],end=s->blocks[i+1];

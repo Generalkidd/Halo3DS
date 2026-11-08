@@ -33,6 +33,14 @@ collection and an offline reader for stage, queue and acknowledgement gaps.
 The [action replay fixture](ACTION-REPLAY.md) supports local campaign checks
 with copied starting data.
 
+The [current native performance review](PERFORMANCE-GOAL-REVIEW.md) reconciles
+the newer physical GPU captures with remaining model/presentation coverage.
+The [unused terrain sampler comparison](UNUSED-TEXTURE-UNITS.md) is an
+independent opt-in candidate; no native 60 FPS result is established.
+An independent [VRAM texture mirror comparison](TEXTURE-VRAM-MIRRORS.md)
+preserves canonical CPU textures and tests exact GPU copies with bounded
+additional VRAM.
+
 ## Building the game
 
 The build uses Python 3.10+, Clang, devkitARM, libctru, citro3d, Picasso and
@@ -107,6 +115,7 @@ triggers a screen readback during the run. The options are recorded in
 | `--texture-cache-mib 8` | Raises the New-model gameplay byte cap from 4 to 8 MiB. Slot limits are identical. The cache reclaims the extra working set under linear-memory pressure. |
 | `--texture-prefetch` | Prewarms nearby terrain at map entry and enables bounded texture preparation on New models. `--present-60` also enables worker preparation and can prioritize the bitmap that canceled a midpoint. |
 | `--performance-profile` | Records work percentiles, visibility time, texture stages by request type, eviction pressure, and worker time in `halo-source-engine.log`. |
+| `--a30-benchmark` | With `--fixed-world-width 400 --performance-profile`, writes the interactive A30 benchmark's profile to `halo-a30-benchmark.log`. |
 | `--dependency-trace` | Independently collects bounded dependency events and exports at shutdown. Default off. Rejects readback, replay, diagnostics and Original-memory fixtures. |
 | `--dependency-trace-loops N` | Requires trace; accepts 1–18,000 completed frontend loops after gameplay first starts, default 120. Stops capture without ending gameplay or enlarging event storage. |
 | `--midpoint-capture-tick N` | Correctness fixture for `--present-60`. Writes at most one midpoint/regular top-target pair with RGBA, raw D24S8 and camera inputs in the 120 ticks starting at N. Use the complete manifest and keep timing and trace flags off. |
@@ -138,6 +147,17 @@ need an external bound and graceful shutdown to export retained events.
 Do not interpret submissions or sampled swap acknowledgements as exact LCD
 scanout times. Retain overflow, drops and missing completion records alongside
 any later analysis; see [the trace contract](DEPENDENCY-TRACE.md).
+
+For the A30 benchmark, use `--fixed-world-width 400 --performance-profile
+--a30-benchmark` with the normal build dependencies. Copy the output 3DSX to
+`3ds/Halo 2DS A30 Benchmark/Halo 2DS A30 Benchmark.3dsx` on the SD card.
+Back up `halo-source/state` first because both launchers use the same saves.
+Start Campaign → Halo on Easy with Texture Detail set to Performance to
+match the earlier run. Play without pausing from the crash site through
+the dropship landing and first contact with the Marines and Sergeant Johnson.
+Continue for 20–30 seconds. Hold START+SELECT to exit and copy
+`halo-a30-benchmark.log` from the SD root before relaunching. Record when
+the slowdown happened and whether it was sustained or a brief hitch.
 
 ### 60 Hz presentation target
 
@@ -198,6 +218,8 @@ the regular frame still renders and the top LCD retains the last safe buffer.
 `MIDPOINT PRESENT` counts midpoint submissions, observed swap acknowledgments
 for both frame types, and skips by reason. It also reports the separate CPU
 and queue estimates and the CPU time spent on discarded optional frames.
+The report includes the eligible-frame count and elapsed wall time between
+reports. The first report has no preceding timing boundary and shows zero.
 Interpolation can add presentation latency, so aiming response and the
 achievable frame rate need console validation.
 [Banjo's scheduling and fallback](https://github.com/oneup03/rt64-3ds/blob/0d783be0c9f51fa7edc696ac33a0992b5f021ecb/src/renderer/rt64_3ds_context.cpp#L2547-L2664)
@@ -751,3 +773,12 @@ then run it again without that flag after staging. `--git`
 selects a Git executable if needed. This checks known exclusions and common
 secret formats in the current tree/index, not all possible secrets or licensing
 requirements. Only the current working tree or index is scanned.
+
+Generic material CPU regression checks (host Clang with ASan/UBSan):
+
+```sh
+python3 tools/verify_generic_view.py
+python3 tools/verify_generic_classification.py
+```
+
+These check production arithmetic, output initialization and classifier admission. They do not replace native image comparisons or frame-time measurements.

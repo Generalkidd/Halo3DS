@@ -23,7 +23,9 @@ static struct bitmap_data *select_bitmap(long group_index, short index)
     if (!group || group->bitmaps.count <= 0) return NULL;
     /* The original helper repeats bitmap_group_get/tag_get. Keep its checked
      * block access, using the group we have already resolved above. */
-    return TAG_BLOCK_GET_ELEMENT(&group->bitmaps,index % group->bitmaps.count,struct bitmap_data);
+    if (index >= group->bitmaps.count)
+        index %= group->bitmaps.count;
+    return TAG_BLOCK_GET_ELEMENT(&group->bitmaps,index,struct bitmap_data);
 }
 static struct bitmap_data *select_with_default(short type, short usage, long group_index, short index)
 {

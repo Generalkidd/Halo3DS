@@ -1,6 +1,7 @@
 """Ensure unavailable/unsafe experiment combinations fail before producing a build."""
 from pathlib import Path
 import importlib.util
+import itertools
 import os
 import shutil
 import subprocess
@@ -98,8 +99,17 @@ class BuildControls(unittest.TestCase):
             ['--action-replay', 'record', '--performance-profile'],
             ['--action-replay', 'record', '--test-frames', '30'],
             ['--action-replay', 'record', '--present-60', '--midpoint-capture-tick', '300'],
+            ['--unused-texture-units'],
+            ['--unused-texture-units', '--fixed-world-width', '320'],
+            ['--unused-texture-units', '--fixed-world-width', '400', '--gpu-probe', '--skip-opaque-color-reads'],
+            ['--unused-texture-units', '--fixed-world-width', '400', '--gpu-probe', '--framebuffer-reuse'],
         ]
-        for option in ('--gpu-probe', '--framebuffer-reuse', '--skip-opaque-color-reads'):
+        candidates = ('--framebuffer-reuse', '--skip-opaque-color-reads', '--unused-texture-units',
+                      '--texture-vram-mirrors')
+        for first, second in itertools.combinations(candidates, 2):
+            cases.append(['--gpu-probe', '--fixed-world-width', '400', first, second])
+        cases.extend([['--texture-vram-mirrors'], ['--texture-vram-mirrors', '--fixed-world-width', '320']])
+        for option in ('--gpu-probe', *candidates):
             for extra in (['--action-replay', 'record'], ['--texture-lod-fixture', 'capture'],
                           ['--texture-lod-fixture', 'timing'], ['--vertex-layout', 'packed'],
                           ['--geometry-source', 'cooked'], ['--algo-root-pose', 'candidate']):
@@ -113,6 +123,24 @@ class BuildControls(unittest.TestCase):
                     self.assertEqual(result.returncode, 2, result.stderr)
                     self.assertIn('error:', result.stderr)
                     self.assertFalse(output.exists())
+
+    def test_texture_candidates_accept_independent_probe_and_combined_standalone(self):
+        # Stop at the first missing dependency: this checks public option
+        # compatibility without requiring SDK inputs or compiling a launcher.
+        with tempfile.TemporaryDirectory(prefix='halo-texture-build-guards-') as directory:
+            missing = Path(directory) / 'missing-devkitarm'
+            output = Path(directory) / 'build'
+            for option in ('--unused-texture-units', '--texture-vram-mirrors'):
+                for extra in ([], ['--gpu-probe'], ['--skip-opaque-color-reads'], ['--framebuffer-reuse'],
+                              ['--unused-texture-units', '--texture-vram-mirrors']):
+                    with self.subTest(option=option, extra=extra):
+                        result = subprocess.run([sys.executable, str(BUILD), '--output', str(output),
+                                                 '--devkitarm', str(missing), option,
+                                                 '--fixed-world-width', '400', *extra],
+                                                capture_output=True, text=True, timeout=10)
+                        self.assertEqual(result.returncode, 2, result.stderr)
+                        self.assertIn('Missing dependency:', result.stderr)
+                        self.assertIn(str(missing), result.stderr)
 
     def test_direct_compiler_capture_guards(self):
         compiler = os.environ.get('CC') or shutil.which('cc')
@@ -130,12 +158,26 @@ class BuildControls(unittest.TestCase):
             (['HALO_N3DS_PRESENT_INTERPOLATION=1', 'HALO_N3DS_MISSION_TICKS=30',
               'HALO_N3DS_MIDPOINT_CAPTURE_TICK=300'], False),
         ]
-        for option in ('HALO_N3DS_GPU_PROBE', 'HALO_N3DS_FRAMEBUFFER_REUSE', 'HALO_N3DS_OPAQUE_COLOR_READS'):
+        for option in ('HALO_N3DS_GPU_PROBE', 'HALO_N3DS_FRAMEBUFFER_REUSE', 'HALO_N3DS_OPAQUE_COLOR_READS',
+                       'HALO_N3DS_UNUSED_TEXTURE_UNITS', 'HALO_N3DS_TEXTURE_VRAM_MIRRORS'):
             regular = [option+'=1', 'HALO_N3DS_MISSION_TICKS=0', 'HALO_N3DS_FIXED_WORLD_WIDTH=400']
             cases.append((regular, True))
             for extra in ('HALO_N3DS_ACTION_REPLAY=1', 'HALO_N3DS_TEXTURE_LOD_FIXTURE=1',
                           'HALO_N3DS_TEXTURE_COMPARE_FIXTURE=1', 'HALO_N3DS_VERTEX_LAYOUT=1'):
                 cases.append((regular+[extra], False))
+        unused = ['HALO_N3DS_UNUSED_TEXTURE_UNITS=1', 'HALO_N3DS_MISSION_TICKS=0',
+                  'HALO_N3DS_FIXED_WORLD_WIDTH=400']
+        cases.append((unused + ['HALO_N3DS_GPU_PROBE=1'], True))
+        for companion in ('HALO_N3DS_OPAQUE_COLOR_READS=1', 'HALO_N3DS_FRAMEBUFFER_REUSE=1'):
+            cases.append((unused + [companion], True))
+            cases.append((unused + [companion, 'HALO_N3DS_GPU_PROBE=1'], False))
+        mirrors = ['HALO_N3DS_TEXTURE_VRAM_MIRRORS=1', 'HALO_N3DS_MISSION_TICKS=0',
+                   'HALO_N3DS_FIXED_WORLD_WIDTH=400']
+        cases.append((mirrors + ['HALO_N3DS_GPU_PROBE=1'], True))
+        for companion in ('HALO_N3DS_OPAQUE_COLOR_READS=1', 'HALO_N3DS_FRAMEBUFFER_REUSE=1',
+                          'HALO_N3DS_UNUSED_TEXTURE_UNITS=1'):
+            cases.append((mirrors + [companion], True))
+            cases.append((mirrors + [companion, 'HALO_N3DS_GPU_PROBE=1'], False))
         for defines, valid in cases:
             with self.subTest(defines=defines):
                 result = subprocess.run([compiler, '-x', 'c', '-fsyntax-only', '-', '-I',

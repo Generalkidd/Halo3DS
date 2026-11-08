@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include "engine_text.h"
 #include "engine_hud.h"
+#include "engine_input.h"
 #include "engine_textures.h"
 #include "engine_renderer.h"
 #include "engine_presentation.h"
@@ -62,6 +63,18 @@ int n3ds_gpu_touch_panel(const unsigned int *pixels,unsigned int revision)
     int ok=n3ds_gpu_text_begin(320,240,0xffffffff,1,0);
     n3ds_gpu_framebuffer_blend(NATIVE_BLEND_ALPHA);
     if(ok) ok=n3ds_gpu_text_draw(v);
+    if(ok) {
+        /* The reload face shares the existing control atlas and sampler. */
+        for(int i=0;i<4;++i) {
+            float x=NATIVE_TOUCH_RELOAD_WIDTH*uv[i][0];
+            float y=NATIVE_TOUCH_RELOAD_HEIGHT*uv[i][1];
+            v[i].position[0]=NATIVE_TOUCH_RELOAD_X+x;
+            v[i].position[1]=NATIVE_TOUCH_RELOAD_Y+y;
+            v[i].uv[0]=(NATIVE_TOUCH_RELOAD_ATLAS_X+x)/512.f;
+            v[i].uv[1]=y/64.f;
+        }
+        ok=n3ds_gpu_text_draw(v);
+    }
     n3ds_gpu_texture_bind(0,saved);n3ds_gpu_world_state_restore();
     return ok;
 }

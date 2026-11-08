@@ -1,14 +1,39 @@
 /* The pinned Citro3D context records framebuffer and fragment state before
  * each draw. Keep its framebuffer shadow intact and track the hardware
  * color-read permission across runs of eligible indexed draws. */
-#ifdef HALO_N3DS_OPAQUE_COLOR_READS
+#if defined(HALO_N3DS_OPAQUE_COLOR_READS) || defined(HALO_N3DS_UNUSED_TEXTURE_UNITS)
 #include <3ds.h>
 #include "internal.h"
 
+void __real_C3Di_UpdateContext(void);
+#ifdef HALO_N3DS_UNUSED_TEXTURE_UNITS
+unsigned int n3ds_gpu_texture_unit_mask(void);
+void n3ds_gpu_texture_unit_observe(unsigned int omitted, int write);
+/* Shadow only the actual enable bits, never the retained descriptors. The
+ * stock context still owns all texture bindings and cache invalidations. */
+static unsigned int installed_texture_units = 7;
+static void texture_units_update(const C3D_Context *context, bool stock_write)
+{
+    unsigned int stock = context->texConfig & 7u;
+    unsigned int desired = stock & n3ds_gpu_texture_unit_mask();
+    if (stock_write) installed_texture_units = stock;
+    int write = installed_texture_units != desired;
+    if (write) {
+        GPUCMD_AddMaskedWrite(GPUREG_TEXUNIT_CONFIG, 1,
+            (context->texConfig & ~7u) | desired);
+        /* Follow the pinned SDK's configure-then-invalidate ordering when
+         * changing enabled units, including restoration without a rebind. */
+        GPUCMD_AddMaskedWrite(GPUREG_TEXUNIT_CONFIG, 4, BIT(16));
+        installed_texture_units = desired;
+    }
+    n3ds_gpu_texture_unit_observe(stock & ~desired, write);
+}
+#endif
+
+#ifdef HALO_N3DS_OPAQUE_COLOR_READS
 int n3ds_gpu_opaque_color_read_path(const void *color_buffer);
 void n3ds_gpu_opaque_color_read_draw(int omitted);
 void n3ds_gpu_opaque_color_read_transition(int extra_flush);
-void __real_C3Di_UpdateContext(void);
 void __real_C3D_DrawElements(GPU_Primitive_t primitive, int count, int type, const void *indices);
 
 enum { COLOR_READ_CANDIDATE = 2 };
@@ -37,7 +62,7 @@ static bool overwrites_all_color(const C3D_Context *context)
         (context->texEnvBuf & 7u) != GPU_GAS;
 }
 
-void __wrap_C3Di_UpdateContext(void)
+static void color_read_update(void)
 {
     if (!color_read_path && !color_read_omitted) {
         __real_C3Di_UpdateContext();
@@ -77,5 +102,22 @@ void __wrap_C3D_DrawElements(GPU_Primitive_t primitive, int count, int type, con
     color_read_path = n3ds_gpu_opaque_color_read_path(C3Di_GetContext()->fb.colorBuf);
     __real_C3D_DrawElements(primitive, count, type, indices);
     color_read_path = 0;
+}
+#endif
+
+void __wrap_C3Di_UpdateContext(void)
+{
+#ifdef HALO_N3DS_UNUSED_TEXTURE_UNITS
+    const C3D_Context *context = C3Di_GetContext();
+    bool stock_texture_write = (context->flags & (C3DiF_TexAll | C3DiF_TexStatus)) != 0;
+#endif
+#ifdef HALO_N3DS_OPAQUE_COLOR_READS
+    color_read_update();
+#else
+    __real_C3Di_UpdateContext();
+#endif
+#ifdef HALO_N3DS_UNUSED_TEXTURE_UNITS
+    texture_units_update(context, stock_texture_write);
+#endif
 }
 #endif

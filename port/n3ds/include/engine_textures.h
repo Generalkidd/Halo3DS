@@ -5,6 +5,14 @@ int n3ds_gpu_texture_wrap(unsigned int stage,int clamp_u,int clamp_v);
 /* Fixed-width scalar/pointer interface between the engine and libctru ABI. */
 int n3ds_gpu_textures_initialize(void);
 void n3ds_gpu_textures_dispose(void);
+#ifdef HALO_N3DS_TEXTURE_VRAM_MIRRORS
+/* Optional exact GPU copies; CPU owners remain in linear memory. Idle is
+ * outside a frame. Freeze forbids residency changes during paired timing. */
+void n3ds_gpu_texture_mirror_idle(int eligible,int freeze);
+void n3ds_gpu_texture_mirror_select(int candidate);
+void n3ds_gpu_texture_mirror_stats(unsigned int *resident,unsigned int *bytes,
+    unsigned int *uploads,unsigned int *failures);
+#endif
 int n3ds_gpu_texture_bind(unsigned int stage, void *resource);
 enum { NATIVE_SAMPLER_MAG_POINT=1, NATIVE_SAMPLER_MIN_POINT=2,
     NATIVE_SAMPLER_CLAMP_U=4, NATIVE_SAMPLER_CLAMP_V=8, NATIVE_SAMPLER_PROJECTIVE=16 };

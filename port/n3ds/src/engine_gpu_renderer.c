@@ -267,6 +267,28 @@ static void renderer_layouts_initialize(void)
     C3D_TexEnvSrc(env,C3D_Alpha,GPU_PRIMARY_COLOR,GPU_PRIMARY_COLOR,GPU_PRIMARY_COLOR);
     C3D_TexEnvFunc(env,C3D_Alpha,GPU_REPLACE);
 }
+static __attribute__((noinline)) int vertex_buffers_apply(const struct vertex_buffer_binding *bindings,unsigned int count)
+{
+    int retained=frame_active && bound_vertex_valid;
+    bound_vertex_valid=0;
+    C3D_BufInfo *buffers=C3D_GetBufInfo();if(!buffers) return 0;
+    if(retained) {
+        /* Only this owner writes BufInfo. A successful bind this frame
+         * leaves the SDK base and unused slots intact. Clear both slots
+         * before adding so even a rejected address leaves the same state. */
+        buffers->bufCount=0;
+        buffers->buffers[0]=(C3D_BufCfg){0};
+        buffers->buffers[1]=(C3D_BufCfg){0};
+    } else BufInfo_Init(buffers);
+    for(unsigned int i=0;i<count;++i)
+        if(BufInfo_Add(buffers,bindings[i].data,bindings[i].stride,bindings[i].attributes,bindings[i].permutation)<0) return 0;
+    if(frame_active) {
+        bound_vertex[0]=bindings[0];
+        if(count==2) bound_vertex[1]=bindings[1];
+        bound_vertex_count=count;bound_vertex_valid=1;
+    }
+    return 1;
+}
 static int vertex_buffers_bind(const struct vertex_buffer_binding *bindings,unsigned int count)
 {
     for(unsigned int i=0;i<count;++i) if(!bindings[i].data) return 0;
@@ -276,16 +298,7 @@ static int vertex_buffers_bind(const struct vertex_buffer_binding *bindings,unsi
         same=bindings[i].data==bound_vertex[i].data && bindings[i].stride==bound_vertex[i].stride &&
             bindings[i].attributes==bound_vertex[i].attributes && bindings[i].permutation==bound_vertex[i].permutation;
     if(same) {++vertex_buffer_reuses;return 1;}
-    bound_vertex_valid=0;
-    C3D_BufInfo *buffers=C3D_GetBufInfo();if(!buffers) return 0;
-    BufInfo_Init(buffers);
-    for(unsigned int i=0;i<count;++i)
-        if(BufInfo_Add(buffers,bindings[i].data,bindings[i].stride,bindings[i].attributes,bindings[i].permutation)<0) return 0;
-    if(frame_active) {
-        memcpy(bound_vertex,bindings,count*sizeof(*bindings));
-        bound_vertex_count=count;bound_vertex_valid=1;
-    }
-    return 1;
+    return vertex_buffers_apply(bindings,count);
 }
 int n3ds_gpu_vertex_buffer_bind(const void *data,unsigned int stride,unsigned int attributes,unsigned int permutation)
 {
@@ -836,6 +849,43 @@ static void renderer_diagnostic_initialize(void)
 
 int n3ds_gpu_frame_active(void) { return frame_active; }
 int n3ds_gpu_frame_is_mono(void) { return frame_active && stereo_level==0.f; }
+#ifdef HALO_N3DS_TEXTURE_VRAM_MIRRORS
+static int texture_mirror_eligible(void)
+{
+    return target && !n3ds_input_platform_original_model() && world_budget_enabled &&
+        world_scale_fixed && !world_scale && !world_low_active && !stereo_level &&
+        !eye_right && !screen_effect_active && !diagnostic_mode;
+}
+#endif
+#ifdef HALO_N3DS_UNUSED_TEXTURE_UNITS
+/* This scope is entered only around the plain/detail terrain draw loop.
+ * All other draws retain stock bindings, including white fallback maps. */
+static unsigned int terrain_texture_units = 7;
+unsigned int n3ds_gpu_texture_unit_mask(void)
+{
+    if (!frame_active || !target || bottom_selected || stereo_level || eye_right ||
+        !world_budget_enabled || !world_scale_fixed || world_scale || world_low_active ||
+        screen_effect_active || diagnostic_mode)
+        return 7;
+#ifdef HALO_N3DS_GPU_PROBE
+    if (gpu_probe.recording && probe_modes[gpu_probe.phase] != PROBE_TEXTURE_UNITS_MODE)
+        return 7;
+#endif
+    return terrain_texture_units;
+}
+void n3ds_gpu_texture_unit_observe(unsigned int omitted, int write)
+{
+#ifdef HALO_N3DS_GPU_PROBE
+    if (gpu_probe.recording) {
+        gpu_probe.draws[PROBE_TEXTURE_DRAWS] += !!omitted;
+        gpu_probe.draws[PROBE_TEXTURE_UNITS] += !!(omitted&1) + !!(omitted&2) + !!(omitted&4);
+        gpu_probe.draws[PROBE_TEXTURE_WRITES] += !!write;
+    }
+#else
+    (void)omitted; (void)write;
+#endif
+}
+#endif
 #ifdef HALO_N3DS_OPAQUE_COLOR_READS
 /* Scope the SDK adapter to the direct native top target. It checks the
  * actual installed blend, access masks and depth state before omitting a read. */
@@ -1277,6 +1327,17 @@ static int begin_frame(int midpoint)
         n3ds_trace_event(N3DS_TRACE_GPU_ACQUIRE_REJECT,midpoint,3);
         n3ds_log("EXIT: HOME requested close at GPU frame boundary");exit(0);
     }
+#ifdef HALO_N3DS_TEXTURE_VRAM_MIRRORS
+    /* Uploads precede FrameBegin: the SDK's in-frame copy path splits the
+     * queue. Keep all upload/fence costs outside paired steady-state timing. */
+    n3ds_gpu_texture_mirror_idle(!midpoint && texture_mirror_eligible(),
+#ifdef HALO_N3DS_GPU_PROBE
+        gpu_probe.active
+#else
+        0
+#endif
+    );
+#endif
     long long before=svcGetSystemTick();
     /* Flag zero still blocks on the previous GPU queue. SYNCDRAW adds a
      * separate VBlank wait; the live mission loop already paces to30Hz. */
@@ -1337,6 +1398,13 @@ static int begin_frame(int midpoint)
     }
 #ifdef HALO_N3DS_GPU_PROBE
     gpu_probe_begin(midpoint, frame_wait_ticks);
+#endif
+#ifdef HALO_N3DS_TEXTURE_VRAM_MIRRORS
+    n3ds_gpu_texture_mirror_select(texture_mirror_eligible()
+#ifdef HALO_N3DS_GPU_PROBE
+        && (!gpu_probe.recording || probe_modes[gpu_probe.phase] == PROBE_VRAM_MODE)
+#endif
+    );
 #endif
     native_light_frame_begin();
     surface_batch_active=surface_state_mode=0;
@@ -2372,11 +2440,17 @@ int n3ds_gpu_environment_draw(const struct native_render_vertex *vertices,const 
     }
     environment_state_valid=1;
     if(!environment_vertex_buffer_bind(vertices,light_uv,0)) return 0;
+#ifdef HALO_N3DS_UNUSED_TEXTURE_UNITS
+    terrain_texture_units=1u | (lightmap?2u:0u) | (detail?4u:0u);
+#endif
     for(unsigned int i=0;i<count;i+=30000) {
         unsigned int chunk=count-i>30000?30000:count-i;
         C3D_DrawElements(GPU_TRIANGLES,chunk,C3D_UNSIGNED_SHORT,indices+i);
         ALGORITHM_GPU_DRAW(chunk);
     }
+#ifdef HALO_N3DS_UNUSED_TEXTURE_UNITS
+    terrain_texture_units=7;
+#endif
     return 1;
 }
 int n3ds_gpu_environment_emission_draw(const struct native_render_vertex *vertices,const float *light_uv,

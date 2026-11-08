@@ -80,6 +80,7 @@ validates the derived data at publication. Verification is excluded from timing.
 | `--algo-region-selection` | Retain resolved permutation geometry indices across LOD changes within the existing part cache. Each view still selects LOD and preserves part order. |
 | `--algo-compressed-tracks` | Retain validated constant values and raw key endpoints for map-owned animation streams. Seek and interval misses retain the reference search and exact-key path. |
 | `--algo-local-hierarchy` | Reuse unchanged local child transforms after overlays. Reuse world results when the parent matrix bytes also match. |
+| `--algo-vfp-schedule` | Group loads and stores and interleave independent ARM11 VFP calculations in matrix multiply, point/vector transforms and orientation conversion. Each output keeps the reference operation order. Verify mode compares the scheduled results with the reference. Overlapping orientation storage uses the reference path. |
 | `--algo-stable-palette` | Order compact palettes by original bone index. Identity palettes, influences and shader limits are preserved. |
 | `--algo-deferred-decode` | Dispatch the owned tail context to the existing core 2 worker. Classify the decoded prefix before joining at the first tail vertex. |
 | `--algo-bsp-resolved-batch` | Candidate only. Extend adjacency merging within the opaque terrain pass when emitted texture, sampler and material state match. |
@@ -93,7 +94,6 @@ compiler guards reject unavailable modes.
 
 | Option | Proposed slice |
 | --- | --- |
-| `--algo-vfp-schedule` | CPU-B: schedule independent VFP accumulators |
 | `--algo-support-corners` | CPU-C: two-corner rectangle classification |
 | `--algo-adpcm-table` | AUDIO-A1: exact packed lookup words |
 | `--algo-adpcm-loops` | AUDIO-A2: exact mono/stereo loop specialization |

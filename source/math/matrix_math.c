@@ -88,6 +88,10 @@ symbols in this file:
 
 #include "cseries.h"
 #include "real_math.h"
+#ifdef HALO_N3DS
+#include <stdint.h>
+#include "engine_algorithm_features.h"
+#endif
 
 /* ---------- constants */
 
@@ -186,7 +190,7 @@ void matrix4x3_translation(
 	return;
 }
 
-void matrix4x3_rotation_from_quaternion(
+static inline void matrix4x3_axes_from_quaternion(
 	real_matrix4x3 *matrix,
 	real_quaternion const *quaternion)
 {
@@ -226,7 +230,6 @@ void matrix4x3_rotation_from_quaternion(
 	yz = quaternion->v.j * z;
 	zz = quaternion->v.k * z;
 
-	matrix->scale = 1.f;
 	matrix->forward.i = 1.f - (yy + zz);
 	matrix->forward.j = xy - wz;
 	matrix->forward.k = xz + wy;
@@ -236,6 +239,14 @@ void matrix4x3_rotation_from_quaternion(
 	matrix->up.i = xz - wy;
 	matrix->up.j = yz + wx;
 	matrix->up.k = 1.f - (xx + yy);
+}
+
+void matrix4x3_rotation_from_quaternion(
+	real_matrix4x3 *matrix,
+	real_quaternion const *quaternion)
+{
+	matrix4x3_axes_from_quaternion(matrix, quaternion);
+	matrix->scale = 1.f;
 	matrix->position.x = 0.f;
 	matrix->position.y = 0.f;
 	matrix->position.z = 0.f;
@@ -258,6 +269,32 @@ void matrix4x3_from_orientation(
 	real_matrix4x3 *matrix,
 	real_orientation const *orientation)
 {
+#ifdef HALO_N3DS
+	/* Shift the overlapping address interval to start at zero. Unsigned
+	 * wraparound also handles inputs before that interval. */
+	uintptr_t first_overlap = (uintptr_t)matrix - (sizeof(*orientation) - 1);
+	if ((uintptr_t)orientation - first_overlap >= sizeof(*matrix) + sizeof(*orientation) - 1)
+	{
+#if HALO_N3DS_ALGO_VFP_SCHEDULE == N3DS_ALGORITHM_REFERENCE
+		matrix4x3_axes_from_quaternion(matrix, &orientation->rotation);
+#else
+		extern void n3ds_matrix4x3_from_orientation(real_matrix4x3 *, const real_orientation *);
+#if HALO_N3DS_ALGO_VFP_SCHEDULE == N3DS_ALGORITHM_VERIFY
+		real_matrix4x3 expected;
+		matrix4x3_axes_from_quaternion(&expected, &orientation->rotation);
+		expected.scale = orientation->scale;
+		expected.position = orientation->translation;
+#endif
+		n3ds_matrix4x3_from_orientation(matrix, orientation);
+#if HALO_N3DS_ALGO_VFP_SCHEDULE == N3DS_ALGORITHM_VERIFY
+		if (memcmp(matrix, &expected, sizeof(expected)))
+			vhalt("Scheduled VFP orientation differs from reference");
+#endif
+		return;
+#endif
+	}
+	else
+#endif
 	matrix4x3_rotation_from_quaternion(matrix, &orientation->rotation);
 	matrix->scale = orientation->scale;
 	matrix->position = orientation->translation;

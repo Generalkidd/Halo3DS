@@ -40,6 +40,10 @@ CITRO3D_COLOR_READ_SOURCE = {
     'effect.c': 'c32e5972aed2d7b99c542dae571f085e9dc046b7a0c3d2f12e01b64333a0ab65',
 }
 CITRO3D_COLOR_READ_WRAPS = ('C3D_DrawElements', 'C3Di_UpdateContext')
+CITRO3D_TEXTURE_MIRROR_SOURCE = {
+    'texture.c': '1736196fa1b3d57c9562f1506941deba25352d634590aa2fc7281b5eb65fffa3',
+    'renderqueue.c': CITRO3D_FRAME_SOURCE['renderqueue.c'],
+}
 # Stable, independent renderer mode identities. The RGBA8 candidate archive
 # cooked geometry and packed layouts are opt-in.
 # Keep these IDs in sync with include/engine_renderer_features.h.
@@ -67,7 +71,8 @@ IMPLEMENTED_ALGORITHMS = ('prepared_view', 'shared_skinning', 'inverse_bind',
                           'midpoint_quaternions', 'root_pose', 'model_compact',
                           'collision_features', 'collision_active_planes', 'compressed_tracks',
                           'deferred_decode', 'stable_palette', 'retained_skin', 'local_hierarchy',
-                          'bsp_resolved_batch', 'midpoint_particles', 'region_selection', *GPU_ALGORITHMS)
+                          'bsp_resolved_batch', 'midpoint_particles', 'region_selection',
+                          'vfp_schedule', *GPU_ALGORITHMS)
 
 
 def run(command, out, label):
@@ -120,6 +125,8 @@ def main():
                         help='Upload all model triangle lists through the per-frame arena')
     parser.add_argument('--performance-profile', action='store_true',
                         help='Report frame percentiles, visibility and texture costs')
+    parser.add_argument('--a30-benchmark', action='store_true',
+                        help='Use a separate A30 benchmark log with fixed 400x240 gameplay profiling')
     parser.add_argument('--algorithm-profile', action='store_true',
                         help='Add bounded owner-side algorithm counters; requires --performance-profile')
     parser.add_argument('--allocation-profile', action='store_true',
@@ -136,6 +143,10 @@ def main():
                         help='Reuse identical native framebuffer bindings on New models; requires --fixed-world-width 400')
     parser.add_argument('--skip-opaque-color-reads', action='store_true',
                         help='Skip destination-color reads for exact RGBA overwrites; requires --fixed-world-width 400')
+    parser.add_argument('--unused-texture-units', action='store_true',
+                        help='Disable unused samplers on plain/detail terrain; requires --fixed-world-width 400')
+    parser.add_argument('--texture-vram-mirrors', action='store_true',
+                        help='Mirror resident textures in spare VRAM; requires --fixed-world-width 400')
     for name in ALGORITHMS:
         choices=('reference', 'candidate') if name in (*GPU_ALGORITHMS, 'bsp_resolved_batch', 'midpoint_particles') else tuple(ALGORITHM_MODES)
         parser.add_argument('--algo-'+name.replace('_', '-'), choices=choices, default='reference',
@@ -181,7 +192,11 @@ def main():
         parser.error('--dependency-trace cannot be combined with readback or validation fixtures')
     if args.skip_opaque_color_reads and args.framebuffer_reuse:
         parser.error('Measure --skip-opaque-color-reads independently of --framebuffer-reuse')
-    if (args.gpu_probe or args.framebuffer_reuse or args.skip_opaque_color_reads) and (
+    gpu_candidates = (args.framebuffer_reuse, args.skip_opaque_color_reads,
+                      args.unused_texture_units, args.texture_vram_mirrors)
+    if args.gpu_probe and sum(gpu_candidates) > 1:
+        parser.error('Measure one independent candidate at a time in --gpu-probe')
+    if (args.gpu_probe or any(gpu_candidates)) and (
                            args.fixed_world_width != 400 or args.test_frames or args.diagnostics or
                            args.original_memory or args.present_60 or args.dependency_trace or
                            args.performance_profile or args.texture_prefetch or
@@ -228,10 +243,16 @@ def main():
                               any(getattr(args, 'algo_'+name) == 'verify' for name in IMPLEMENTED_ALGORITHMS))
     uncaptured_profile_eligible = bool(args.performance_profile and not validation_configured and
                                        not algorithm_verification and not args.allocation_profile)
+    if args.a30_benchmark and (
+            args.fixed_world_width != 400 or not uncaptured_profile_eligible or
+            args.profile_frames or args.dependency_trace or args.texture_compare_fixture != 'off'):
+        parser.error('--a30-benchmark requires a playable --fixed-world-width 400 --performance-profile build')
     run_purpose = ('validation-readback' if readback_configured else
                    'validation-fixture' if validation_configured else
                    'algorithm-verification' if algorithm_verification else
                    'allocation-observation' if args.allocation_profile else
+                   'texture-vram-mirrors-probe' if args.gpu_probe and args.texture_vram_mirrors else
+                   'unused-texture-units-probe' if args.gpu_probe and args.unused_texture_units else
                    'opaque-color-read-probe' if args.gpu_probe and args.skip_opaque_color_reads else
                    'framebuffer-reuse-probe' if args.gpu_probe and args.framebuffer_reuse else
                    'gpu-workload-probe' if args.gpu_probe else
@@ -246,10 +267,13 @@ def main():
     nm = args.devkitarm/('bin/arm-none-eabi-nm'+ext)
     for path in [gcc, ar, args.libctru/'lib/libctru.a', args.citro3d/'lib/libcitro3d.a', args.xdk]:
         if not path.exists(): parser.error(f'Missing dependency: {path}')
-    frame_adapter = args.present_60 or args.dependency_trace or args.gpu_probe
+    frame_adapter = args.present_60 or args.dependency_trace or args.gpu_probe or args.texture_vram_mirrors
+    context_adapter = args.skip_opaque_color_reads or args.unused_texture_units
     pinned_citro3d = dict(CITRO3D_FRAME_SOURCE) if frame_adapter else {}
-    if args.skip_opaque_color_reads:
+    if context_adapter:
         pinned_citro3d.update(CITRO3D_COLOR_READ_SOURCE)
+    if args.texture_vram_mirrors:
+        pinned_citro3d.update(CITRO3D_TEXTURE_MIRROR_SOURCE)
     for name, expected in pinned_citro3d.items():
         path = args.citro3d/'source'/name
         if not path.is_file() or hashlib.sha256(path.read_bytes().replace(b'\r\n', b'\n')).hexdigest() != expected:
@@ -276,7 +300,7 @@ def main():
     source_digest=digest.hexdigest()
     if not frame_adapter:
         entries = [entry for entry in entries if not entry.get('citro3d_frame_adapter')]
-    if not args.skip_opaque_color_reads:
+    if not context_adapter:
         entries = [entry for entry in entries if not entry.get('citro3d_color_read_adapter')]
     defines = ['-DHALO_N3DS_CHECKPOINT_FEATURE=1',f'-DHALO_N3DS_MISSION_TICKS={args.test_frames}']
     for name, modes in RENDERER_MODES.items():
@@ -300,6 +324,10 @@ def main():
         defines.append('-DHALO_N3DS_FRAMEBUFFER_REUSE=1')
     if args.skip_opaque_color_reads:
         defines.append('-DHALO_N3DS_OPAQUE_COLOR_READS=1')
+    if args.unused_texture_units:
+        defines.append('-DHALO_N3DS_UNUSED_TEXTURE_UNITS=1')
+    if args.texture_vram_mirrors:
+        defines.append('-DHALO_N3DS_TEXTURE_VRAM_MIRRORS=1')
     if args.diagnostics: defines.append('-DHALO_N3DS_RENDERER_TESTS=1')
     if args.original_memory: defines.append('-DHALO_N3DS_LOW_MEMORY_TEST=1')
     if args.fixed_world_width:
@@ -321,6 +349,8 @@ def main():
         defines.append('-DHALO_N3DS_DISABLE_RESIDENT_INDICES=1')
     if args.performance_profile:
         defines.extend(('-DHALO_N3DS_PERFORMANCE_PROFILE=1', '-DHALO_N3DS_TEXTURE_PROFILE=1'))
+    if args.a30_benchmark:
+        defines.append('-DHALO_N3DS_A30_BENCHMARK=1')
     source_date_epoch=os.environ.get('SOURCE_DATE_EPOCH')
     identity_dependencies=external_build_inputs(args.devkitarm,gcc,ar,args.clang,args.libctru,args.citro3d,
         PORT/'n3ds.specs',COMMON,ROOT)
@@ -386,6 +416,8 @@ def main():
     wraps = WRAPS + (['malloc', 'calloc', 'memalign', 'aligned_alloc'] if args.allocation_profile else [])
     if args.skip_opaque_color_reads:
         wraps += list(CITRO3D_COLOR_READ_WRAPS)
+    elif args.unused_texture_units:
+        wraps.append('C3Di_UpdateContext')
     link=[str(gcc),*COMMON,'-specs='+str(PORT/'n3ds.specs'),'-Wl,--gc-sections','-Wl,-Map='+str(out/'Halo3DS.map'),
           *['-Wl,--wrap='+name for name in wraps],*map(str,objects),str(archive),'-L',str(args.citro3d/'lib'),
           '-lcitro3d','-L',str(args.libctru/'lib'),'-lctru','-lm','-o',str(elf)]
@@ -427,7 +459,7 @@ def main():
                                 'checksum':'FNV-1a32 over header and records; trailer excluded',
                                 'tail_always_unconfirmed':True,
                                 'instrumentation_overhead':'unmeasured',
-                                'frame_adapter':args.present_60 or args.dependency_trace,
+                                'frame_adapter':frame_adapter,
                                 'citro3d_frame_revision':CITRO3D_FRAME_REVISION},
             'renderer_features':{'schema_version':1,
                                  **{name:{'mode':getattr(args,name),'id':modes[getattr(args,name)]}
@@ -447,11 +479,14 @@ def main():
                             'external_capture':'unverified',
                             'evidence':'configuration only; not validation or measured performance'},
             'performance':{'fixed_world_width':args.fixed_world_width,'texture_cache_mib':args.texture_cache_mib,
+                           'texture_vram_mirrors':args.texture_vram_mirrors,
+                           'unused_texture_units':args.unused_texture_units,
                            'skip_opaque_color_reads':args.skip_opaque_color_reads,
                            'framebuffer_reuse':args.framebuffer_reuse,
                            'present_60':args.present_60,
                            'texture_prefetch':args.texture_prefetch,'portal_cache':not args.disable_portal_cache,
                            'resident_indices':not args.disable_resident_indices,
+                           'a30_benchmark':args.a30_benchmark,
                            'profile':args.performance_profile},
             'checkpoint_identity':build_id,'checkpoint_identity_source_sha256':source_digest,
             'checkpoint_identity_external_sha256':external_digest,'checkpoint_identity_dependencies':identity_dependencies,

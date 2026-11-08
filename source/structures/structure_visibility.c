@@ -406,6 +406,19 @@ static const real_plane3d screen_plane =
 
 static boolean warned_about_missing_subclusters;
 static short rendered_cluster_indices[MAXIMUM_CLUSTERS_PER_STRUCTURE];
+#ifdef HALO_N3DS
+/* The results stay in render and rendered_cluster_indices until one of the
+ * visibility publishers replaces them. Retain only the exact input view. */
+static struct native_visibility_view
+{
+	boolean valid;
+	boolean sky_model;
+	long cluster_index;
+	unsigned int generation;
+	struct render_camera camera;
+	struct render_frustum frustum;
+} native_visibility_view;
+#endif
 static struct profile_section render_structure_visibility_portal_traversal =
 	{ "render_structure_visibility_portal_traversal", NONE, TRUE };
 static struct profile_section render_structure_visibility_subcluster_traversal =
@@ -1631,6 +1644,7 @@ short structure_visibility_build_surfaces(
 
 static void structure_visibility_traverse_cluster(
 	const struct visibility_traversal *view,
+	const unsigned long *cluster_pvs,
 	unsigned long *visited_cluster_flags,
 	short cluster_index,
 	struct portal_hull const *visible_region)
@@ -1641,9 +1655,6 @@ static void structure_visibility_traverse_cluster(
 		clusters,
 		cluster_index,
 		struct structure_visibility_cluster);
-	unsigned long *cluster_pvs = structure_bsp_get_cluster_pvs(
-		structure,
-		(short)view->cluster_index);
 	struct rendered_cluster *rendered_cluster;
 	long portal_list_index;
 
@@ -1742,6 +1753,7 @@ static void structure_visibility_traverse_cluster(
 			{
 				structure_visibility_traverse_cluster(
 					view,
+					cluster_pvs,
 					visited_cluster_flags,
 					neighbor_cluster_index,
 					visible_region);
@@ -1768,6 +1780,7 @@ static void structure_visibility_traverse_cluster(
 				{
 					structure_visibility_traverse_cluster(
 						view,
+						cluster_pvs,
 						visited_cluster_flags,
 						neighbor_cluster_index,
 						&clipped_hull);
@@ -1777,6 +1790,7 @@ static void structure_visibility_traverse_cluster(
 					error(_error_silent, "portal intersection failed.");
 					structure_visibility_traverse_cluster(
 						view,
+						cluster_pvs,
 						visited_cluster_flags,
 						neighbor_cluster_index,
 						visible_region);
@@ -1817,8 +1831,11 @@ static void structure_visibility_find_clusters(const struct visibility_traversal
 			visited_cluster_flags,
 			0,
 			sizeof(visited_cluster_flags));
+		/* Every portal revisit tests the same starting-cluster PVS. Its map
+		 * storage stays immutable for this synchronous traversal. */
 		structure_visibility_traverse_cluster(
 			view,
+			structure_bsp_get_cluster_pvs(structure, (short)view->cluster_index),
 			visited_cluster_flags,
 			(short)view->cluster_index,
 			&screen_hull);
@@ -1879,6 +1896,9 @@ static void structure_visibility_compute_internal(
 		rendered_cluster_indices
 	};
 
+#ifdef HALO_N3DS
+	native_visibility_view.valid = FALSE;
+#endif
 	NATIVE_CPU_ADD(N3DS_ALG_CPU_VISIBILITY, 1);
 	profile_enter(render_structure_visibility_portal_traversal);
 	render.environment_surface_count = 0;
@@ -1962,10 +1982,34 @@ void structure_visibility_compute(void)
 #ifdef HALO_N3DS
 void n3ds_structure_visibility_compute(void)
 {
-    /* The native BSP renderer submits its own material/index batches and has
-     * no readers of the Xbox environment-surface list. Keep portal traversal,
-     * cluster clipping, sky selection and object visibility exactly intact. */
-    structure_visibility_compute_internal(FALSE);
+	extern boolean debug_no_frustum_clip;
+	extern unsigned int n3ds_engine_cache_generation(void);
+	boolean reusable = !debug_portals && !structures_use_pvs_for_vs &&
+		!ai_debug.render_encounter_activeregion && !debug_no_frustum_clip &&
+		(__builtin_arm_get_fpscr() & 0x03ffff00u) == 0x03000000u;
+	unsigned int generation = n3ds_engine_cache_generation();
+	if (reusable && native_visibility_view.valid &&
+		native_visibility_view.generation == generation &&
+		native_visibility_view.cluster_index == render.cluster_index &&
+		native_visibility_view.sky_model == render.visible_sky_model &&
+		!memcmp(&native_visibility_view.camera, &render.camera, sizeof(render.camera)) &&
+		!memcmp(&native_visibility_view.frustum, &render.frustum, sizeof(render.frustum)))
+	{
+		NATIVE_CPU_ADD(N3DS_ALG_CPU_VISIBILITY_REUSED, 1);
+		return;
+	}
+
+	/* The native BSP renderer submits its own material/index batches. */
+	structure_visibility_compute_internal(FALSE);
+	if (reusable)
+	{
+		native_visibility_view.generation = generation;
+		native_visibility_view.cluster_index = render.cluster_index;
+		native_visibility_view.sky_model = render.visible_sky_model;
+		memcpy(&native_visibility_view.camera, &render.camera, sizeof(render.camera));
+		memcpy(&native_visibility_view.frustum, &render.frustum, sizeof(render.frustum));
+		native_visibility_view.valid = TRUE;
+	}
 }
 #if HALO_N3DS_ALGO_PREPARED_VIEW != N3DS_ALGORITHM_REFERENCE
 boolean n3ds_prepare_visibility_allowed(void)
@@ -1994,6 +2038,7 @@ void n3ds_prepare_visibility(const struct render_camera *camera, const struct re
 void n3ds_publish_visibility(const struct n3ds_prepared_visibility *visibility)
 {
 	const struct structure_bsp *structure = global_structure_bsp_get();
+	native_visibility_view.valid = FALSE;
 	render.leaf_index = visibility->leaf_index;
 	render.cluster_index = visibility->cluster_index;
 	render.visible_sky_index = visibility->visible_sky_index;

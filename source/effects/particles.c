@@ -354,7 +354,7 @@ static boolean new_particle_is_visible(
 	return FALSE;
 }
 
-static real particle_radius_from_data(
+real particle_radius_from_data(
 	struct particle_datum const *particle,
 	struct particle_definition const *definition)
 {
@@ -660,7 +660,7 @@ static boolean particle_update_physics(
 				long collision_effect_index = definition->collision_effect.index;
 
 				if (collision_effect_index != NONE ||
-					definition->collision_material_effects.index)
+					definition->collision_material_effects.index != NONE)
 				{
 					real scale = (magnitude3d(&particle->translational_velocity) -
 						particle_collision_effect_scale_bounds[_particle_collision_scale_lower_bound]) /

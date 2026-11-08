@@ -1433,7 +1433,12 @@ static void render_object(
 
 			data->lighting = object_get_cached_render_lighting(
 				data->object_index,
+#ifdef HALO_N3DS
+				/* Native BSP lighting does not consume projected detail. */
+				0.f);
+#else
 				object_get_level_of_detail_pixels(data->object_index));
+#endif
 
 			level_of_detail_pixels = object_get_level_of_detail_pixels(data->object_index);
 			shadow_darkness = 1.f - real_rgb_color_brightness(&data->lighting->shadow_color);
@@ -1482,7 +1487,12 @@ static void render_object(
 			{
 				data->lighting = object_get_cached_render_lighting(
 					data->object_index,
+#ifdef HALO_N3DS
+					/* Model selection below still computes its real detail. */
+					0.f);
+#else
 					object_get_level_of_detail_pixels(data->object_index));
+#endif
 			}
 			else
 			{

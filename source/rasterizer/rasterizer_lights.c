@@ -585,6 +585,9 @@ void rasterizer_lens_flare_submit(
 
 				memcpy(lens_flare_parameters, parameters, sizeof(*lens_flare_parameters));
 
+#ifndef HALO_N3DS
+				/* Native coronas use depth-tested quads and never consume Xbox
+				 * occlusion identifiers or visibility history. */
 				if (parameters->light_identifier==NONE)
 				{
 					if (parameters->light_index==NONE)
@@ -626,6 +629,7 @@ void rasterizer_lens_flare_submit(
 					}
 				}
 
+#endif
 				if (rasterizer_debug_options.stats==_rasterizer_statistics_mode_geometry)
 				{
 					rasterizer_frame_statistics.lens_flare_count++;

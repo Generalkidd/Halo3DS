@@ -116,6 +116,7 @@ N3DS_GPU_MODE(MIDPOINT_PARTICLES);
 #endif
 
 #define N3DS_IMPLEMENTED_ALGORITHMS(X) \
+    X(VFP_SCHEDULE, "vfp_schedule") \
     X(PREPARED_VIEW, "prepared_view") \
     X(SHARED_SKINNING, "shared_skinning") \
     X(INVERSE_BIND, "inverse_bind") \
@@ -142,10 +143,10 @@ N3DS_GPU_MODE(MIDPOINT_PARTICLES);
 #ifndef HALO_N3DS_ALGO_VFP_SCHEDULE
 #define HALO_N3DS_ALGO_VFP_SCHEDULE N3DS_ALGORITHM_REFERENCE
 #endif
-#if HALO_N3DS_ALGO_VFP_SCHEDULE != N3DS_ALGORITHM_REFERENCE
-#error "vfp_schedule candidate/verify not implemented; select reference (0)"
-#endif
-typedef char n3ds_algo_vfp_schedule_supported[(HALO_N3DS_ALGO_VFP_SCHEDULE == N3DS_ALGORITHM_REFERENCE) ? 1 : -1];
+typedef char n3ds_algo_vfp_schedule_supported[
+    (HALO_N3DS_ALGO_VFP_SCHEDULE == N3DS_ALGORITHM_REFERENCE ||
+     HALO_N3DS_ALGO_VFP_SCHEDULE == N3DS_ALGORITHM_CANDIDATE ||
+     HALO_N3DS_ALGO_VFP_SCHEDULE == N3DS_ALGORITHM_VERIFY) ? 1 : -1];
 
 #ifndef HALO_N3DS_ALGO_SUPPORT_CORNERS
 #define HALO_N3DS_ALGO_SUPPORT_CORNERS N3DS_ALGORITHM_REFERENCE
