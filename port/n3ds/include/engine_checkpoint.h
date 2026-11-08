@@ -14,14 +14,17 @@ void n3ds_checkpoint_poll(void);
 void n3ds_checkpoint_finish(void);
 const void *n3ds_game_state_snapshot(void);
 unsigned int n3ds_save_pack_bound(void);
-unsigned int n3ds_save_pack(const void *,unsigned int,void *,unsigned int);
+unsigned int n3ds_save_pack_state_bytes(void);
+unsigned int n3ds_save_pack(void *,const void *,unsigned int,void *,unsigned int);
 int n3ds_save_unpack(const void *,unsigned int,void *,unsigned int);
-void *n3ds_save_snapshot_create(const void *,unsigned int);
+void *n3ds_save_snapshot_capture(const void *,unsigned int,void *);
 void n3ds_save_snapshot_retain(const void *);
 void n3ds_save_snapshot_release(const void *);
 unsigned int n3ds_save_snapshot_size(const void *);
 int n3ds_save_snapshot_read(const void *,unsigned int,void *,unsigned int);
 int n3ds_save_snapshot_matches(const void *,const void *);
 int n3ds_save_snapshot_validate(const void *);
+/* A negative result requires stopping because a packed restore may be partial. */
+int n3ds_save_snapshot_restore(const void *,void *,unsigned int);
 int n3ds_save_codec_tests(void);
 #endif

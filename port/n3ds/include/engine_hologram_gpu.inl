@@ -18,9 +18,9 @@ int n3ds_gpu_hologram_draw(const struct native_chicago_material *m,
     C3D_BindProgram(&hologram_program);
     C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER,hologram_projection,&projection);
     for(int i=0;i<3;++i) C3D_FVUnifSet(GPU_VERTEX_SHADER,hologram_screen+i,screen[i][0],screen[i][1],screen[i][2],screen[i][3]);
-    C3D_AttrInfo *a=C3D_GetAttrInfo();AttrInfo_Init(a);AttrInfo_AddLoader(a,0,GPU_FLOAT,3);
-    for(int i=1;i<4;++i) AttrInfo_AddLoader(a,i,GPU_FLOAT,2);
-    AttrInfo_AddLoader(a,4,GPU_FLOAT,4);
+    /* Holograms use the same position/three UV/color layout as Chicago.
+     * Install the cached layout even after unrelated draws changed context. */
+    C3D_SetAttrInfo(&chicago_attributes);
     for(int i=0;i<6;++i) C3D_TexEnvInit(C3D_GetTexEnv(i));
     C3D_TexEnvBufUpdate(C3D_Both,0);C3D_TexEnvBufColor(0);
     unsigned int constant=((unsigned int)(fminf(fmaxf(noise,0),1)*255.f+.5f))<<24;

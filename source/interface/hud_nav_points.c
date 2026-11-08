@@ -1002,6 +1002,10 @@ void hud_render_nav_points(
 	{
 		struct hud_nav_point_player_datum *datum = get_nav_point_datum(local_player_index);
 		short nav_point_index;
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+		extern int n3ds_presentation_midpoint_active(void);
+		int midpoint = n3ds_presentation_midpoint_active();
+#endif
 
 		for (nav_point_index = 0; nav_point_index<MAXIMUM_NUMBER_OF_NAV_POINTS; nav_point_index++)
 		{
@@ -1012,7 +1016,10 @@ void hud_render_nav_points(
 				nav_point->reference_index==NONE ||
 				nav_point->type==NONE)
 			{
-				nav_point->type = NONE;
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+				if (!midpoint)
+#endif
+					nav_point->type = NONE;
 				continue;
 			}
 

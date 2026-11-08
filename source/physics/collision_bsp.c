@@ -85,12 +85,37 @@ symbols in this file:
 #include "render/render_debug.h"
 #include "scenario/scenario.h"
 #include "tag_files/tag_groups.h"
+#ifdef HALO_N3DS
+#include "engine_algorithm_profile.h"
+#ifdef HALO_N3DS_ALGORITHM_PROFILE
+extern long long n3ds_engine_ticks(void);
+#endif
+#endif
+
+#if defined(HALO_N3DS) && HALO_N3DS_ALGO_COLLISION_FEATURES != N3DS_ALGORITHM_REFERENCE
+#define COLLISION_FEATURE_LOOKUP 1
+#endif
+#if defined(HALO_N3DS) && HALO_N3DS_ALGO_COLLISION_ACTIVE_PLANES != N3DS_ALGORITHM_REFERENCE
+#define COLLISION_ACTIVE_PLANE_LOOKUP 1
+#endif
 
 /* ---------- constants */
 
 enum
 {
 	MAXIMUM_BSP3D_DEPTH = 128,
+	MAXIMUM_BSP_FEATURES = 256,
+	BSP_FEATURE_LINEAR_LIMIT = 8,
+	BSP_FEATURE_SLOT_COUNT = 2 * MAXIMUM_BSP_FEATURES,
+	BSP_PLANE_SLOT_COUNT = 2 * MAXIMUM_BSP3D_DEPTH,
+};
+
+enum collision_feature_kind
+{
+	_collision_feature_surface,
+	_collision_feature_edge,
+	_collision_feature_vertex,
+	COLLISION_FEATURE_KINDS,
 };
 
 enum collision_surface_flags
@@ -186,6 +211,60 @@ typedef char collision_bsp_test_sphere_context_projection_axis_offset_assert[
 typedef char collision_bsp_test_sphere_context_center2d_offset_assert[
 	offsetof(struct collision_bsp_test_sphere_context, center2d) == 0x220 ? 1 : -1];
 
+struct collision_query_counts
+{
+	unsigned long feature_comparisons;
+	unsigned long feature_probes;
+	unsigned long feature_saturated;
+	unsigned long plane_comparisons;
+	unsigned long plane_probes;
+	unsigned long plane_push_probes;
+};
+
+#ifdef COLLISION_ACTIVE_PLANE_LOOKUP
+struct collision_active_plane_lookup
+{
+	/* Each occupied slot encodes the first active stack index plus one. */
+	byte slots[BSP_PLANE_SLOT_COUNT];
+	real distances[MAXIMUM_BSP3D_DEPTH];
+	real dots[MAXIMUM_BSP3D_DEPTH];
+};
+#endif
+
+/* Extra scratch belongs to this traversal, outside the original contexts. */
+struct collision_sphere_query
+{
+	struct collision_bsp_test_sphere_context context;
+#ifdef COLLISION_FEATURE_LOOKUP
+	unsigned short feature_slots[COLLISION_FEATURE_KINDS][BSP_FEATURE_SLOT_COUNT];
+#endif
+#ifdef COLLISION_ACTIVE_PLANE_LOOKUP
+	struct collision_active_plane_lookup planes;
+#endif
+#ifdef HALO_N3DS_ALGORITHM_PROFILE
+	struct collision_query_counts counts;
+#endif
+};
+
+struct collision_pill_query
+{
+	struct collision_bsp_test_pill_context context;
+#ifdef COLLISION_ACTIVE_PLANE_LOOKUP
+	struct collision_active_plane_lookup planes;
+#endif
+#ifdef HALO_N3DS_ALGORITHM_PROFILE
+	struct collision_query_counts counts;
+#endif
+};
+
+#ifdef HALO_N3DS_ALGORITHM_PROFILE
+#define COLLISION_COUNTS(query) (&(query)->counts)
+#define COLLISION_COUNT(counts, field) ((counts)->field++)
+#else
+#define COLLISION_COUNTS(query) NULL
+#define COLLISION_COUNT(counts, field) ((void)(counts))
+#endif
+
 struct collision_bsp_test_vector_context
 {
 	unsigned long flags;
@@ -262,20 +341,16 @@ static boolean bsp2d_test_pill_recursive(
 	struct collision_bsp_test_pill_context *data,
 	long child_index);
 static boolean bsp3d_test_pill_recursive(
-	struct collision_bsp_test_pill_context *data,
+	struct collision_pill_query *query,
 	long node_index);
-static void add_feature(
-	long *count,
-	long *indices,
-	long index);
 static void collision_surface_test_sphere(
-	struct collision_bsp_test_sphere_context *data,
+	struct collision_sphere_query *query,
 	long surface_index);
 static void bsp2d_test_sphere_recursive(
-	struct collision_bsp_test_sphere_context *data,
+	struct collision_sphere_query *query,
 	long child_index);
 static void bsp3d_test_sphere_recursive(
-	struct collision_bsp_test_sphere_context *data,
+	struct collision_sphere_query *query,
 	long node_index);
 void render_debug_collision_edge(
 	struct collision_bsp *bsp,
@@ -286,6 +361,15 @@ void render_debug_collision_edge(
 /* ---------- globals */
 
 static struct collision_bsp_usage_times collision_bsp_usage_times = { 0 };
+
+#ifdef HALO_N3DS_ALGORITHM_PROFILE
+static void profile_collision_planes(struct collision_query_counts const *counts)
+{
+	n3ds_algorithm_profile_add(N3DS_ALG_CPU_COLLISION_PLANE_COMPARISONS, counts->plane_comparisons);
+	n3ds_algorithm_profile_add(N3DS_ALG_CPU_COLLISION_PLANE_PROBES, counts->plane_probes);
+	n3ds_algorithm_profile_add(N3DS_ALG_CPU_COLLISION_PLANE_PUSH_PROBES, counts->plane_push_probes);
+}
+#endif
 
 /* ---------- public code */
 
@@ -938,18 +1022,32 @@ boolean collision_bsp_test_pill(
 	real maximum_t,
 	struct collision_bsp_test_pill_result *result)
 {
-	struct collision_bsp_test_pill_context context;
+	struct collision_pill_query query;
+	boolean hit;
+#ifdef HALO_N3DS_ALGORITHM_PROFILE
+	long long start = n3ds_engine_ticks();
+	query.counts = (struct collision_query_counts){0};
+#endif
+#ifdef COLLISION_ACTIVE_PLANE_LOOKUP
+	memset(query.planes.slots, 0, sizeof(query.planes.slots));
+#endif
 
-	context.bsp = bsp;
-	context.point = point;
-	context.vector = vector;
-	context.radius = radius;
-	context.result = result;
-	context.stack_depth = 0;
+	query.context.bsp = bsp;
+	query.context.point = point;
+	query.context.vector = vector;
+	query.context.radius = radius;
+	query.context.result = result;
+	query.context.stack_depth = 0;
 	result->t = maximum_t < 0.f ? 0.f : maximum_t;
 	result->leaf_count = 0;
 
-	return bsp3d_test_pill_recursive(&context, 0);
+	hit = bsp3d_test_pill_recursive(&query, 0);
+#ifdef HALO_N3DS_ALGORITHM_PROFILE
+	n3ds_algorithm_profile_add(N3DS_ALG_CPU_COLLISION_BSP_PILL_TICKS, n3ds_engine_ticks() - start);
+	n3ds_algorithm_profile_add(N3DS_ALG_CPU_COLLISION_BSP_PILL, 1);
+	profile_collision_planes(&query.counts);
+#endif
+	return hit;
 }
 
 boolean collision_bsp_test_sphere(
@@ -960,28 +1058,46 @@ boolean collision_bsp_test_sphere(
 	real radius,
 	struct collision_bsp_test_sphere_result *result)
 {
-	struct collision_bsp_test_sphere_context context;
+	struct collision_sphere_query query;
 	short collision_function = 6 + (bsp == global_collision_bsp);
 
 	collision_log_usage(collision_function);
 	collision_log_start_time(&collision_bsp_usage_times.sphere);
+#ifdef HALO_N3DS_ALGORITHM_PROFILE
+	long long start = n3ds_engine_ticks();
+	query.counts = (struct collision_query_counts){0};
+#endif
+#ifdef COLLISION_ACTIVE_PLANE_LOOKUP
+	memset(query.planes.slots, 0, sizeof(query.planes.slots));
+#endif
 
-	context.bsp = bsp;
-	context.breakable_surface_count = breakable_surface_count;
-	context.breakable_surface_flags = breakable_surface_flags;
-	context.center = center;
-	context.radius = radius;
-	context.result = result;
-	context.stack_depth = 0;
+	query.context.bsp = bsp;
+	query.context.breakable_surface_count = breakable_surface_count;
+	query.context.breakable_surface_flags = breakable_surface_flags;
+	query.context.center = center;
+	query.context.radius = radius;
+	query.context.result = result;
+	query.context.stack_depth = 0;
 	result->leaf_count = 0;
 	result->surface_count = 0;
 	result->edge_count = 0;
 	result->vertex_count = 0;
 
-	bsp3d_test_sphere_recursive(&context, 0);
+	bsp3d_test_sphere_recursive(&query, 0);
+#ifdef HALO_N3DS_ALGORITHM_PROFILE
+	long long ticks = n3ds_engine_ticks() - start;
+#endif
 	collision_log_end_time(
 		collision_function,
 		collision_bsp_usage_times.sphere.QuadPart);
+#ifdef HALO_N3DS_ALGORITHM_PROFILE
+	n3ds_algorithm_profile_add(N3DS_ALG_CPU_COLLISION_BSP_SPHERE_TICKS, ticks);
+	n3ds_algorithm_profile_add(N3DS_ALG_CPU_COLLISION_BSP_SPHERE, 1);
+	n3ds_algorithm_profile_add(N3DS_ALG_CPU_COLLISION_FEATURE_COMPARISONS, query.counts.feature_comparisons);
+	n3ds_algorithm_profile_add(N3DS_ALG_CPU_COLLISION_FEATURE_PROBES, query.counts.feature_probes);
+	n3ds_algorithm_profile_add(N3DS_ALG_CPU_COLLISION_FEATURE_SATURATED, query.counts.feature_saturated);
+	profile_collision_planes(&query.counts);
+#endif
 
 	return result->surface_count > 0 || result->edge_count > 0;
 }
@@ -1028,32 +1144,223 @@ boolean collision_bsp_test_vector(
 
 /* ---------- private code */
 
+static boolean contains_feature(
+	long count,
+	long const *indices,
+	long index,
+	struct collision_query_counts *counts)
+{
+	short feature_index;
+
+	for (feature_index = 0; feature_index < count; feature_index++)
+	{
+		COLLISION_COUNT(counts, feature_comparisons);
+		if (indices[feature_index] == index)
+			return TRUE;
+	}
+	return FALSE;
+}
+
+#if defined(COLLISION_FEATURE_LOOKUP) || defined(COLLISION_ACTIVE_PLANE_LOOKUP)
+static inline unsigned int collision_hash(long index)
+{
+	unsigned int key = (unsigned int)index;
+	return ((key ^ (key >> 16)) * 0x9E3779B9u) >> 16;
+}
+#endif
+
+#if defined(HALO_N3DS) && (HALO_N3DS_ALGO_COLLISION_FEATURES == N3DS_ALGORITHM_VERIFY || \
+	HALO_N3DS_ALGO_COLLISION_ACTIVE_PLANES == N3DS_ALGORITHM_VERIFY)
+static void verify_collision_lookup(boolean same, char *detail)
+{
+	if (!same)
+	{
+		display_assert(detail, __FILE__, __LINE__, TRUE);
+		system_exit(-1);
+	}
+}
+#endif
+
+#ifdef COLLISION_FEATURE_LOOKUP
+static unsigned short *find_feature_slot(
+	unsigned short *slots,
+	long const *indices,
+	long index,
+	struct collision_query_counts *counts)
+{
+	unsigned int slot = collision_hash(index) & (BSP_FEATURE_SLOT_COUNT - 1);
+
+	/* Only accepted output indices occupy slots, so the table is at most half full. */
+	for (;;)
+	{
+		unsigned short entry = slots[slot];
+		COLLISION_COUNT(counts, feature_probes);
+		if (!entry || indices[entry - 1] == index)
+			return &slots[slot];
+		slot = (slot + 1) & (BSP_FEATURE_SLOT_COUNT - 1);
+	}
+}
+#endif
+
 static void add_feature(
+	struct collision_sphere_query *query,
+	enum collision_feature_kind kind,
 	long *count,
 	long *indices,
 	long index)
 {
-	short feature_index;
+	struct collision_query_counts *counts = COLLISION_COUNTS(query);
 
-	for (feature_index = 0; feature_index < *count; feature_index++)
+	if (*count >= MAXIMUM_BSP_FEATURES)
 	{
-		if (indices[feature_index] == index)
-			return;
+		COLLISION_COUNT(counts, feature_saturated);
+#ifdef COLLISION_FEATURE_LOOKUP
+		return;
+#endif
 	}
 
-	if (*count < 256)
+#ifdef COLLISION_FEATURE_LOOKUP
+	unsigned short *slots = query->feature_slots[kind];
+	if (*count >= BSP_FEATURE_LINEAR_LIMIT)
+	{
+		unsigned short *slot = find_feature_slot(slots, indices, index, counts);
+#if HALO_N3DS_ALGO_COLLISION_FEATURES == N3DS_ALGORITHM_VERIFY
+		verify_collision_lookup((*slot != 0) == contains_feature(*count, indices, index, counts),
+			"collision feature membership mismatch");
+#endif
+		if (!*slot)
+		{
+			indices[*count] = index;
+			(*count)++;
+			*slot = *count;
+		}
+		return;
+	}
+#else
+	(void)query;
+	(void)kind;
+#endif
+
+	if (!contains_feature(*count, indices, index, counts) && *count < MAXIMUM_BSP_FEATURES)
 	{
 		indices[*count] = index;
 		(*count)++;
+#ifdef COLLISION_FEATURE_LOOKUP
+		/* Small lists never touch the scratch table. Build it on the transition. */
+		if (*count == BSP_FEATURE_LINEAR_LIMIT)
+		{
+			unsigned short i;
+			memset(slots, 0, sizeof(query->feature_slots[kind]));
+			for (i = 0; i < BSP_FEATURE_LINEAR_LIMIT; i++)
+				*find_feature_slot(slots, indices, indices[i], counts) = i + 1;
+		}
+#endif
 	}
-
-	return;
 }
 
+#if !defined(COLLISION_ACTIVE_PLANE_LOOKUP) || HALO_N3DS_ALGO_COLLISION_ACTIVE_PLANES == N3DS_ALGORITHM_VERIFY
+static short scan_active_planes(
+	long const *stack,
+	long depth,
+	long designator,
+	struct collision_query_counts *counts)
+{
+	short i;
+	for (i = 0; i < depth; i++)
+	{
+		COLLISION_COUNT(counts, plane_comparisons);
+		if (stack[i] == designator)
+			return i;
+	}
+	return NONE;
+}
+#endif
+
+#ifdef COLLISION_ACTIVE_PLANE_LOOKUP
+static unsigned short find_active_plane_slot(
+	struct collision_active_plane_lookup const *lookup,
+	long const *stack,
+	long designator,
+	unsigned long *probes)
+{
+	unsigned short slot = collision_hash(designator) & (BSP_PLANE_SLOT_COUNT - 1);
+
+	/* Active stack depth bounds occupancy to half the table. */
+	for (;;)
+	{
+		byte entry = lookup->slots[slot];
+#ifdef HALO_N3DS_ALGORITHM_PROFILE
+		(*probes)++;
+#else
+		(void)probes;
+#endif
+		if (!entry || stack[entry - 1] == designator)
+			return slot;
+		slot = (slot + 1) & (BSP_PLANE_SLOT_COUNT - 1);
+	}
+}
+
+#ifdef HALO_N3DS_ALGORITHM_PROFILE
+#define COLLISION_PLANE_PROBES(counts, field) (&(counts)->field)
+#else
+#define COLLISION_PLANE_PROBES(counts, field) NULL
+#endif
+
+static short lookup_active_plane(
+	struct collision_active_plane_lookup const *lookup,
+	long const *stack,
+	long depth,
+	long designator,
+	struct collision_query_counts *counts)
+{
+	unsigned short slot = find_active_plane_slot(lookup, stack, designator,
+		COLLISION_PLANE_PROBES(counts, plane_probes));
+	short index = lookup->slots[slot] - 1;
+
+#if HALO_N3DS_ALGO_COLLISION_ACTIVE_PLANES == N3DS_ALGORITHM_VERIFY
+	verify_collision_lookup(index == scan_active_planes(stack, depth, designator, counts),
+		"collision active plane mismatch");
+#else
+	(void)depth;
+	(void)counts;
+#endif
+	return index;
+}
+
+static short push_active_plane(
+	struct collision_active_plane_lookup *lookup,
+	long const *stack,
+	long depth,
+	real distance,
+	real dot,
+	struct collision_query_counts *counts)
+{
+	unsigned short slot = find_active_plane_slot(lookup, stack, stack[depth],
+		COLLISION_PLANE_PROBES(counts, plane_push_probes));
+	(void)counts;
+
+	/* A duplicate leaves the first active occurrence in place. */
+	if (lookup->slots[slot])
+		return NONE;
+	lookup->slots[slot] = depth + 1;
+	lookup->distances[depth] = distance;
+	lookup->dots[depth] = dot;
+	return slot;
+}
+
+static void pop_active_plane(struct collision_active_plane_lookup *lookup, short slot)
+{
+	/* Strict LIFO removal cannot break the probe chain of an earlier insertion. */
+	if (slot != NONE)
+		lookup->slots[slot] = 0;
+}
+#endif
+
 static void collision_surface_test_sphere(
-	struct collision_bsp_test_sphere_context *data,
+	struct collision_sphere_query *query,
 	long surface_index)
 {
+	struct collision_bsp_test_sphere_context *data = &query->context;
 	struct collision_surface const *surface = TAG_BLOCK_GET_ELEMENT(
 		&data->bsp->surfaces,
 		surface_index,
@@ -1100,6 +1407,7 @@ static void collision_surface_test_sphere(
 		if (distance_squared <= radius_squared)
 		{
 			add_feature(
+				query, _collision_feature_vertex,
 				&data->result->vertex_count,
 				data->result->vertex_indices,
 				vertex_index);
@@ -1136,6 +1444,7 @@ static void collision_surface_test_sphere(
 			data->radius))
 		{
 			add_feature(
+				query, _collision_feature_edge,
 				&data->result->edge_count,
 				data->result->edge_indices,
 				edge_index);
@@ -1190,6 +1499,7 @@ static void collision_surface_test_sphere(
 	}
 
 	add_feature(
+		query, _collision_feature_surface,
 		&data->result->surface_count,
 		data->result->surface_indices,
 		surface_index);
@@ -1406,9 +1716,10 @@ static boolean collision_bsp_test_pill_new_recursive(
 }
 
 static void bsp2d_test_sphere_recursive(
-	struct collision_bsp_test_sphere_context *data,
+	struct collision_sphere_query *query,
 	long child_index)
 {
+	struct collision_bsp_test_sphere_context *data = &query->context;
 	while (!(child_index & LONG_MIN))
 	{
 		struct bsp2d_node const *node = TAG_BLOCK_GET_ELEMENT(
@@ -1420,14 +1731,14 @@ static void bsp2d_test_sphere_recursive(
 		boolean reaches_second_child = distance >= -data->radius;
 
 		if (reaches_first_child)
-			bsp2d_test_sphere_recursive(data, node->child_indices[0]);
+			bsp2d_test_sphere_recursive(query, node->child_indices[0]);
 		if (!reaches_second_child)
 			return;
 
 		child_index = node->child_indices[1];
 	}
 
-	collision_surface_test_sphere(data, child_index & LONG_MAX);
+	collision_surface_test_sphere(query, child_index & LONG_MAX);
 
 	return;
 }
@@ -1599,9 +1910,10 @@ static boolean pill_test_vector(
 }
 
 static void bsp3d_test_sphere_recursive(
-	struct collision_bsp_test_sphere_context *data,
+	struct collision_sphere_query *query,
 	long node_index)
 {
+	struct collision_bsp_test_sphere_context *data = &query->context;
 	while (!(node_index & LONG_MIN))
 	{
 		struct bsp3d_node const *node = TAG_BLOCK_GET_ELEMENT(
@@ -1624,17 +1936,31 @@ static void bsp3d_test_sphere_recursive(
 				data->stack_depth>=0 && data->stack_depth<MAXIMUM_BSP3D_DEPTH);
 			data->plane_stack[data->stack_depth++] =
 				node->plane_designator | LONG_MIN;
-			bsp3d_test_sphere_recursive(data, node->children[0]);
+#ifdef COLLISION_ACTIVE_PLANE_LOOKUP
+			short plane_slot = push_active_plane(&query->planes, data->plane_stack,
+				data->stack_depth - 1, distance, 0.f, COLLISION_COUNTS(query));
+#endif
+			bsp3d_test_sphere_recursive(query, node->children[0]);
 
 			data->stack_depth--;
+#ifdef COLLISION_ACTIVE_PLANE_LOOKUP
+			pop_active_plane(&query->planes, plane_slot);
+#endif
 			match_assert(
 				"c:\\halo\\SOURCE\\physics\\collision_bsp.c",
 				0x210,
 				data->stack_depth>=0 && data->stack_depth<MAXIMUM_BSP3D_DEPTH);
 			data->plane_stack[data->stack_depth++] =
 				node->plane_designator & LONG_MAX;
-			bsp3d_test_sphere_recursive(data, node->children[1]);
+#ifdef COLLISION_ACTIVE_PLANE_LOOKUP
+			plane_slot = push_active_plane(&query->planes, data->plane_stack,
+				data->stack_depth - 1, distance, 0.f, COLLISION_COUNTS(query));
+#endif
+			bsp3d_test_sphere_recursive(query, node->children[1]);
 			data->stack_depth--;
+#ifdef COLLISION_ACTIVE_PLANE_LOOKUP
+			pop_active_plane(&query->planes, plane_slot);
+#endif
 
 			return;
 		}
@@ -1668,47 +1994,58 @@ static void bsp3d_test_sphere_recursive(
 				reference_index,
 				struct bsp2d_reference);
 			short stack_index;
-
-			for (stack_index = 0; stack_index < data->stack_depth; stack_index++)
+#ifdef COLLISION_ACTIVE_PLANE_LOOKUP
+			stack_index = lookup_active_plane(&query->planes, data->plane_stack,
+				data->stack_depth, reference->plane_designator, COLLISION_COUNTS(query));
+#else
+			stack_index = scan_active_planes(data->plane_stack, data->stack_depth,
+				reference->plane_designator, COLLISION_COUNTS(query));
+#endif
+			if (stack_index != NONE)
 			{
-				if (data->plane_stack[stack_index] == reference->plane_designator)
-				{
-					real_plane3d const *plane = TAG_BLOCK_GET_ELEMENT(
-						&data->bsp->bsp3d.planes,
-						reference->plane_designator & LONG_MAX,
-						real_plane3d);
-					real plane_distance = -plane3d_distance_to_point(plane, data->center);
-					real_point3d projected_center;
-					real absolute_i;
-					real absolute_j;
-					real absolute_k;
-					short projection;
+				real_plane3d const *plane = TAG_BLOCK_GET_ELEMENT(
+					&data->bsp->bsp3d.planes,
+					reference->plane_designator & LONG_MAX,
+					real_plane3d);
+#ifdef COLLISION_ACTIVE_PLANE_LOOKUP
+				real plane_distance = -query->planes.distances[stack_index];
+#if HALO_N3DS_ALGO_COLLISION_ACTIVE_PLANES == N3DS_ALGORITHM_VERIFY
+				real reference_distance = -plane3d_distance_to_point(plane, data->center);
+				verify_collision_lookup(!memcmp(&plane_distance, &reference_distance, sizeof(real)),
+					"collision sphere plane distance mismatch");
+#endif
+#else
+				real plane_distance = -plane3d_distance_to_point(plane, data->center);
+#endif
+				real_point3d projected_center;
+				real absolute_i;
+				real absolute_j;
+				real absolute_k;
+				short projection;
 
-					projected_center.x =
-						plane->n.i * plane_distance + data->center->x;
-					projected_center.y =
-						plane->n.j * plane_distance + data->center->y;
-					projected_center.z =
-						plane->n.k * plane_distance + data->center->z;
-					absolute_i = fabs(plane->n.i);
-					absolute_j = fabs(plane->n.j);
-					absolute_k = fabs(plane->n.k);
-					if (absolute_k >= absolute_j && absolute_k >= absolute_i)
-						projection = _z;
-					else
-						projection = absolute_j >= absolute_i ? _y : _x;
-					data->projection_axis = projection;
-					data->projection_sign =
-						projection_sign_from_vector3d(&plane->n, projection) !=
-						(reference->plane_designator & LONG_MIN ? TRUE : FALSE);
-					project_point3d(
-						&projected_center,
-						data->projection_axis,
-						data->projection_sign,
-						&data->center2d);
-					bsp2d_test_sphere_recursive(data, reference->root_index);
-					break;
-				}
+				projected_center.x =
+					plane->n.i * plane_distance + data->center->x;
+				projected_center.y =
+					plane->n.j * plane_distance + data->center->y;
+				projected_center.z =
+					plane->n.k * plane_distance + data->center->z;
+				absolute_i = fabs(plane->n.i);
+				absolute_j = fabs(plane->n.j);
+				absolute_k = fabs(plane->n.k);
+				if (absolute_k >= absolute_j && absolute_k >= absolute_i)
+					projection = _z;
+				else
+					projection = absolute_j >= absolute_i ? _y : _x;
+				data->projection_axis = projection;
+				data->projection_sign =
+					projection_sign_from_vector3d(&plane->n, projection) !=
+					(reference->plane_designator & LONG_MIN ? TRUE : FALSE);
+				project_point3d(
+					&projected_center,
+					data->projection_axis,
+					data->projection_sign,
+					&data->center2d);
+				bsp2d_test_sphere_recursive(query, reference->root_index);
 			}
 		}
 	}
@@ -2004,9 +2341,10 @@ static boolean bsp2d_test_pill_recursive(
 }
 
 static boolean bsp3d_test_pill_recursive(
-	struct collision_bsp_test_pill_context *data,
+	struct collision_pill_query *query,
 	long node_index)
 {
+	struct collision_bsp_test_pill_context *data = &query->context;
 	boolean hit = FALSE;
 
 	if (!(node_index & LONG_MIN))
@@ -2040,17 +2378,24 @@ static boolean bsp3d_test_pill_recursive(
 			data->plane_stack[data->stack_depth++] = front ?
 				(node->plane_designator | LONG_MIN) :
 				(node->plane_designator & LONG_MAX);
-			if (bsp3d_test_pill_recursive(data, node->children[!front]))
+#ifdef COLLISION_ACTIVE_PLANE_LOOKUP
+			short plane_slot = push_active_plane(&query->planes, data->plane_stack,
+				data->stack_depth - 1, distance0, dot, COLLISION_COUNTS(query));
+#endif
+			if (bsp3d_test_pill_recursive(query, node->children[!front]))
 			{
 				hit = TRUE;
 			}
 			data->stack_depth--;
-			if (bsp3d_test_pill_recursive(data, node->children[front]))
+#ifdef COLLISION_ACTIVE_PLANE_LOOKUP
+			pop_active_plane(&query->planes, plane_slot);
+#endif
+			if (bsp3d_test_pill_recursive(query, node->children[front]))
 			{
 				hit = TRUE;
 			}
 		}
-		else if (bsp3d_test_pill_recursive(data, node->children[reaches_front]))
+		else if (bsp3d_test_pill_recursive(query, node->children[reaches_front]))
 		{
 			hit = TRUE;
 		}
@@ -2075,124 +2420,136 @@ static boolean bsp3d_test_pill_recursive(
 				reference_index,
 				struct bsp2d_reference);
 			short stack_index;
-
-			for (stack_index = 0; stack_index < data->stack_depth; stack_index++)
+#ifdef COLLISION_ACTIVE_PLANE_LOOKUP
+			stack_index = lookup_active_plane(&query->planes, data->plane_stack,
+				data->stack_depth, reference->plane_designator, COLLISION_COUNTS(query));
+#else
+			stack_index = scan_active_planes(data->plane_stack, data->stack_depth,
+				reference->plane_designator, COLLISION_COUNTS(query));
+#endif
+			if (stack_index != NONE)
 			{
-				if (data->plane_stack[stack_index] == reference->plane_designator)
+				real_plane3d const *plane = TAG_BLOCK_GET_ELEMENT(
+					&data->bsp->bsp3d.planes,
+					reference->plane_designator & LONG_MAX,
+					real_plane3d);
+#ifdef COLLISION_ACTIVE_PLANE_LOOKUP
+				real distance0 = query->planes.distances[stack_index];
+				real dot = query->planes.dots[stack_index];
+#if HALO_N3DS_ALGO_COLLISION_ACTIVE_PLANES == N3DS_ALGORITHM_VERIFY
+				real reference_distance = plane3d_distance_to_point(plane, data->point);
+				real reference_dot = dot_product3d(data->vector, &plane->n);
+				verify_collision_lookup(!memcmp(&distance0, &reference_distance, sizeof(real)) &&
+					!memcmp(&dot, &reference_dot, sizeof(real)), "collision pill plane values mismatch");
+#endif
+#else
+				real distance0 = plane3d_distance_to_point(plane, data->point);
+				real dot = dot_product3d(data->vector, &plane->n);
+#endif
+				real t = 0.f;
+
+				if (dot != 0.f)
 				{
-					real_plane3d const *plane = TAG_BLOCK_GET_ELEMENT(
-						&data->bsp->bsp3d.planes,
-						reference->plane_designator & LONG_MAX,
-						real_plane3d);
-					real distance0 = plane3d_distance_to_point(plane, data->point);
-					real dot = dot_product3d(data->vector, &plane->n);
-					real t = 0.f;
+					real inverse = 1.f/dot;
 
-					if (dot != 0.f)
+					t = -(inverse*distance0) - fabs(inverse)*data->radius;
+					t = PIN(t, 0.f, 1.f);
+				}
+
+				if (data->result->t > t)
+				{
+					real absolute_i = fabs(plane->n.i);
+					real absolute_j = fabs(plane->n.j);
+					real absolute_k = fabs(plane->n.k);
+					short projection;
+					real_point3d pill_point;
+					real plane_distance;
+					real_point2d point2d;
+					long surface_index;
+					real_point3d start_point;
+					real_point3d sweep_point;
+					real negative_distance;
+					real negative_dot;
+
+					if (absolute_k >= absolute_j && absolute_k >= absolute_i)
+						projection = _z;
+					else
+						projection = absolute_j >= absolute_i ? _y : _x;
+					data->projection_axis = projection;
+					data->projection_sign =
+						projection_sign_from_vector3d(&plane->n, projection) !=
+						(reference->plane_designator & LONG_MIN ? TRUE : FALSE);
+					pill_point.x = data->vector->i*t + data->point->x;
+					pill_point.y = data->vector->j*t + data->point->y;
+					pill_point.z = data->vector->k*t + data->point->z;
+					plane_distance = -plane3d_distance_to_point(plane, &pill_point);
+					pill_point.x = plane->n.i*plane_distance + pill_point.x;
+					pill_point.y = plane->n.j*plane_distance + pill_point.y;
+					pill_point.z = plane->n.k*plane_distance + pill_point.z;
+					project_point3d(
+						&pill_point,
+						data->projection_axis,
+						data->projection_sign,
+						&point2d);
+					surface_index = bsp2d_test_point(
+						&data->bsp->bsp2d.nodes,
+						&point2d,
+						reference->root_index);
+					if (collision_surface_test_point(
+						data->bsp,
+						0,
+						NULL,
+						surface_index,
+						data->projection_axis,
+						data->projection_sign,
+						&point2d))
 					{
-						real inverse = 1.f/dot;
-
-						t = -(inverse*distance0) - fabs(inverse)*data->radius;
-						t = PIN(t, 0.f, 1.f);
-					}
-
-					if (data->result->t > t)
-					{
-						real absolute_i = fabs(plane->n.i);
-						real absolute_j = fabs(plane->n.j);
-						real absolute_k = fabs(plane->n.k);
-						short projection;
-						real_point3d pill_point;
-						real plane_distance;
-						real_point2d point2d;
-						long surface_index;
-						real_point3d start_point;
-						real_point3d sweep_point;
-						real negative_distance;
-						real negative_dot;
-
-						if (absolute_k >= absolute_j && absolute_k >= absolute_i)
-							projection = _z;
-						else
-							projection = absolute_j >= absolute_i ? _y : _x;
-						data->projection_axis = projection;
-						data->projection_sign =
-							projection_sign_from_vector3d(&plane->n, projection) !=
-							(reference->plane_designator & LONG_MIN ? TRUE : FALSE);
-						pill_point.x = data->vector->i*t + data->point->x;
-						pill_point.y = data->vector->j*t + data->point->y;
-						pill_point.z = data->vector->k*t + data->point->z;
-						plane_distance = -plane3d_distance_to_point(plane, &pill_point);
-						pill_point.x = plane->n.i*plane_distance + pill_point.x;
-						pill_point.y = plane->n.j*plane_distance + pill_point.y;
-						pill_point.z = plane->n.k*plane_distance + pill_point.z;
-						project_point3d(
-							&pill_point,
-							data->projection_axis,
-							data->projection_sign,
-							&point2d);
-						surface_index = bsp2d_test_point(
-							&data->bsp->bsp2d.nodes,
-							&point2d,
-							reference->root_index);
-						if (collision_surface_test_point(
-							data->bsp,
-							0,
-							NULL,
+						struct collision_surface const *surface = TAG_BLOCK_GET_ELEMENT(
+							&data->bsp->surfaces,
 							surface_index,
-							data->projection_axis,
-							data->projection_sign,
-							&point2d))
+							struct collision_surface);
+
+						data->result->t = t;
+						if (reference->plane_designator & LONG_MIN)
 						{
-							struct collision_surface const *surface = TAG_BLOCK_GET_ELEMENT(
-								&data->bsp->surfaces,
-								surface_index,
-								struct collision_surface);
+							real_plane3d *result_plane = &data->result->plane;
 
-							data->result->t = t;
-							if (reference->plane_designator & LONG_MIN)
-							{
-								real_plane3d *result_plane = &data->result->plane;
-
-								result_plane->n.i = -plane->n.i;
-								result_plane->n.j = -plane->n.j;
-								result_plane->n.k = -plane->n.k;
-								result_plane->d = -plane->d;
-							}
-							else
-							{
-								data->result->plane = *plane;
-							}
-							data->result->surface_index = surface_index;
-							data->result->material_index = surface->material_index;
-							hit = TRUE;
+							result_plane->n.i = -plane->n.i;
+							result_plane->n.j = -plane->n.j;
+							result_plane->n.k = -plane->n.k;
+							result_plane->d = -plane->d;
 						}
-
-						negative_distance = -distance0;
-						start_point.x = plane->n.i*negative_distance + data->point->x;
-						start_point.y = plane->n.j*negative_distance + data->point->y;
-						start_point.z = plane->n.k*negative_distance + data->point->z;
-						project_point3d(
-							&start_point,
-							data->projection_axis,
-							data->projection_sign,
-							&data->point2d);
-						negative_dot = -dot;
-						sweep_point.x = plane->n.i*negative_dot + data->vector->i;
-						sweep_point.y = plane->n.j*negative_dot + data->vector->j;
-						sweep_point.z = plane->n.k*negative_dot + data->vector->k;
-						project_point3d(
-							&sweep_point,
-							data->projection_axis,
-							data->projection_sign,
-							(real_point2d *)&data->vector2d);
-						if (bsp2d_test_pill_recursive(data, reference->root_index))
+						else
 						{
-							hit = TRUE;
+							data->result->plane = *plane;
 						}
+						data->result->surface_index = surface_index;
+						data->result->material_index = surface->material_index;
+						hit = TRUE;
 					}
 
-					break;
+					negative_distance = -distance0;
+					start_point.x = plane->n.i*negative_distance + data->point->x;
+					start_point.y = plane->n.j*negative_distance + data->point->y;
+					start_point.z = plane->n.k*negative_distance + data->point->z;
+					project_point3d(
+						&start_point,
+						data->projection_axis,
+						data->projection_sign,
+						&data->point2d);
+					negative_dot = -dot;
+					sweep_point.x = plane->n.i*negative_dot + data->vector->i;
+					sweep_point.y = plane->n.j*negative_dot + data->vector->j;
+					sweep_point.z = plane->n.k*negative_dot + data->vector->k;
+					project_point3d(
+						&sweep_point,
+						data->projection_axis,
+						data->projection_sign,
+						(real_point2d *)&data->vector2d);
+					if (bsp2d_test_pill_recursive(data, reference->root_index))
+					{
+						hit = TRUE;
+					}
 				}
 			}
 		}

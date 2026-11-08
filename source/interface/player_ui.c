@@ -980,6 +980,7 @@ static void set_local_player_controls_from_player_profile(
 	long yaw_index;
 	short pitch_index;
 	short controller_index;
+	byte button_preset;
 
 	match_assert(
 		"c:\\halo\\SOURCE\\interface\\player_ui.c",
@@ -1016,7 +1017,13 @@ static void set_local_player_controls_from_player_profile(
 	preferences.joystick_controls = controls->joystick_preset > _joystick_preset_legacy_south_paw ?
 		_joystick_preset_legacy_south_paw : controls->joystick_preset;
 
-	switch (controls->button_preset)
+#ifdef HALO_N3DS
+	/* The native controls map physical buttons onto these standard action slots. */
+	button_preset = _button_preset_standard;
+#else
+	button_preset = controls->button_preset;
+#endif
+	switch (button_preset)
 	{
 		case _button_preset_standard:
 			preferences.game_control_to_xbox_buttons[0] = _gamepad_analog_button_a;

@@ -569,12 +569,14 @@ void build_sprite(
 
 					if (!TEST_FLAG(data->flags, _build_sprites_screen_space_bit))
 					{
-						real coverage = render_frustum_cube_view_fraction(&render.frustum, &bounds);
-
 #ifdef HALO_N3DS
-                        build_sprite_globals.screen_coverage += coverage;
+                        /* Native admission computes its own tile bounds. The
+                         * legacy fraction is consumed only by the debug HUD. */
+                        if (debug_sprites)
+                            build_sprite_globals.screen_coverage += render_frustum_cube_view_fraction(&render.frustum, &bounds);
                         if (!native_effect_accept(data,&bounds))
 #else
+                        real coverage = render_frustum_cube_view_fraction(&render.frustum, &bounds);
 						build_sprite_globals.screen_coverage += coverage;
 						if (coverage>0.5f && build_sprite_globals.big_sprite_count++>10)
 #endif

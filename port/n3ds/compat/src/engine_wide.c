@@ -26,7 +26,9 @@ game's text uses outside of its own font tables.
 
 size_t msvc_wcslen(const wchar_t *string)
 {
-	const wchar_t *cursor = string;
+	/* Preserve the Xbox's 16-bit loads. Clang can otherwise turn this loop
+	 * into a call to newlib wcslen, which reads 32-bit wchar_t values. */
+	const volatile wchar_t *cursor = string;
 
 	while (*cursor)
 		cursor++;
@@ -542,7 +544,7 @@ static void output_padding(struct wide_output *output, long count)
 
 static void output_wide(struct wide_output *output, const wchar_t *string, long precision, long width, int left)
 {
-	long length = 0;
+	long length;
 	long index;
 
 	if (!string)
@@ -551,8 +553,7 @@ static void output_wide(struct wide_output *output, const wchar_t *string, long 
 
 		string = null_string;
 	}
-	while (string[length] && (precision < 0 || length < precision))
-		length++;
+	length = (long)(precision < 0 ? msvc_wcslen(string) : msvc_wcsnlen(string, (size_t)precision));
 	if (!left)
 		output_padding(output, width - length);
 	for (index = 0; index < length; index++)

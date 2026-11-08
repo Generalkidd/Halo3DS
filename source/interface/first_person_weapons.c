@@ -125,6 +125,9 @@ symbols in this file:
 #include "sound/game_sound.h"
 #include "sound/sound_manager.h"
 #include "units/units.h"
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+#include "engine_presentation.h"
+#endif
 
 /* ---------- constants */
 
@@ -391,6 +394,91 @@ static short first_person_weapon_index_from_unit_index(
 
 static struct first_person_weapon *first_person_weapons;
 
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+/* Use local joint orientations so the midpoint still follows the authored
+ * hierarchy. The render matrices are scratch, including weapon markers. */
+struct n3ds_weapon_pose {
+	long weapon_index, unit_index, animation_graph;
+	short node_count;
+	boolean valid;
+	real_orientation nodes[MAXIMUM_NODES_PER_ANIMATION];
+};
+
+static struct n3ds_weapon_pose weapon_poses[2];
+static unsigned int weapon_pose_index;
+static short midpoint_weapon_nodes;
+static real_matrix4x3 midpoint_weapon_matrices[MAXIMUM_NODES_PER_ANIMATION];
+
+void n3ds_presentation_weapon_reset(void)
+{
+	weapon_poses[0].valid= weapon_poses[1].valid= FALSE;
+	midpoint_weapon_nodes= 0;
+}
+
+void n3ds_presentation_weapon_capture(void)
+{
+	struct first_person_weapon *first_person_weapon= first_person_weapon_get(0);
+	struct n3ds_weapon_pose *pose= &weapon_poses[weapon_pose_index ^= 1];
+	pose->weapon_index= NONE;
+	pose->valid= FALSE;
+	if (!first_person_weapon->visible || first_person_weapon->unit_index==NONE ||
+		first_person_weapon->weapon_index==NONE) {
+		pose->valid= TRUE;
+		return;
+	}
+
+	struct weapon_datum *weapon= weapon_try_and_get(first_person_weapon->weapon_index);
+	if (!weapon)
+		return;
+	const struct weapon_definition *definition= weapon_definition_get(weapon->definition_index);
+	long graph_index= definition->weapon.interface_definition.first_person_animations.index;
+	if (graph_index==NONE)
+		return;
+	long count= animation_graph_definition_get(graph_index)->nodes.count;
+	if (count<=0 || count>MAXIMUM_NODES_PER_ANIMATION || count>MAXIMUM_NODES_PER_MODEL)
+		return;
+
+	pose->weapon_index= first_person_weapon->weapon_index;
+	pose->unit_index= first_person_weapon->unit_index;
+	pose->animation_graph= graph_index;
+	pose->node_count= (short)count;
+	memcpy(pose->nodes, first_person_weapon->node_orientations, count*sizeof(pose->nodes[0]));
+	pose->valid= TRUE;
+}
+
+int n3ds_presentation_weapon_midpoint(const struct render_camera *camera)
+{
+	struct n3ds_weapon_pose *current= &weapon_poses[weapon_pose_index];
+	struct n3ds_weapon_pose *previous= &weapon_poses[weapon_pose_index ^ 1];
+	midpoint_weapon_nodes= 0;
+	if (!current->valid || !previous->valid)
+		return FALSE;
+	if (current->weapon_index==NONE && previous->weapon_index==NONE)
+		return TRUE;
+	if (current->weapon_index!=previous->weapon_index || current->unit_index!=previous->unit_index ||
+		current->animation_graph!=previous->animation_graph || current->node_count!=previous->node_count)
+		return FALSE;
+
+	real_orientation nodes[MAXIMUM_NODES_PER_ANIMATION];
+	memcpy(nodes, current->nodes, current->node_count*sizeof(nodes[0]));
+	interpolate_node_orientations(current->node_count, previous->nodes, nodes, 0, 2);
+	animation_graph_node_matrices_from_orientations(current->animation_graph,
+		midpoint_weapon_matrices, nodes, &camera->position, &camera->forward, &camera->up);
+	midpoint_weapon_nodes= current->node_count;
+	return TRUE;
+}
+
+static struct real_matrix4x3 *first_person_render_nodes(struct first_person_weapon *weapon)
+{
+	if (n3ds_presentation_midpoint_active() && midpoint_weapon_nodes &&
+		weapon==first_person_weapon_get(0) && weapon->weapon_index==weapon_poses[weapon_pose_index].weapon_index)
+		return midpoint_weapon_matrices;
+	return weapon->node_matrices;
+}
+#else
+#define first_person_render_nodes(weapon) ((weapon)->node_matrices)
+#endif
+
 /* ---------- public code */
 
 short animation_update_render_only(
@@ -525,7 +613,7 @@ void first_person_weapon_draw(
 							weapon_definition->weapon.interface_definition.first_person_model.index,
 							model_node_matrices,
 							weapon_definition->weapon.interface_definition.first_person_animations.index,
-							first_person_weapon->node_matrices,
+							first_person_render_nodes(first_person_weapon),
 							first_person_weapon->weapon_node_remapping_table);
 						render_model(
 							weapon_definition->weapon.interface_definition.first_person_model.index,
@@ -550,7 +638,7 @@ void first_person_weapon_draw(
 							first_person_interface->hands.index,
 							model_node_matrices,
 							weapon_definition->weapon.interface_definition.first_person_animations.index,
-							first_person_weapon->node_matrices,
+							first_person_render_nodes(first_person_weapon),
 							first_person_weapon->hands_node_remapping_table);
 						render_model(
 							first_person_interface->hands.index,
@@ -605,7 +693,7 @@ short first_person_weapon_get_marker_by_name(
 					first_person_weapon->weapon_node_remapping_table,
 					(short)animation_graph_definition_get(
 						weapon_definition->weapon.interface_definition.first_person_animations.index)->nodes.count,
-					first_person_weapon->node_matrices,
+					first_person_render_nodes(first_person_weapon),
 					FALSE,
 					markers,
 					maximum_marker_count);
@@ -785,7 +873,7 @@ struct real_matrix4x3 *first_person_weapon_get_node_matrix(
 		718,
 		node_index>=0 && node_index<animation_graph->nodes.count);
 
-	return &first_person_weapon->node_matrices[node_index];
+	return &first_person_render_nodes(first_person_weapon)[node_index];
 }
 
 void first_person_weapons_update(

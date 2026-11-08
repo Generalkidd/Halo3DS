@@ -269,6 +269,7 @@ boolean machine_update(
 					if (can_open)
 					{
 						activate = TRUE;
+						break; /* Later candidates cannot change this activation. */
 					}
 				}
 

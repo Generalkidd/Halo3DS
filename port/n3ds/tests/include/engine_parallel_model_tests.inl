@@ -1,4 +1,5 @@
 #ifdef HALO_N3DS_RENDERER_TESTS
+long long n3ds_engine_tick_frequency(void);
 int n3ds_model_parallel_tests(void)
 {
     const unsigned int size=4097;
@@ -14,7 +15,7 @@ int n3ds_model_parallel_tests(void)
         raw[i].nodes[0]=0;raw[i].nodes[1]=3;raw[i].node_weight=i%32768;
         raw[i].normal=0x3ff;raw[i].position.x=i*.001f;raw[i].position.y=(int)(i%7)-3;
     }
-    struct model_decode_range decode={raw,decoded};
+    struct n3ds_model_decode_range decode={raw,decoded};
     if(!n3ds_parallel_range(decode_vertex_range,&decode,size,2,3)) goto done;
     for(unsigned int i=0;i<size;++i) {
         struct model_vertex_uncompressed reference;

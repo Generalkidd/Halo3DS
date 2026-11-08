@@ -639,15 +639,14 @@ void biped_disconnect_from_structure_bsp(
 	return;
 }
 
-void biped_get_physics_pill(
+static inline void biped_get_physics_pill_from_data(
 	long biped_index,
+	struct biped_datum const *biped,
+	struct biped_definition const *definition,
 	real_point3d *base,
 	real *height,
 	real *width)
 {
-	struct biped_datum *biped = biped_get(biped_index);
-	struct biped_definition *definition = biped_definition_get(biped->definition_index);
-
 	object_get_origin(biped_index, base);
 	if (!TEST_FLAG(definition->biped.flags, _biped_pill_centered_at_origin_bit))
 		base->z += definition->biped.collision_radius;
@@ -668,6 +667,18 @@ void biped_get_physics_pill(
 	*width = definition->biped.collision_radius;
 
 	return;
+}
+
+void biped_get_physics_pill(
+	long biped_index,
+	real_point3d *base,
+	real *height,
+	real *width)
+{
+	struct biped_datum *biped = biped_get(biped_index);
+	struct biped_definition *definition = biped_definition_get(biped->definition_index);
+
+	biped_get_physics_pill_from_data(biped_index, biped, definition, base, height, width);
 }
 
 void biped_stop_melee_attack(
@@ -1194,7 +1205,7 @@ boolean biped_fix_position(
 				++fudge_vector_index)
 			{
 				real_point3d fixed_position;
-				long cluster_index;
+				struct location fixed_location;
 				struct collision_result pill_collision;
 				struct collision_result line_collision;
 				struct collision_model_test_pill_result model_pill_collision;
@@ -1229,13 +1240,8 @@ boolean biped_fix_position(
 						maximum_radius_fudge_factor*fudge_vector->k + position.z;
 				}
 
-				cluster_index = scenario_leaf_index_from_point(&fixed_position) == NONE ?
-					NONE :
-					TAG_BLOCK_GET_ELEMENT(
-						&global_structure_bsp_get()->leaves,
-						scenario_leaf_index_from_point(&fixed_position) & LONG_MAX,
-						struct structure_leaf)->cluster_index;
-				if (cluster_index != NONE &&
+				scenario_location_from_point(&fixed_location, &fixed_position);
+				if (fixed_location.cluster_index != NONE &&
 					collision_fix_pill(
 						collision_flags,
 						&fixed_position,
@@ -1275,8 +1281,8 @@ boolean biped_fix_position(
 				{
 					struct biped_definition *definition =
 						biped_definition_get(biped->definition_index);
-					struct location fixed_location;
 
+					/* Collision correction can move the point into another leaf. */
 					scenario_location_from_point(&fixed_location, &fixed_position);
 					match_assert("c:\\halo\\SOURCE\\units\\bipeds.c", 1054,
 						fixed_location.cluster_index!=NONE);
@@ -1671,7 +1677,9 @@ void biped_accelerate(
 			{
 				biped->object.forward = forward;
 				biped_snap_facing(biped_index);
+#ifndef HALO_N3DS
 				biped_verify_object_vectors(biped_index, "post-accel");
+#endif
 			}
 		}
 	}
@@ -3174,6 +3182,41 @@ static void biped_snap_facing(
 	return;
 }
 
+#ifdef HALO_N3DS
+static void biped_moving_turn_trig(real speed, real *cosine, real *sine)
+{
+	/* Simulation-owned cache. The input value covers every definition that
+	 * shares a speed, including when a map is replaced. */
+	static struct turn_trig_entry {
+		unsigned int speed_bits;
+		real cosine, sine;
+	} entries[16];
+	struct turn_trig_entry *entry = NULL;
+	unsigned int bits;
+	__builtin_memcpy(&bits, &speed, sizeof(bits));
+	const unsigned int magnitude = bits & 0x7fffffffu;
+	/* Limit reuse to ordinary authored speeds (2^-16 through 512 rad/s)
+	 * under the game's scalar, nearest-rounding VFP mode. */
+	if (magnitude >= 0x37800000u && magnitude <= 0x44000000u &&
+		(__builtin_arm_get_fpscr() & 0x03ffff00u) == 0x03000000u)
+	{
+		entry = &entries[(bits ^ (bits >> 10) ^ (bits >> 20)) & 15u];
+		if (entry->speed_bits == bits)
+		{
+			*cosine = entry->cosine;
+			*sine = entry->sine;
+			return;
+		}
+	}
+
+	const real step = speed/TICKS_PER_SECOND;
+	*cosine = (real)cos(step);
+	*sine = (real)sin(step);
+	if (entry)
+		*entry = (struct turn_trig_entry){bits, *cosine, *sine};
+}
+#endif
+
 static void biped_update_turning(
 	long biped_index,
 	struct unit_animation_update_data *animation)
@@ -3287,7 +3330,9 @@ static void biped_update_turning(
 		}
 
 		biped_snap_facing(biped_index);
+#ifndef HALO_N3DS
 		biped_verify_object_vectors(biped_index, "post-fly-turn");
+#endif
 	}
 	else if (biped->unit.animation.base_seat_index!=_unit_base_seat_asleep)
 	{
@@ -3360,10 +3405,15 @@ static void biped_update_turning(
 		{
 			if (!TEST_FLAG(biped->unit.control_flags, _unit_control_look_dont_turn_bit))
 			{
+#ifdef HALO_N3DS
+				real cosine, sine;
+				biped_moving_turn_trig(definition->biped.moving_turning_speed, &cosine, &sine);
+#else
 				real turn_step =
 					definition->biped.moving_turning_speed/TICKS_PER_SECOND;
 				real cosine = (real)cos(turn_step);
 				real sine = (real)sin(turn_step);
+#endif
 				real progress;
 
 				if (turn_right)
@@ -3492,11 +3542,21 @@ static void biped_update_moving(
 	physics.crouch_velocity = 0.f;
 	physics.acceleration_maximum = 0.0053333333f;
 	physics.airborne_acceleration_maximum = 0.f;
+#ifdef HALO_N3DS
+	biped_get_physics_pill_from_data(
+		biped_index,
+		biped,
+		definition,
+		&physics.position,
+		&physics.height,
+		&physics.width);
+#else
 	biped_get_physics_pill(
 		biped_index,
 		&physics.position,
 		&physics.height,
 		&physics.width);
+#endif
 	physics.minimum_normal_k = definition->biped.runtime_minimum_normal_k;
 	physics.downhill_k0 = definition->biped.runtime_downhill_k0;
 	physics.downhill_k1 = definition->biped.runtime_downhill_k1;
@@ -4259,11 +4319,17 @@ boolean biped_update(
 			_unit_control_crouch_modifier_bit);
 
 		CHARACTER_STAGE(0);
+#ifndef HALO_N3DS
 		biped_verify_object_vectors(biped_index, "pre-turning");
+#endif
+		/* Snap-facing has already checked these axes. Turning checks any
+		 * path that writes them before returning. */
 		if (!TEST_FLAG(biped->object.damage_flags, _object_dead_bit))
 		{
 			biped_update_turning(biped_index, &animation);
+#ifndef HALO_N3DS
 			biped_verify_object_vectors(biped_index, "post-turning");
+#endif
 		}
 
 		CHARACTER_STAGE(1);
@@ -4288,7 +4354,11 @@ boolean biped_update(
 			biped_update_slipping(biped_index, &animation);
 		}
 
+		/* These handlers check the axes before returning. A biped that
+		 * takes none of the branches still has the checked post-move axes. */
+#ifndef HALO_N3DS
 		biped_verify_object_vectors(biped_index, "post-dead/air/land/slip");
+#endif
 
 		if (!biped->biped.player_melee_ticks)
 		{

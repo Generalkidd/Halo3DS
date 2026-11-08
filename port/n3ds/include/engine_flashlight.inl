@@ -5,7 +5,7 @@ static C3D_LightEnv flashlight_env;
 static C3D_Light flashlight_plain,flashlight_bump,flashlight_model;
 static C3D_LightLut flashlight_spot,flashlight_constant;
 static C3D_LightLutDA flashlight_distance;
-static float flashlight_power,flashlight_origin[3],flashlight_camera[3];
+static float flashlight_power,flashlight_origin[3],flashlight_forward[3],flashlight_camera[3];
 static int flashlight_ready,flashlight_camera_valid;
 static float flashlight_cone(float cosine,float unused)
 {
@@ -47,14 +47,21 @@ static int flashlight_initialize(void)
     }
     flashlight_ready=1;return 1;
 }
+/* Retain each installed light component independently. Camera rebasing below
+ * still follows each eye; unchanged intensity must not dirty three materials. */
 void n3ds_gpu_flashlight_set(float power,const float origin[3],const float forward[3])
 {
     if(!flashlight_ready) return;
     power=isfinite(power)?fminf(1,fmaxf(0,power)):0;
     if(!origin || !forward) power=0;
     if(!power && !flashlight_power) return;
+    int toggled=!!power!=!!flashlight_power;
+    int intensity_changed=power!=flashlight_power;
+    int origin_changed=power && (!flashlight_power || memcmp(flashlight_origin,origin,sizeof(flashlight_origin)));
+    int direction_changed=power && (!flashlight_power || memcmp(flashlight_forward,forward,sizeof(flashlight_forward)));
+    if(!intensity_changed && !origin_changed && !direction_changed)return;
     environment_state_valid=bump_state_valid=0;
-    if(!!power!=!!flashlight_power) {
+    if(toggled) {
         bump_light_env.lights[flashlight_bump.id]=power?&flashlight_bump:NULL;
         model_light_env.lights[flashlight_model.id]=power?&flashlight_model:NULL;
         bump_light_env.flags|=C3DF_LightEnv_LCDirty;model_light_env.flags|=C3DF_LightEnv_LCDirty;
@@ -64,23 +71,29 @@ void n3ds_gpu_flashlight_set(float power,const float origin[3],const float forwa
         if(!power) bump_light_env.flags&=~C3DF_LightEnv_LutDirty(0);
         C3D_LightEnvClampHighlights(&bump_light_env,!power);
     }
-    flashlight_power=power;flashlight_camera_valid=0;
+    flashlight_power=power;
+    if(toggled || origin_changed)flashlight_camera_valid=0;
     C3D_Light *lights[3]={&flashlight_plain,&flashlight_bump,&flashlight_model};
     for(int i=0;i<3;++i) {
-        C3D_LightEnable(lights[i],power>0);
-        C3D_LightSpotEnable(lights[i],power>0);C3D_LightDistAttnEnable(lights[i],power>0);
+        if(toggled) {
+            C3D_LightEnable(lights[i],power>0);
+            C3D_LightSpotEnable(lights[i],power>0);C3D_LightDistAttnEnable(lights[i],power>0);
+        }
         if(!power) continue;
-        C3D_LightSpotDir(lights[i],forward[0],forward[1],forward[2]);
+        if(direction_changed)C3D_LightSpotDir(lights[i],forward[0],forward[1],forward[2]);
         if(i<2) {
-            C3D_FVec position=FVec4_New(origin[0],origin[1],origin[2],1);
-            C3D_LightPosition(lights[i],&position);
-            C3D_LightSpecular0(lights[i],power*.85f,power*.82f,power*.75f);
-        } else {
+            if(origin_changed) {
+                C3D_FVec position=FVec4_New(origin[0],origin[1],origin[2],1);
+                C3D_LightPosition(lights[i],&position);
+            }
+            if(intensity_changed)C3D_LightSpecular0(lights[i],power*.85f,power*.82f,power*.75f);
+        } else if(intensity_changed) {
             C3D_LightAmbient(lights[i],power*.17f,power*.164f,power*.15f);
             C3D_LightDiffuse(lights[i],power*.68f,power*.656f,power*.60f);
         }
     }
-    if(power) memcpy(flashlight_origin,origin,sizeof(flashlight_origin));
+    if(origin_changed)memcpy(flashlight_origin,origin,sizeof(flashlight_origin));
+    if(direction_changed)memcpy(flashlight_forward,forward,sizeof(flashlight_forward));
 }
 static void flashlight_model_camera_update(void)
 {

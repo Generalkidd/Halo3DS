@@ -6,6 +6,7 @@
 #include "engine_generic.h"
 #include "engine_models.h"
 #include "engine_textures.h"
+#include "engine_presentation.h"
 #include "engine_cache.h"
 #include "cache_reader.h"
 #include "shaders/shader_definitions.h"
@@ -138,6 +139,7 @@ void n3ds_chicago_model_draw(const struct shader *shader,short permutation,
     struct native_generic_material bake={0};
     int color[3]={0},alpha[3]={0},replicate[3]={0};
     float bounds[4]={1e30f,1e30f,-1e30f,-1e30f};
+    int bounds_prepared=0;
     struct native_chicago_vertex *vertices;
     unsigned int i; long m;short bitmap_index=permutation;
     assert(n3ds_cache_resolve(view,material,sizeof(*material))==material);
@@ -216,6 +218,7 @@ void n3ds_chicago_model_draw(const struct shader *shader,short permutation,
             rasterizer_set_texture(four?0:(short)m,0,0,NONE,bitmap_index)!=NULL :
             rasterizer_set_texture_direct(four?0:(short)m,map->bitmap.index,bitmap_index);
         if(!bound) {
+            if(n3ds_presentation_midpoint_rejected()) return;
             char text[192]; snprintf(text,sizeof(text),"CHICAGO BITMAP: stage=%ld tag=%08lx permutation=%d cache_count=%u cache_bytes=%u",m,map->bitmap.index,permutation,n3ds_engine_texture_count(),n3ds_engine_texture_bytes()); n3ds_log(text);
         }
         assert(bound);
@@ -241,6 +244,22 @@ void n3ds_chicago_model_draw(const struct shader *shader,short permutation,
         native.clamp_u[0]=native.clamp_v[0]=1;
     }
     const struct model_vertex_uncompressed *cached=type==5?n3ds_model_decode_stream(data,count):NULL;
+    if(four && cached) bounds_prepared=n3ds_model_uv_bounds(cached,count,bounds);
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+    if(four && cached && n3ds_presentation_midpoint_active()) {
+        for(unsigned int v=0;!bounds_prepared && v<count;++v) {
+            if(!(v&127) && n3ds_presentation_check_midpoint()) return;
+            for(int a=0;a<2;++a) {
+                float uv=cached[v].texcoord.n[a];
+                bounds[a]=MIN(bounds[a],uv);bounds[a+2]=MAX(bounds[a+2],uv);
+            }
+        }
+        for(int a=0;a<2;++a) if(bounds[a+2]-bounds[a]<.0001f) bounds[a+2]=bounds[a]+.0001f;
+        if(!n3ds_gpu_generic_bake_preflight(&bake,bounds,0)) return;
+        bounds_prepared=1;
+    }
+#endif
+    if(n3ds_presentation_check_midpoint()) return;
     if(!four && !native.vertex_fade) {
         extern int n3ds_model_chicago_gpu_draw(const struct model_vertex_uncompressed *,unsigned int,const unsigned short *,unsigned int,const struct native_chicago_material *,const float *);
         if(n3ds_model_chicago_gpu_draw(cached,count,indices,index_count,&native,transforms[0][0].n)) return;
@@ -250,6 +269,7 @@ void n3ds_chicago_model_draw(const struct shader *shader,short permutation,
     const struct native_render_vertex *posed=n3ds_model_skin_stream(cached,count,&parameters->skinning,&unit_scale,parameters->unique_identifier);
     float relative_origin[3]={0};if(!native.sky)n3ds_gpu_camera_origin(relative_origin);
     for(i=0;i<count;++i) {
+        if(!(i&127) && n3ds_presentation_check_midpoint()) return;
         struct model_vertex_uncompressed decoded;
         struct native_render_vertex temporary;
         const struct native_render_vertex *skinned=posed?posed+i:&temporary;
@@ -261,7 +281,7 @@ void n3ds_chicago_model_draw(const struct shader *shader,short permutation,
         memset(vertices[i].uv,0,sizeof(vertices[i].uv));
         if(four) for(int axis=0;axis<2;++axis) {
             float uv=vertices[i].uv[0][axis]=vertex->texcoord.n[axis];
-            bounds[axis]=MIN(bounds[axis],uv);bounds[axis+2]=MAX(bounds[axis+2],uv);
+            if(!bounds_prepared) {bounds[axis]=MIN(bounds[axis],uv);bounds[axis+2]=MAX(bounds[axis+2],uv);}
         }
         else for(m=0;m<material->maps.count;++m) for(int axis=0;axis<2;++axis)
             vertices[i].uv[m][axis]=transforms[m][axis].n[0]*vertex->texcoord.x+
@@ -273,7 +293,9 @@ void n3ds_chicago_model_draw(const struct shader *shader,short permutation,
     }
     if(four) {
         for(int axis=0;axis<2;++axis) if(bounds[axis+2]-bounds[axis]<.0001f) bounds[axis+2]=bounds[axis]+.0001f;
-        void *texture=n3ds_gpu_generic_bake(&bake,bounds);assert(texture);
+        void *texture=n3ds_gpu_generic_bake(&bake,bounds);
+        if(!texture && n3ds_presentation_midpoint_rejected()) return;
+        assert(texture);
         for(i=0;i<count;++i) for(int axis=0;axis<2;++axis)
             vertices[i].uv[0][axis]=(vertices[i].uv[0][axis]-bounds[axis])/(bounds[axis+2]-bounds[axis]);
         assert(n3ds_gpu_texture_bind(0,texture));

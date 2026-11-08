@@ -8,7 +8,7 @@
 #include "engine_cache.h"
 #include "cache_reader.h"
 #include "engine_textures.h"
-#include "engine_bitmaps.h"
+#include "engine_presentation.h"
 #include "bitmaps/bitmap_group.h"
 #include "bitmaps/bitmap_group_runtime.h"
 #include "rasterizer/rasterizer.h"
@@ -30,11 +30,25 @@ extern struct rasterizer_window_begin_parameters global_window_parameters;
 extern struct rasterizer_frame_begin_parameters global_frame_parameters;
 void n3ds_log(const char *);
 struct plasma_volume {
-    const struct bitmap_data *bitmap;int size[3],stride;long address[3][32];byte pixels[32*32*32*2];
+    const struct bitmap_data *bitmap;int size[3];long address[3][32];unsigned short samples[32*32*32];
 };
 static struct plasma_volume volumes[2];
 static unsigned int generation,draws;
-static const struct shader *reported;
+enum { PLASMA_REPORT_LIMIT=32 };
+static const struct shader *reported[PLASMA_REPORT_LIMIT],*last_reported;
+static unsigned int reported_count;
+static int plasma_report_material(const struct shader *shader)
+{
+    if(shader==last_reported) return 0;
+    last_reported=shader;
+    /* Diagnostics only: alternating materials must not rescan the tag table
+     * and enqueue another message every draw. Stop admitting reports at the
+     * fixed limit; never evict an entry and restart logging churn. */
+    for(unsigned int i=0;i<reported_count;++i) if(reported[i]==shader) return 0;
+    if(reported_count==PLASMA_REPORT_LIMIT) return 0;
+    reported[reported_count++]=shader;
+    return 1;
+}
 #ifdef HALO_N3DS_PLASMA_SHIELD_TEST
 static unsigned int test_draws;
 unsigned int n3ds_plasma_test_draws(void) {return test_draws;}
@@ -46,19 +60,44 @@ static const struct plasma_volume *volume_load(long tag,short permutation,const 
     assert(group && group->bitmaps.count>0 && permutation>=0);
     const struct bitmap_data *b=bitmap_group_try_and_get_bitmap(tag,permutation%group->bitmaps.count);
     for(int i=0;i<2;++i) if(volumes[i].bitmap==b) return volumes+i;
+    if(n3ds_presentation_reject_texture()) return NULL;
     struct plasma_volume *v=keep==volumes?volumes+1:volumes;
     assert(n3ds_cache_resolve(view,b,sizeof(*b))==b && b->signature=='bitm');
     assert(b->type==1 && (b->flags&0x88)==0x88 && b->format>=0 && b->format<=3);
-    v->stride=b->format==3?2:1;unsigned int skip=0,bytes;int level=0;
+    unsigned int stride=b->format==3?2:1,skip=0,bytes;int level=0;
     v->size[0]=b->width;v->size[1]=b->height;v->size[2]=b->depth;
     for(int c=0;c<3;++c) assert(v->size[c]>0 && v->size[c]<=256 && !(v->size[c]&(v->size[c]-1)));
     while(MAX(v->size[0],MAX(v->size[1],v->size[2]))>32) {
-        assert(level++<b->mipmap_count);skip+=v->size[0]*v->size[1]*v->size[2]*v->stride;
+        assert(level++<b->mipmap_count);skip+=v->size[0]*v->size[1]*v->size[2]*stride;
         for(int c=0;c<3;++c) v->size[c]=MAX(1,v->size[c]/2);
     }
-    bytes=v->size[0]*v->size[1]*v->size[2]*v->stride;
+    unsigned int texels=v->size[0]*v->size[1]*v->size[2];
+    bytes=texels*stride;
     assert(b->pixels_offset>=2048 && b->pixels_size>0 && skip+bytes<=(unsigned long)b->pixels_size);
-    assert(n3ds_engine_cache_read(b->pixels_offset+skip,bytes,v->pixels));
+    byte *encoded=(byte *)v->samples;
+    assert(n3ds_engine_cache_read(b->pixels_offset+skip,bytes,encoded));
+    /* The shader consumes only red and alpha. Expand those exact bytes once
+     * inside the existing 64 KiB slot. Backwards traversal keeps unread
+     * one-byte source texels intact, including rectangular volume layouts. */
+    /* These are exactly decode_pixel's format 0..3 red/alpha outputs. Select
+     * the format once, keeping cold-load conversion to simple integer work. */
+    switch(b->format) {
+    case 0:
+        for(unsigned int i=texels;i--;) v->samples[i]=0xff00u|encoded[i];
+        break;
+    case 1:
+        for(unsigned int i=texels;i--;) v->samples[i]=((unsigned int)encoded[i]<<8)|255u;
+        break;
+    case 2:
+        for(unsigned int i=texels;i--;) v->samples[i]=(unsigned int)encoded[i]*257u;
+        break;
+    case 3:
+        for(unsigned int i=texels;i--;) {
+            unsigned int red=encoded[i*2],alpha=encoded[i*2+1];
+            v->samples[i]=(red<<8)|alpha;
+        }
+        break;
+    }
     for(int c=0;c<3;++c) for(int i=0;i<v->size[c];++i) {
         long xyz[3]={0},address[3];xyz[c]=i;
         bitmap_swizzle_vector3d(v->size[0],v->size[1],v->size[2],xyz[0],xyz[1],xyz[2],address);
@@ -70,18 +109,18 @@ static const struct plasma_volume *volume_load(long tag,short permutation,const 
 }
 static void volume_sample(const struct plasma_volume *v,const float xyz[3],float out[2])
 {
-    int ix[3];float f[3];
+    unsigned int addresses[3][2];float weights[3][2];
     for(int c=0;c<3;++c) {
         assert(isfinite(xyz[c]));float x=(xyz[c]-floorf(xyz[c]))*v->size[c]-.5f;
-        ix[c]=(int)floorf(x);f[c]=x-ix[c];
+        int ix=(int)floorf(x);float f=x-ix;
+        weights[c][0]=1-f;weights[c][1]=f;
+        for(int tap=0;tap<2;++tap) addresses[c][tap]=v->address[c][(ix+tap)&(v->size[c]-1)];
     }
     out[0]=out[1]=0;
     for(int z=0;z<2;++z) for(int y=0;y<2;++y) for(int x=0;x<2;++x) {
-        unsigned int address=v->address[0][(ix[0]+x)&(v->size[0]-1)]|
-            v->address[1][(ix[1]+y)&(v->size[1]-1)]|v->address[2][(ix[2]+z)&(v->size[2]-1)];
-        unsigned int rgba=n3ds_bitmap_decode_pixel(v->pixels+address*v->stride,v->bitmap->format);
-        float weight=(x?f[0]:1-f[0])*(y?f[1]:1-f[1])*(z?f[2]:1-f[2])/255.f;
-        out[0]+=(rgba>>24)*weight;out[1]+=(rgba&255)*weight;
+        unsigned int sample=v->samples[addresses[0][x]|addresses[1][y]|addresses[2][z]];
+        float weight=weights[0][x]*weights[1][y]*weights[2][z]/255.f;
+        out[0]+=(sample>>8)*weight;out[1]+=(sample&255)*weight;
     }
 }
 static float animation_value(const struct render_animation *a,int source,float exponent,float fallback)
@@ -100,11 +139,11 @@ void n3ds_plasma_model_draw(const struct shader *shader,short permutation,
     const struct plasma_shader *s=(const void *)shader;
     assert(shader->base.type==10 && n3ds_cache_resolve(view,s,sizeof(*s))==s);
     if(generation!=n3ds_engine_cache_generation()) {
-        volumes[0].bitmap=volumes[1].bitmap=NULL;generation=n3ds_engine_cache_generation();draws=0;reported=NULL;
+        volumes[0].bitmap=volumes[1].bitmap=NULL;generation=n3ds_engine_cache_generation();draws=0;
+        reported_count=0;last_reported=NULL;
     }
     float intensity=animation_value(&p->animation,s->intensity_source,s->intensity_exponent,1);
-    if(reported!=shader) {
-        reported=shader;
+    if(plasma_report_material(shader)) {
         for(long t=0;t<view->tag_header->tag_count;++t) if(view->instances[t].base_address==shader) {
             char message[224];snprintf(message,sizeof(message),"NATIVE PLASMA MATERIAL: intensity=%.3f name=%.160s",intensity,view->instances[t].name);n3ds_log(message);break;
         }
@@ -121,9 +160,17 @@ void n3ds_plasma_model_draw(const struct shader *shader,short permutation,
     const real_rgb_color *tint=global_real_rgb_white;
     if(p->animation.colors && s->color_source>=1 && s->color_source<=4) tint=p->animation.colors+s->color_source-1;
     const struct plasma_volume *primary=volume_load(s->primary_map.index,permutation,NULL);
+    if(!primary) return;
     const struct plasma_volume *secondary=volume_load(s->secondary_map.index,permutation,primary);
+    if(!secondary) return;
     assert(isfinite(s->primary_period) && s->primary_period!=0 && isfinite(s->secondary_period) && s->secondary_period!=0);
     float time[2]={global_frame_parameters.game_time_sec/s->primary_period,global_frame_parameters.game_time_sec/s->secondary_period};
+    float drift[2][3],tint_delta[3];
+    for(int c=0;c<3;++c) {
+        drift[0][c]=time[0]*s->primary_direction.n[c];drift[1][c]=time[1]*s->secondary_direction.n[c];
+        tint_delta[c]=s->perpendicular.rgb.n[c]-s->parallel.rgb.n[c];
+    }
+    const float alpha_delta=s->perpendicular.alpha-s->parallel.alpha;
     const struct model_vertex_uncompressed *cached=type==5?n3ds_model_decode_stream(data,count):NULL;
     const real_vector2d unit={1,1};
     const struct native_render_vertex *pose=n3ds_model_skin_stream(cached,count,&p->skinning,&unit,p->unique_identifier);
@@ -145,8 +192,8 @@ void n3ds_plasma_model_draw(const struct shader *shader,short permutation,
         for(int c=0;c<3;++c) {
             eye[c]=global_window_parameters.camera.position.n[c]-out[i].position[c];
             n2+=normal.n[c]*normal.n[c];e2+=eye[c]*eye[c];dot+=normal.n[c]*eye[c];
-            xyz[0][c]=v->position.n[c]*s->primary_scale+time[0]*s->primary_direction.n[c];
-            xyz[1][c]=v->position.n[c]*s->secondary_scale+time[1]*s->secondary_direction.n[c];
+            xyz[0][c]=v->position.n[c]*s->primary_scale+drift[0][c];
+            xyz[1][c]=v->position.n[c]*s->secondary_scale+drift[1][c];
         }
         /* Retain the primary coordinate shear from the Xbox constant matrix. */
         xyz[0][0]+=offset*v->position.z;
@@ -156,8 +203,8 @@ void n3ds_plasma_model_draw(const struct shader *shader,short permutation,
         float b=PIN(.5f+noise[1][1]-noise[0][1],0.f,1.f);
         /* Low-frequency approximation of the original nonlinear noise blend. */
         float energy=PIN(2*(a*a+b*b),0.f,1.f);
-        float alpha=PIN(s->parallel.alpha+(s->perpendicular.alpha-s->parallel.alpha)*facing,0.f,1.f)*intensity*energy;
-        for(int c=0;c<3;++c) out[i].color[c]=PIN((s->parallel.rgb.n[c]+(s->perpendicular.rgb.n[c]-s->parallel.rgb.n[c])*facing)*tint->n[c]*alpha,0.f,1.f);
+        float alpha=PIN(s->parallel.alpha+alpha_delta*facing,0.f,1.f)*intensity*energy;
+        for(int c=0;c<3;++c) out[i].color[c]=PIN((s->parallel.rgb.n[c]+tint_delta[c]*facing)*tint->n[c]*alpha,0.f,1.f);
     }
     assert(n3ds_gpu_texture_bind(0,NULL));n3ds_gpu_geometry_flush(out,count*sizeof(*out));
     /* Premultiplied additive RGB, both faces, depth tested, no depth/alpha writes. */

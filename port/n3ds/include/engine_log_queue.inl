@@ -13,11 +13,11 @@ static int log_attempted;
 static void log_async_finish(void);
 /* A worker must not enter newlib's FILE/heap locks while the game reclaims
  * graphics/cache memory. The pre-opened native file needs only stack IPC. */
-static void log_write_block(const char *data,unsigned int bytes)
+static void log_write_block(const char *data,unsigned int bytes,u32 flags)
 {
     while(bytes) {
         u32 written=0;
-        Result result=FSFILE_Write(log_handle,&written,log_offset,data,bytes,FS_WRITE_FLUSH);
+        Result result=FSFILE_Write(log_handle,&written,log_offset,data,bytes,flags);
         if(R_FAILED(result) || !written || written>bytes) {++log_io_errors;return;}
         log_offset+=written;data+=written;bytes-=written;
     }
@@ -26,16 +26,24 @@ static void log_writer(void *unused)
 {
     char block[LOG_WRITE_BYTES];
     static const char started[]="LOG QUEUE: native SD writer active; no worker FILE or heap calls\n";
-    log_write_block(started,sizeof(started)-1);
+    log_write_block(started,sizeof(started)-1,FS_WRITE_FLUSH);
+    unsigned int batch_remaining=0;
     for(;;) {
         LightLock_Lock(&log_lock);
-        unsigned int bytes=log_count>sizeof(block)?sizeof(block):log_count;
-        for(unsigned int i=0;i<bytes;++i) block[i]=log_queue[(log_read+i)%LOG_QUEUE_BYTES];
+        /* Flush at the end of this bounded batch. New records join the next
+         * batch, so a busy producer cannot postpone the flush indefinitely. */
+        if (!batch_remaining) batch_remaining=log_count;
+        unsigned int bytes=batch_remaining>sizeof(block)?sizeof(block):batch_remaining;
+        unsigned int first=LOG_QUEUE_BYTES-log_read;
+        if(first>bytes) first=bytes;
+        memcpy(block,log_queue+log_read,first);
+        memcpy(block+first,log_queue,bytes-first);
         log_read=(log_read+bytes)%LOG_QUEUE_BYTES;log_count-=bytes;
+        batch_remaining-=bytes;
         int done=log_stop && !bytes;
         LightLock_Unlock(&log_lock);
         if(done) break;
-        if(bytes) log_write_block(block,bytes);
+        if(bytes) log_write_block(block,bytes,batch_remaining?0:FS_WRITE_FLUSH);
         else svcSleepThread(100000000LL);
     }
 }
@@ -46,7 +54,7 @@ static void log_async_start(void)
      * All subsequent normal writes belong to this one worker. */
     fflush(log_file);
     Result opened=FSUSER_OpenFileDirectly(&log_handle,ARCHIVE_SDMC,fsMakePath(PATH_EMPTY,NULL),
-        fsMakePath(PATH_ASCII,"/halo-source-engine.log"),FS_OPEN_WRITE,0);
+        fsMakePath(PATH_ASCII,"/" ENGINE_LOG_NAME),FS_OPEN_WRITE,0);
     if(R_FAILED(opened)) {log_handle=0;return;}
     if(R_FAILED(FSFILE_GetSize(log_handle,&log_offset))) {FSFILE_Close(log_handle);log_handle=0;return;}
     fclose(log_file);log_file=NULL;LightLock_Init(&log_lock);
@@ -55,7 +63,7 @@ static void log_async_start(void)
     if(log_thread) atexit(log_async_finish);
     if(!log_thread) {
         FSFILE_Close(log_handle);log_handle=0;
-        log_file=fopen("sdmc:/halo-source-engine.log","a");
+        log_file=fopen("sdmc:/" ENGINE_LOG_NAME,"a");
         if(log_file) setvbuf(log_file,log_buffer,_IOFBF,sizeof(log_buffer));
     }
 }
@@ -64,7 +72,11 @@ static void log_enqueue(const char *message)
     size_t bytes=strlen(message);
     LightLock_Lock(&log_lock);
     if(bytes+1<=LOG_QUEUE_BYTES-log_count) {
-        for(size_t i=0;i<bytes;++i) {log_queue[log_write]=message[i];log_write=(log_write+1)%LOG_QUEUE_BYTES;}
+        size_t first=LOG_QUEUE_BYTES-log_write;
+        if(first>bytes) first=bytes;
+        memcpy(log_queue+log_write,message,first);
+        memcpy(log_queue,message+first,bytes-first);
+        log_write=(log_write+bytes)%LOG_QUEUE_BYTES;
         log_queue[log_write]='\n';log_write=(log_write+1)%LOG_QUEUE_BYTES;log_count+=bytes+1;
     } else ++log_dropped; /* Diagnostics must not block gameplay on a slow SD. */
     LightLock_Unlock(&log_lock);
@@ -80,5 +92,5 @@ static void log_async_finish(void)
     if(svcWaitSynchronization(handle,U64_MAX)!=0) svcBreak(USERBREAK_PANIC);
     threadFree(log_thread);log_thread=NULL;
     char text[160];snprintf(text,sizeof(text),"LOG QUEUE: dropped=%u io_errors=%u; routine writes ran off the frame thread\n",log_dropped,log_io_errors);
-    log_write_block(text,strlen(text));FSFILE_Close(log_handle);log_handle=0;
+    log_write_block(text,strlen(text),FS_WRITE_FLUSH);FSFILE_Close(log_handle);log_handle=0;
 }

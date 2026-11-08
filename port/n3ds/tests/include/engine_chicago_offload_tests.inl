@@ -20,7 +20,7 @@ int n3ds_gpu_chicago_transform_tests(void)
         struct native_render_vertex rigid[4];struct native_skin_vertex skin[4];struct native_chicago_vertex cpu[4];
         for(int i=0;i<4;++i) {
             rigid[i]=(struct native_render_vertex){{i==1||i==2?.8f:-.8f,i>=2?.7f:-.7f,-3},{0,0,1},{i==1||i==2?.8f:.2f,i>=2?.8f:.2f}};
-            memcpy(skin+i,rigid+i,sizeof(*rigid));skin[i].bones[0]=0;skin[i].bones[1]=second*3;skin[i].bones[2]=.3f;skin[i].bones[3]=.7f;
+            memcpy(skin+i,rigid+i,sizeof(*rigid));n3ds_skin_vertex_set_bones(skin+i,0,second*3,.3f,.7f);
             memset(cpu+i,0,sizeof(*cpu));
             for(int a=0;a<3;++a) for(int k=0;k<(skinned?2:1);++k) {
                 const float *r=rows+(k?second:0)*12+a*4;

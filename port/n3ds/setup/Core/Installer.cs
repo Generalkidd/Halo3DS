@@ -6,7 +6,7 @@ using System.Text.Json;
 namespace HaloSetup;
 
 public sealed record SetupOptions(string Source, string Destination, string Executable, string? CompatibilityFile = null,
-    bool LauncherOnly = false);
+    bool LauncherOnly = false, bool CandidateTextures = false);
 
 public static class Installer
 {
@@ -160,6 +160,8 @@ public static class Installer
     public static SetupResult Run(SetupOptions options, IProgress<SetupProgress>? progress = null, CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
+        Data.Require(!options.LauncherOnly || !options.CandidateTextures,
+            "Candidate textures require full preparation, not a launcher-only update.");
         void Report(string message, double value) => progress?.Report(new(message, value));
         string destination = NormalizeDestination(options.Destination);
         Data.Require(Directory.Exists(destination), "Choose an existing SD card root or output folder.");
@@ -222,11 +224,16 @@ public static class Installer
         }
         // Conservative space check retains existing data until each replacement is verified.
         long required = pending.Sum(n => Data.Catalog[n].Bytes) + 128 * (long)Data.Chunk;
-        // Every texture archive in the hash-verified 24-map catalog is below
-        // 64 MiB. Reserve a complete replacement while retaining the old file.
+        // Existing expanded maps supply exact archive plans. Pending maps use
+        // an initial allowance; Generate checks their exact size once expanded.
         var texturePending = names.Where(n => pending.Contains(n) || !Textures.Current(
             SafePath(game, n + ".map"), SafePath(game, n + ".ntx"), ct)).ToList();
-        required += texturePending.Count * 64 * (long)Data.Chunk;
+        required += texturePending.Sum(n => pending.Contains(n) ? 64 * (long)Data.Chunk :
+            Textures.EstimatedBytes(SafePath(game, n + ".map"), ct));
+        var candidatePending = options.CandidateTextures ? names.Where(n => pending.Contains(n) || !Textures.CandidateCurrent(
+            SafePath(game, n + ".map"), SafePath(game, n + ".ntx4"), ct)).ToList() : new List<string>();
+        required += candidatePending.Sum(n => pending.Contains(n) ? 64 * (long)Data.Chunk :
+            Textures.CandidateEstimatedBytes(SafePath(game, n + ".map"), ct));
         // On Unix, stat the destination filesystem, including a mounted SD card,
         // rather than the filesystem containing '/'. Windows uses the drive root.
         string spacePath = OperatingSystem.IsWindows() ? Path.GetPathRoot(destination)! : destination;
@@ -265,6 +272,18 @@ public static class Installer
                 if (safeToRemove && Directory.Exists(stage)) Directory.Delete(stage, true);
             }
         }
+        // All expanded maps now exist, including those whose initial archive
+        // allowance could only be estimated. Reserve both complete pending
+        // archive queues before writing either one. Installed files already
+        // occupy used space; Commit renames them rather than copying them.
+        if (!options.LauncherOnly && (texturePending.Count > 0 || candidatePending.Count > 0))
+        {
+            long archiveRequired = 128 * (long)Data.Chunk +
+                texturePending.Sum(n => Textures.EstimatedBytes(SafePath(game, n + ".map"), ct)) +
+                candidatePending.Sum(n => Textures.CandidateEstimatedBytes(SafePath(game, n + ".map"), ct));
+            Data.Require(new DriveInfo(spacePath).AvailableFreeSpace >= archiveRequired,
+                $"Please free at least {archiveRequired / 1073741824.0:F1} GB for the pending texture archives and try again. Existing archives remain in place.");
+        }
         // Derived texture archives can be added to an existing installation
         // without replacing its maps or profiles. Launcher-only stays quick.
         if (!options.LauncherOnly)
@@ -286,6 +305,27 @@ public static class Installer
             }
             finally { if (safeToRemove && Directory.Exists(stage)) Directory.Delete(stage, true); }
         }
+        // Developer opt-in remains separate from the legacy fallback archive.
+        // Read back the staged file before the normal backup/rollback commit.
+        foreach (string name in candidatePending)
+        {
+            ct.ThrowIfCancellationRequested();
+            string map = SafePath(game, name + ".map"), archive = SafePath(game, name + ".ntx4");
+            Report($"Preparing candidate RGBA8 textures for {Data.Catalog[name].Title}…", 96);
+            if (Textures.CandidateCurrent(map, archive, ct)) continue;
+            string stage = SafePath(game, ".halo-setup-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(stage); bool safeToRemove = true;
+            try
+            {
+                string temporary = Path.Combine(stage, name + ".ntx4");
+                Textures.GenerateCandidate(map, temporary, ct);
+                Data.Require(Textures.CandidateCurrent(map, temporary, ct),
+                    "Candidate texture preparation did not pass verification. Please check the SD card.");
+                ct.ThrowIfCancellationRequested(); safeToRemove = false;
+                Commit(stage, game, new[] { name + ".ntx4" }); safeToRemove = true;
+            }
+            finally { if (safeToRemove && Directory.Exists(stage)) Directory.Delete(stage, true); }
+        }
         ct.ThrowIfCancellationRequested();
         Report("Installing the game launcher…", 97);
         if (hud != null) AtomicWrite(hudPath, hud);
@@ -296,7 +336,8 @@ public static class Installer
         bool dspPresent = File.Exists(dsp) && new FileInfo(dsp).Length > 0;
         if (!options.LauncherOnly)
             AtomicWrite(manifestPath, JsonSerializer.SerializeToUtf8Bytes(new { SetupVersion = 1, MapBuild = Data.Build,
-                Maps = names, LauncherSha256 = Data.Hash(executable), DspPresent = dspPresent }, new JsonSerializerOptions { WriteIndented = true }));
+                Maps = names, LauncherSha256 = Data.Hash(executable), DspPresent = dspPresent,
+                CandidateTextures = options.CandidateTextures }, new JsonSerializerOptions { WriteIndented = true }));
         Report("Ready to play", 100);
         return new(names.Count, pending.Count, names.Count - pending.Count, dspPresent, destination);
     }

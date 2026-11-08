@@ -1,25 +1,13 @@
-static float hologram_visibility(const float position[3],int sky)
+static float hologram_visibility(const float position[3],const struct generic_fog_constants *constants)
 {
     const struct render_fog *f=&global_window_parameters.fog;
-    float depth=0,plane=0,visible=1;
-    if(sky) return 1;
+    float depth=0,plane=0;
+    if(!constants->atmospheric && !constants->planar) return 1;
     for(int c=0;c<3;++c) {
         depth+=(position[c]-global_window_parameters.camera.position.n[c])*global_window_parameters.camera.forward.n[c];
         plane+=f->plane.n.n[c]*position[c];
     }
-    if(f->atmospheric_maximum_density>0) {
-        float range=f->atmospheric_maximum_distance-f->atmospheric_minimum_distance;assert(range>0);
-        visible*=1-PIN((depth-f->atmospheric_minimum_distance)/range,0.f,1.f)*PIN(f->atmospheric_maximum_density,0.f,1.f);
-    }
-    if(f->planar_mode && f->planar_maximum_density>0) {
-        assert(f->planar_maximum_distance>0 && f->planar_maximum_depth>0);
-        float x=PIN(1+(plane-f->plane.d)/f->planar_maximum_depth,0.f,1.f);
-        float y=PIN(1-depth/f->planar_maximum_distance,0.f,1.f);
-        float cp=plane3d_distance_to_point(&f->plane,&global_window_parameters.camera.position);
-        float q=1-MIN(1.f,x*x+y*y),r=1-y*y;
-        visible*=1-(q*q+(r*r-q*q)*PIN(-cp/f->planar_maximum_depth,0.f,1.f))*PIN(f->planar_maximum_density,0.f,1.f);
-    }
-    return visible;
+    return generic_fog_visibility(constants,depth,plane);
 }
 static void hologram_screen_rows(const struct native_generic_material *m,float rows[3][4],const float origin[3])
 {
@@ -43,12 +31,14 @@ static int hologram_model_draw(int kind,const struct native_generic_material *ba
 {
     if(!kind || !posed) return 0;
     float bounds[4]={1e30f,1e30f,-1e30f,-1e30f};
-    for(unsigned int i=0;i<count;++i) for(int a=0;a<2;++a) {
-        bounds[a]=MIN(bounds[a],posed[i].uv[a]);bounds[a+2]=MAX(bounds[a+2],posed[i].uv[a]);
-    }
-    for(int a=0;a<2;++a) if(bounds[a+2]-bounds[a]<.0001f) bounds[a+2]=bounds[a]+.0001f;
     void *mixture=NULL;
     if(kind==2) {
+        /* Only body consumes the third UV set and its stream-bake bounds.
+         * Hair uses texture1 and projected texture0; leave unused UVs zero. */
+        for(unsigned int i=0;i<count;++i) for(int a=0;a<2;++a) {
+            bounds[a]=MIN(bounds[a],posed[i].uv[a]);bounds[a+2]=MAX(bounds[a+2],posed[i].uv[a]);
+        }
+        for(int a=0;a<2;++a) if(bounds[a+2]-bounds[a]<.0001f) bounds[a+2]=bounds[a]+.0001f;
         /* Bake only lerp(streamA,streamB,body.a). Keep the full-resolution
          * body colour and noise out of this 8x8 animation approximation. */
         struct native_generic_material streams={0};streams.maps=3;streams.stages=1;
@@ -65,14 +55,15 @@ static int hologram_model_draw(int kind,const struct native_generic_material *ba
     if(!native.sky)n3ds_gpu_camera_origin(relative_origin);
     hologram_screen_rows(bake,rows,relative_origin);
     if(kind==2) memcpy(tint,bake->stage[1].constant[0],sizeof(tint));
+    const struct generic_fog_constants fog_constants=generic_fog_prepare(native.sky);
     for(unsigned int i=0;i<count;++i) {
         struct native_chicago_vertex *v=vertices+i;memset(v,0,sizeof(*v));
         memcpy(v->position,posed[i].position,sizeof(v->position));
         for(int a=0;a<2;++a) {
             const float *r=bake->transform[1][a];v->uv[1][a]=r[0]*posed[i].uv[0]+r[1]*posed[i].uv[1]+r[3];
-            v->uv[2][a]=(posed[i].uv[a]-bounds[a])/(bounds[a+2]-bounds[a]);
+            if(kind==2) v->uv[2][a]=(posed[i].uv[a]-bounds[a])/(bounds[a+2]-bounds[a]);
         }
-        float visibility=hologram_visibility(v->position,native.sky)*native.fade;
+        float visibility=hologram_visibility(v->position,&fog_constants)*native.fade;
         for(int c=0;c<3;++c)v->position[c]-=relative_origin[c];
         for(int c=0;c<4;++c) v->color[c]=visibility;
     }

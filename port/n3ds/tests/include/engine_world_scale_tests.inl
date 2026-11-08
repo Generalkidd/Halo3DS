@@ -72,7 +72,7 @@ int n3ds_gpu_world_scale_tests(void)
  for(int i=0;i<300;++i)if(resolution_policy_step(&policy,14,5,0)!=1)goto done;
  for(int i=0;i<150;++i)resolution_policy_step(&policy,14,5,0);
  if(policy.level || policy.trial)goto done;
- for(int test=0;test<4;++test){
+ for(int test=0;test<WORLD_SCALE_COUNT;++test){
   world_budget_enabled=0;
   if(!n3ds_gpu_frame_begin())goto done;active=1;
   world_budget_enabled=1;world_scale=test;n3ds_gpu_world_view_begin();
@@ -121,6 +121,6 @@ int n3ds_gpu_world_scale_tests(void)
  n3ds_gpu_screen_effect(NULL);n3ds_gpu_world_view_begin();if(world_low_active)goto done;
  ok=1;n3ds_log("PASS: native green/brightness/video resolve, full-resolution unfiltered HUD, filter-off direct rendering");
  n3ds_log("PASS: Original resolution: 320 baseline, CPU-render trials without GPU waits, measured benefit, simulation/stall protection, recovery/backoff; RGB565 resolve preserves HUD");
- n3ds_log("PASS: 28fps resolution policy: CPU-bound and transient protection, timed drop/recovery, failed-trial rollback and cooldown; three resolutions preserve quadrants and full-resolution overlay");
+ n3ds_log("PASS: 28fps resolution policy: CPU-bound and transient protection, timed drop/recovery, failed-trial rollback and cooldown; all scaled viewports preserve quadrants and full-resolution overlay");
  done:if(active)n3ds_gpu_present();if(!n3ds_gpu_texture_barrier())abort();world_scale_dispose();n3ds_gpu_texture_destroy(white);linearFree(a);linearFree(b);return !ok;
 }

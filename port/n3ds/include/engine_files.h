@@ -5,6 +5,8 @@ struct native_file_info { unsigned int size, date[2]; int directory, readonly; }
 _Static_assert(sizeof(struct native_file_info)==20,"Native file metadata ABI");
 void n3ds_files_lock(void);
 void n3ds_files_unlock(void);
+void n3ds_map_stream_lock(void);
+void n3ds_map_stream_unlock(void);
 void n3ds_files_thread_exit(void);
 int n3ds_files_path_in_use(const char *path);
 int n3ds_file_resolve(const char *xbox_path, char *native_path, unsigned int capacity, int write);

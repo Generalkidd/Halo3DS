@@ -1293,7 +1293,7 @@ static void create_ghost_effect(
 					marker_points[3] = midpoint;
 					marker_names[3] = "midpoint";
 
-					reflect_vector3d(&direction, &collision.plane.n, &marker_forwards[3]);
+					marker_forwards[3] = marker_forwards[2];
 
 					effect_new_unattached_from_markers(definition->effect.index, NONE, NULL, 4,
 						marker_names, marker_points, marker_forwards, scale, scale,
@@ -1836,8 +1836,6 @@ static void create_slipping_effects(
 		for (mass_point_index = 0; mass_point_index<physics->mass_points.count; mass_point_index++)
 		{
 			struct mass_point_datum *mass_point = &mass_points[mass_point_index];
-			struct physics_mass_point_definition *mass_point_definition = TAG_BLOCK_GET_ELEMENT(
-				&physics->mass_points, mass_point_index, struct physics_mass_point_definition);
 
 			if (TEST_FLAG(mass_point->flags, 1))
 			{
@@ -1845,6 +1843,9 @@ static void create_slipping_effects(
 
 				if (speed>0.03f)
 				{
+					/* Definition fields are consumed only by emitted slip effects. */
+					struct physics_mass_point_definition *mass_point_definition = TAG_BLOCK_GET_ELEMENT(
+						&physics->mass_points, mass_point_index, struct physics_mass_point_definition);
 					real scale = (speed-0.03f)*4.5454545f;
 					real depth = mass_point->ground_depth-mass_point_definition->unknown68+0.003f;
 					real_point3d position;

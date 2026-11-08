@@ -69,6 +69,9 @@ symbols in this file:
 #include "scenario/scenario.h"
 #include "units/vehicle_definitions.h"
 #include "units/vehicles.h"
+#ifdef HALO_N3DS
+#include "engine_input.h"
+#endif
 
 /* ---------- constants */
 
@@ -309,6 +312,48 @@ void input_abstraction_update_device_changes(
 	return;
 }
 
+static real normalize_stick(point2d raw, real_point2d *normalized)
+{
+	real angle = arctangent(raw.y, raw.x);
+	real scale = 1.0 / MAX(fabs(sine(angle)), fabs(cosine(angle)));
+	normalized->x = PIN(raw.x * gamepad_axis_normalization_scale * scale, -1.f, 1.f);
+	normalized->y = PIN(raw.y * gamepad_axis_normalization_scale * scale, -1.f, 1.f);
+	return angle;
+}
+
+static void snap_legacy_stick(real_point2d *stick, real angle, double snap_angle)
+{
+	short quadrant = (stick->x < 0.f ? 1 : 0) | (stick->y < 0.f ? 2 : 0);
+	real difference = angle - stick_direction_angles[quadrant];
+	real magnitude = square_root(stick->x * stick->x + stick->y * stick->y);
+	real x = (stick->x < 0.f ? -1 : 1) * magnitude;
+	real y = (stick->y < 0.f ? -1 : 1) * magnitude;
+	if (fabs(difference) < snap_angle)
+	{
+		real absolute_angle = fabs(angle);
+		if (absolute_angle < STICK_DIAGONAL_ANGLE || absolute_angle > STICK_SECOND_QUADRANT_DIAGONAL_ANGLE)
+		{
+			stick->x = x;
+			stick->y = y * (1.0 - fabs(difference) * STICK_DIAGONAL_BLEND_SCALE);
+		}
+		else
+		{
+			stick->y = y;
+			stick->x = x * (1.0 - fabs(difference) * STICK_DIAGONAL_BLEND_SCALE);
+		}
+	}
+	else if (fabs(stick->x) > fabs(stick->y))
+	{
+		stick->x = x;
+		stick->y = 0.f;
+	}
+	else
+	{
+		stick->y = y;
+		stick->x = 0.f;
+	}
+}
+
 void input_abstraction_update(
 	void)
 {
@@ -331,104 +376,56 @@ void input_abstraction_update(
 			real_point2d right_stick;
 			long control_index;
 			boolean invert_look;
+			short joystick_controls = input_abstraction_globals.player_control_preferences[controller_index].joystick_controls;
+			point2d raw_right = gamepad->sticks[_gamepad_stick_right];
+			boolean dpad_can_aim = TRUE;
+#ifdef HALO_N3DS
+			static const unsigned int cstick_look_axes[NUMBER_OF_JOYSTICK_CONTROLS] = {
+				[_joystick_controls_default] = NATIVE_AIM_BOTH,
+				[_joystick_controls_southpaw] = 0,
+				[_joystick_controls_legacy] = NATIVE_AIM_Y,
+				[_joystick_controls_legacy_southpaw] = NATIVE_AIM_X,
+			};
+			unsigned int right_look_axes = NATIVE_AIM_BOTH;
+			point2d raw_right_look = {0};
+			point2d touch_look = {0};
+			if (controller_index == 0 && joystick_controls >= 0 && joystick_controls < NUMBER_OF_JOYSTICK_CONTROLS)
+			{
+				right_look_axes = cstick_look_axes[joystick_controls];
+				n3ds_input_player_aim(right_look_axes, &raw_right, &raw_right_look, &touch_look);
+			}
+			/* Native bindings name these actions as movement, including with a
+			 * legacy Xbox stick preset that normally makes the D-pad aim. */
+			dpad_can_aim = controller_index != 0 || !n3ds_input_gameplay_controls_active();
+#endif
 
 			player_look_yaw_rate[controller_index] = input_abstraction_globals.player_control_preferences[controller_index].yaw_rate;
 			player_look_pitch_rate[controller_index] = input_abstraction_globals.player_control_preferences[controller_index].pitch_rate;
-			{
-				real scale;
-
-				left_angle = arctangent(gamepad->sticks[_gamepad_stick_left].y, gamepad->sticks[_gamepad_stick_left].x);
-				scale = 1.0 / MAX(fabs(sine(left_angle)), fabs(cosine(left_angle)));
-				left_stick.x = PIN(gamepad->sticks[_gamepad_stick_left].x * gamepad_axis_normalization_scale * scale, -1.f, 1.f);
-				left_stick.y = PIN(gamepad->sticks[_gamepad_stick_left].y * gamepad_axis_normalization_scale * scale, -1.f, 1.f);
-			}
-			{
-				real scale;
-
-				right_angle = arctangent(gamepad->sticks[_gamepad_stick_right].y, gamepad->sticks[_gamepad_stick_right].x);
-				scale = 1.0 / MAX(fabs(sine(right_angle)), fabs(cosine(right_angle)));
-				right_stick.x = PIN(gamepad->sticks[_gamepad_stick_right].x * gamepad_axis_normalization_scale * scale, -1.f, 1.f);
-				right_stick.y = PIN(gamepad->sticks[_gamepad_stick_right].y * gamepad_axis_normalization_scale * scale, -1.f, 1.f);
-			}
+			left_angle = normalize_stick(gamepad->sticks[_gamepad_stick_left], &left_stick);
+			right_angle = normalize_stick(raw_right, &right_stick);
 			for (control_index = 0; control_index < NUMBER_OF_GAME_CONTROLS; control_index++)
 			{
 				state->buttons[control_index] =
 					gamepad->buttons[input_abstraction_globals.player_control_preferences[controller_index].game_control_to_xbox_buttons[control_index]];
 			}
 
-			if (input_abstraction_globals.player_control_preferences[controller_index].joystick_controls == _joystick_controls_legacy ||
-				input_abstraction_globals.player_control_preferences[controller_index].joystick_controls == _joystick_controls_legacy_southpaw)
+			if (joystick_controls == _joystick_controls_legacy || joystick_controls == _joystick_controls_legacy_southpaw)
 			{
-				short left_quadrant = (left_stick.x < 0.f ? 1 : 0) | (left_stick.y < 0.f ? 2 : 0);
-				short right_quadrant = (right_stick.x < 0.f ? 1 : 0) | (right_stick.y < 0.f ? 2 : 0);
-				real left_difference = left_angle - stick_direction_angles[left_quadrant];
-				real right_difference = right_angle - stick_direction_angles[right_quadrant];
-				real left_magnitude = square_root(left_stick.x * left_stick.x + left_stick.y * left_stick.y);
-				real right_magnitude = square_root(right_stick.x * right_stick.x + right_stick.y * right_stick.y);
-
-				if (fabs(left_difference) < LEFT_STICK_DIAGONAL_SNAP_ANGLE)
+				snap_legacy_stick(&left_stick, left_angle, LEFT_STICK_DIAGONAL_SNAP_ANGLE);
+				snap_legacy_stick(&right_stick, right_angle, RIGHT_STICK_DIAGONAL_SNAP_ANGLE);
+#ifdef HALO_N3DS
+				/* Diagonal normalization and snap use both axes. Keep the
+				 * movement result from the original stick before tuning look. */
+				if (right_look_axes != NATIVE_AIM_BOTH &&
+					(raw_right_look.x != raw_right.x || raw_right_look.y != raw_right.y))
 				{
-					real absolute_angle = fabs(left_angle);
-
-					if (absolute_angle < STICK_DIAGONAL_ANGLE ||
-						absolute_angle > STICK_SECOND_QUADRANT_DIAGONAL_ANGLE)
-					{
-						left_stick.x = (left_stick.x < 0.f ? -1 : 1) * left_magnitude;
-						left_stick.y = (left_stick.y < 0.f ? -1 : 1) * left_magnitude *
-							(1.0 - fabs(left_difference) * STICK_DIAGONAL_BLEND_SCALE);
-					}
-					else
-					{
-						left_stick.y = (left_stick.y < 0.f ? -1 : 1) * left_magnitude;
-						left_stick.x = (left_stick.x < 0.f ? -1 : 1) * left_magnitude *
-							(1.0 - fabs(left_difference) * STICK_DIAGONAL_BLEND_SCALE);
-					}
+					real_point2d tuned;
+					real angle = normalize_stick(raw_right_look, &tuned);
+					snap_legacy_stick(&tuned, angle, RIGHT_STICK_DIAGONAL_SNAP_ANGLE);
+					if (right_look_axes & NATIVE_AIM_X) right_stick.x = tuned.x;
+					if (right_look_axes & NATIVE_AIM_Y) right_stick.y = tuned.y;
 				}
-				else
-				{
-					if (fabs(left_stick.x) > fabs(left_stick.y))
-					{
-						left_stick.x = (left_stick.x < 0.f ? -1 : 1) * left_magnitude;
-						left_stick.y = 0.f;
-					}
-					else
-					{
-						left_stick.y = (left_stick.y < 0.f ? -1 : 1) * left_magnitude;
-						left_stick.x = 0.f;
-					}
-				}
-
-				if (fabs(right_difference) < RIGHT_STICK_DIAGONAL_SNAP_ANGLE)
-				{
-					real absolute_angle = fabs(right_angle);
-
-					if (absolute_angle < STICK_DIAGONAL_ANGLE ||
-						absolute_angle > STICK_SECOND_QUADRANT_DIAGONAL_ANGLE)
-					{
-						right_stick.x = (right_stick.x < 0.f ? -1 : 1) * right_magnitude;
-						right_stick.y = (right_stick.y < 0.f ? -1 : 1) * right_magnitude *
-							(1.0 - fabs(right_difference) * STICK_DIAGONAL_BLEND_SCALE);
-					}
-					else
-					{
-						right_stick.y = (right_stick.y < 0.f ? -1 : 1) * right_magnitude;
-						right_stick.x = (right_stick.x < 0.f ? -1 : 1) * right_magnitude *
-							(1.0 - fabs(right_difference) * STICK_DIAGONAL_BLEND_SCALE);
-					}
-				}
-				else
-				{
-					if (fabs(right_stick.x) > fabs(right_stick.y))
-					{
-						right_stick.x = (right_stick.x < 0.f ? -1 : 1) * right_magnitude;
-						right_stick.y = 0.f;
-					}
-					else
-					{
-						right_stick.y = (right_stick.y < 0.f ? -1 : 1) * right_magnitude;
-						right_stick.x = 0.f;
-					}
-				}
+#endif
 			}
 
 			invert_look = input_abstraction_globals.player_control_preferences[controller_index].invert_look;
@@ -436,7 +433,7 @@ void input_abstraction_update(
 			{
 				invert_look = local_player_is_piloting_aircraft((short)controller_index);
 			}
-			switch (input_abstraction_globals.player_control_preferences[controller_index].joystick_controls)
+			switch (joystick_controls)
 			{
 				case _joystick_controls_default:
 					if (gamepad->buttons[_gamepad_binary_button_dpad_left])
@@ -467,11 +464,11 @@ void input_abstraction_update(
 					state->pitch = (invert_look ? -1.f : 1.f) * right_stick.y;
 					break;
 				case _joystick_controls_southpaw:
-					if (gamepad->buttons[_gamepad_binary_button_dpad_left])
+					if (dpad_can_aim && gamepad->buttons[_gamepad_binary_button_dpad_left])
 					{
 						state->yaw = 1.f;
 					}
-					else if (gamepad->buttons[_gamepad_binary_button_dpad_right])
+					else if (dpad_can_aim && gamepad->buttons[_gamepad_binary_button_dpad_right])
 					{
 						state->yaw = -1.f;
 					}
@@ -479,11 +476,11 @@ void input_abstraction_update(
 					{
 						state->yaw = -left_stick.x;
 					}
-					if (gamepad->buttons[_gamepad_binary_button_dpad_up])
+					if (dpad_can_aim && gamepad->buttons[_gamepad_binary_button_dpad_up])
 					{
 						state->pitch = invert_look ? -1.f : 1.f;
 					}
-					else if (gamepad->buttons[_gamepad_binary_button_dpad_down])
+					else if (dpad_can_aim && gamepad->buttons[_gamepad_binary_button_dpad_down])
 					{
 						state->pitch = invert_look ? 1.f : -1.f;
 					}
@@ -495,11 +492,11 @@ void input_abstraction_update(
 					state->strafe = -right_stick.x;
 					break;
 				case _joystick_controls_legacy:
-					if (gamepad->buttons[_gamepad_binary_button_dpad_left])
+					if (dpad_can_aim && gamepad->buttons[_gamepad_binary_button_dpad_left])
 					{
 						state->yaw = 1.f;
 					}
-					else if (gamepad->buttons[_gamepad_binary_button_dpad_right])
+					else if (dpad_can_aim && gamepad->buttons[_gamepad_binary_button_dpad_right])
 					{
 						state->yaw = -1.f;
 					}
@@ -535,11 +532,11 @@ void input_abstraction_update(
 					{
 						state->strafe = -left_stick.x;
 					}
-					if (gamepad->buttons[_gamepad_binary_button_dpad_up])
+					if (dpad_can_aim && gamepad->buttons[_gamepad_binary_button_dpad_up])
 					{
 						state->pitch = invert_look ? -1.f : 1.f;
 					}
-					else if (gamepad->buttons[_gamepad_binary_button_dpad_down])
+					else if (dpad_can_aim && gamepad->buttons[_gamepad_binary_button_dpad_down])
 					{
 						state->pitch = invert_look ? 1.f : -1.f;
 					}
@@ -554,6 +551,27 @@ void input_abstraction_update(
 					error(_error_silent, "unknown joystick preset");
 					break;
 			}
+#ifdef HALO_N3DS
+			if (touch_look.x || touch_look.y)
+			{
+				real_point2d drag;
+				unsigned int snapped_axes = (right_stick.x ? NATIVE_AIM_X : 0) |
+					(right_stick.y ? NATIVE_AIM_Y : 0);
+				n3ds_input_resolve_aim_sources(right_look_axes & snapped_axes);
+				normalize_stick(touch_look, &drag);
+				/* A legacy stick can serve movement and aim at once. Add the
+				 * drag after its snap so touch cannot affect either move axis. */
+				if (touch_look.x) state->yaw = PIN(state->yaw - drag.x, -1.f, 1.f);
+				if (touch_look.y) state->pitch = PIN(state->pitch + (invert_look ? -drag.y : drag.y), -1.f, 1.f);
+			}
+			if (!dpad_can_aim && joystick_controls != _joystick_controls_default)
+			{
+				if (gamepad->buttons[_gamepad_binary_button_dpad_left]) state->strafe = 1.f;
+				else if (gamepad->buttons[_gamepad_binary_button_dpad_right]) state->strafe = -1.f;
+				if (gamepad->buttons[_gamepad_binary_button_dpad_up]) state->forward_movement = 1.f;
+				else if (gamepad->buttons[_gamepad_binary_button_dpad_down]) state->forward_movement = -1.f;
+			}
+#endif
 			input_abstraction_globals.controller_available[controller_index] = TRUE;
 		}
 		else

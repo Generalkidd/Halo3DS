@@ -997,6 +997,46 @@ static boolean firing_position_compare(
 	return FALSE;
 }
 
+#ifdef HALO_N3DS
+static void firing_position_sort(long *indices, short count)
+{
+	if (count > 8)
+	{
+		const struct firing_position *first = &global_temporary_sort_firing_position_array[indices[0]];
+		short i;
+		unsigned int score_bits;
+		memcpy(&score_bits, &first->evaluation, sizeof(score_bits));
+		if ((score_bits & 0x7f800000u) == 0x7f800000u) goto general_sort;
+		for (i = 1; i < count; ++i)
+		{
+			const struct firing_position *position = &global_temporary_sort_firing_position_array[indices[i]];
+			if (position->valid != first->valid || position->rejected != first->rejected ||
+				position->evaluation != first->evaluation)
+				goto general_sort;
+		}
+		/* Reproduce qsort_4byte's exact all-equal permutation, including its
+		 * cutoff-eight selection swaps. AI consumes tie order, so a stable
+		 * sort or leaving the input untouched would change its choices. */
+		for (i = count - 1; i >= 8; --i)
+		{
+			long temporary = indices[(i + 1) >> 1];
+			indices[(i + 1) >> 1] = indices[0];
+			indices[0] = indices[i];
+			indices[i] = temporary;
+		}
+		for (; i > 0; --i)
+		{
+			long temporary = indices[0];
+			indices[0] = indices[i];
+			indices[i] = temporary;
+		}
+		return;
+	}
+general_sort:
+	qsort_4byte(indices, count, firing_position_compare);
+}
+#endif
+
 /* ---------- public code */
 
 long actor_get_firing_position_group(
@@ -2361,7 +2401,11 @@ short actor_select_firing_position(
 				}
 				global_temporary_sort_firing_position_count= firing_position_count;
 				global_temporary_sort_firing_position_array= firing_positions;
+#ifdef HALO_N3DS
+				firing_position_sort(sorted_indices, firing_position_count);
+#else
 				qsort_4byte(sorted_indices, firing_position_count, firing_position_compare);
+#endif
 				evaluation_context->post_evaluation_bounded= firing_positions_get_post_evaluation_bound(actor_index, evaluation_context);
 
 				for (index= 0; index<firing_position_count; index++)

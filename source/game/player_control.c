@@ -1314,6 +1314,16 @@ static void get_local_player_input_blob(
 					input->unit_control_flags,
 					_unit_control_action_bit,
 					effective_buttons[_button_action_reload]);
+#ifdef HALO_N3DS
+				/* The touch button requests reload without the physical
+				 * action button's use and hold-to-swap behavior. */
+				if (gamepad_index == 0 &&
+					!TEST_FLAG(control->inhibited_button_bit_vector, _button_action_reload) &&
+					n3ds_input_touch_reload_pressed())
+				{
+					SET_FLAG(input->unit_control_flags, _unit_control_weapon_reload_bit, TRUE);
+				}
+#endif
 				SET_FLAG(
 					input->unit_control_flags,
 					_unit_control_swap_weapons_bit,

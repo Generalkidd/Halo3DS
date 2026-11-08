@@ -29,6 +29,10 @@ symbols in this file:
 #include "tag_files/tag_groups.h"
 #include "units/unit_definitions.h"
 #include "units/units.h"
+#ifdef HALO_N3DS
+#include "engine_presentation.h"
+#include "engine_algorithm_profile.h"
+#endif
 
 /* ---------- constants */
 
@@ -37,6 +41,9 @@ enum
 	MAXIMUM_RENDERED_PARTICLES = 1024,
 	MAXIMUM_RENDERED_PARTICLE_GROUPS = 512,
 };
+#if defined(HALO_N3DS) && HALO_N3DS_ALGO_MIDPOINT_PARTICLES != N3DS_ALGORITHM_REFERENCE
+#include "engine_presentation_particles.inl"
+#endif
 
 /* ---------- macros */
 
@@ -140,6 +147,10 @@ void render_particles(
 	struct build_sprite_data sprite_data;
 	real_point3d position;
 	real_vector3d direction;
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+	extern int n3ds_presentation_midpoint_active(void);
+	int midpoint = n3ds_presentation_midpoint_active();
+#endif
 
 	rendered_particle_count = 0;
 	profile_enter(render_particles_section);
@@ -276,14 +287,24 @@ void render_particles(
                         unsigned int native_slot=(unsigned short)rendered_particle->particle_index;
                         if(particle->object_index==NONE && ((native_dense &&
                            (native_original?(native_slot&3)!=0:(native_slot&3)==3)) || native_draw_count>=native_draw_cap)) {
-                            particle->last_rendered_frame_index=render.frame_index;
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+                            if(!midpoint)
+#endif
+                                particle->last_rendered_frame_index=render.frame_index;
                             ++native_omitted;++rendered_particle;continue;
                         }
                         ++native_selected;if(particle->object_index==NONE)++native_draw_count;
 #endif
-						real radius =
-							particle_get_radius(rendered_particle->particle_index);
+                        real radius =
+#ifdef HALO_N3DS
+                            particle_radius_from_data(particle, definition);
+#else
+                            particle_get_radius(rendered_particle->particle_index);
+#endif
 
+#if defined(HALO_N3DS) && HALO_N3DS_ALGO_MIDPOINT_PARTICLES != N3DS_ALGORITHM_REFERENCE
+						real_matrix4x3 const *midpoint_parent = NULL;
+#endif
 						if (particle->object_index != NONE)
 						{
 							real_matrix4x3 const *node_matrix;
@@ -302,10 +323,17 @@ void render_particles(
 								node_matrix = object_get_node_matrix(
 									particle->object_index,
 									particle->node_index);
+#if defined(HALO_N3DS) && HALO_N3DS_ALGO_MIDPOINT_PARTICLES != N3DS_ALGORITHM_REFERENCE
+								if (midpoint)
+									midpoint_parent = native_particle_midpoint_parent(native_slot, particle);
+#endif
 							}
 							else
 							{
-								particle_delete(rendered_particle->particle_index);
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+								if(!midpoint)
+#endif
+									particle_delete(rendered_particle->particle_index);
 								rendered_particle++;
 								continue;
 							}
@@ -385,6 +413,24 @@ void render_particles(
 										particle_flags,
 										_particle_datum_v_mirror_bit));
 
+#if defined(HALO_N3DS) && HALO_N3DS_ALGO_MIDPOINT_PARTICLES != N3DS_ALGORITHM_REFERENCE
+								if(midpoint) {
+									int interpolated;
+									/* Keep existing visibility and LOD admission. Only the
+									 * admitted sprite follows its accepted parent draw. */
+									if (midpoint_parent)
+									{
+										matrix4x3_transform_point(midpoint_parent, &particle->position, &position);
+										matrix4x3_transform_normal(midpoint_parent, &particle->direction, &direction);
+										interpolated = TRUE;
+									}
+									else
+										interpolated = particle->object_index == NONE &&
+											native_particle_midpoint(native_slot, particle, &position);
+									n3ds_algorithm_profile_add(N3DS_ALG_CPU_PARTICLE_INTERPOLATED,interpolated);
+									n3ds_algorithm_profile_add(N3DS_ALG_CPU_PARTICLE_HOLD,!interpolated);
+								}
+#endif
 								build_sprite(
 									&sprite_data,
 									definition->sprite_orientation,
@@ -398,8 +444,10 @@ void render_particles(
 									fade,
 									flags);
 
-								particle->last_rendered_frame_index =
-									render.frame_index;
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+								if (!midpoint)
+#endif
+									particle->last_rendered_frame_index = render.frame_index;
 							}
 						}
 
@@ -408,12 +456,15 @@ void render_particles(
 
 					/* Native thinning/LOD can leave an empty group. Do not
 					 * feed a NaN radius into later material processing. */
-					((struct shader_effect_definition *)sprite_data.shader)->
-						secondary_map_radius =
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+					if (!midpoint)
+#endif
+						((struct shader_effect_definition *)sprite_data.shader)->
+							secondary_map_radius =
 #ifdef HALO_N3DS
-						built_particle_count ? total_radius / built_particle_count : 0.f;
+							built_particle_count ? total_radius / built_particle_count : 0.f;
 #else
-                        total_radius / built_particle_count;
+							total_radius / built_particle_count;
 #endif
 					build_sprites_end(&sprite_data);
 				}

@@ -4,6 +4,7 @@
 #include "rasterizer/rasterizer_debug_options.h"
 #include "engine_renderer.h"
 #include "engine_text.h"
+#include "engine_presentation.h"
 
 extern struct rasterizer_window_begin_parameters global_window_parameters;
 boolean rasterizer_set_texture_bitmap_data(short stage,const struct bitmap_data *bitmap);
@@ -32,7 +33,9 @@ void rasterizer_text_begin(const struct rasterizer_dynamic_screen_geometry_param
         rgba=channel(t->red)|channel(t->green)<<8|channel(t->blue)<<16|0xff000000U;
     }
     if(input->map_fade[0]) rgba=(rgba&0xffffffU)|(channel(*input->map_fade[0])<<24);
-    assert(rasterizer_set_texture_bitmap_data(0,input->map[0]));
+    boolean bound=rasterizer_set_texture_bitmap_data(0,input->map[0]);
+    if(!bound && n3ds_presentation_midpoint_rejected()) return;
+    assert(bound);
     {
         const rectangle2d *bounds=&global_window_parameters.camera.viewport_bounds;
         assert(n3ds_gpu_text_begin(bounds->x1-bounds->x0,bounds->y1-bounds->y0,rgba,input->point_sampled,input->map_wrapped[0]));
@@ -43,7 +46,7 @@ void rasterizer_text_begin(const struct rasterizer_dynamic_screen_geometry_param
 void rasterizer_text_draw_character(const struct dynamic_screen_vertex *vertices)
 {
     struct native_text_vertex output[4];
-    if(!active) return;
+    if(!active || n3ds_presentation_midpoint_rejected()) return;
     assert(vertices && n3ds_engine_window_active());
     for(unsigned int i=0;i<4;++i) {
         real x=vertices[i].position.x,y=vertices[i].position.y;

@@ -826,10 +826,17 @@ void lights_preprocess_scene(
 	short rendered_cluster_index;
 	short scene_light_index;
 	short queued_lens_flare_index;
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+	extern int n3ds_presentation_midpoint_active(void);
+	int midpoint = n3ds_presentation_midpoint_active();
+#endif
 
 	profile_enter(lights_section);
 	debug_rasterizer_light_count = 0;
 	for (light_index = data_next_index(light_data, NONE);
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+		!midpoint &&
+#endif
 		light_index != NONE;
 		light_index = data_next_index(light_data, light_index))
 	{
@@ -898,6 +905,23 @@ void lights_preprocess_scene(
 		real intensity;
 		real inverse_intensity;
 		real lens_flare_scale = 1.0f;
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+		struct light_datum preview;
+		if (midpoint)
+		{
+			/* Expired transient lights stay allocated until the keyframe. */
+			if (light->parent_light_index != NONE &&
+				(real)(current_time - light->parent_light_index) > definition->transition_duration)
+				continue;
+
+			/* Native rendering consumes the submitted packets. Keep the light's
+			 * gameplay color and attachment unchanged for the keyframe. */
+			preview = *light;
+			light = &preview;
+			SET_FLAG(light->flags, _point_light_attached_to_first_person_weapon_bit, FALSE);
+			light->rasterizer_light_index = NONE;
+		}
+#endif
 
 		render_debug_light(scene_light_handle);
 		object = light->object_index != NONE

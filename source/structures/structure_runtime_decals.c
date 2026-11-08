@@ -83,6 +83,11 @@ void structure_decals_reconnect_to_structure_bsp(
 	return;
 }
 
+boolean structure_decals_reconnect_pending(void)
+{
+	return structure_decals_globals->reconnect_to_structure_bsp;
+}
+
 void structure_decals_disconnect_from_structure_bsp(
 	void)
 {

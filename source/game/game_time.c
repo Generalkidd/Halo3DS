@@ -71,6 +71,11 @@ symbols in this file:
 #include "real_math.h"
 #include "game.h"
 #include "player_queues_new.h"
+#ifdef HALO_N3DS
+#include "engine_action_replay.h"
+#include "engine_algorithm_profile.h"
+#include "engine_dependency_trace.h"
+#endif
 
 /* ---------- constants */
 
@@ -590,12 +595,29 @@ void game_time_update(
 					server_updates = final_server_time - game_time_globals->server_time;
 					for (update_index = 0; update_index < server_updates; update_index++)
 					{
+						#ifdef HALO_N3DS
+						if (!n3ds_action_replay_begin_tick(game_time_globals->local_time))
+							return;
+						n3ds_algorithm_profile_tick(game_time_globals->local_time);
+						n3ds_trace_tick(game_time_globals->local_time);
+						n3ds_trace_event(N3DS_TRACE_TICK_BEGIN,0,0);
+						#endif
 						game_tick();
+						#ifdef HALO_N3DS
+						n3ds_action_replay_end_tick();
+						n3ds_trace_event(N3DS_TRACE_TICK_END,0,0);
+						if (n3ds_action_replay_failed())
+							return;
+						#endif
 #ifdef HALO_LINUX
 						render_interpolation_tick();
 #endif
 						game_time_globals->server_time++;
 						game_time_globals->local_time++;
+						#ifdef HALO_N3DS
+						if (n3ds_action_replay_should_exit())
+							return;
+						#endif
 					}
 				}
 				else
@@ -610,7 +632,15 @@ void game_time_update(
 			}
 		}
 
+		#ifdef HALO_N3DS
+		n3ds_algorithm_profile_tick(game_time_globals->local_time);
+		n3ds_trace_tick(game_time_globals->local_time);
+		n3ds_trace_event(N3DS_TRACE_FRAME_UPDATE_BEGIN,0,0);
+		#endif
 		game_frame(game_time_get_speed()*time_delta_sec);
+		#ifdef HALO_N3DS
+		n3ds_trace_event(N3DS_TRACE_FRAME_UPDATE_END,0,0);
+		#endif
 	}
 	else
 	{

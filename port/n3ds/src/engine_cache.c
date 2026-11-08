@@ -2,7 +2,11 @@
 #include "cache_reader.h"
 #include "cache_build_compatibility.h"
 #include "engine_cache.h"
+#include "engine_files.h"
+#include "engine_renderer_features.h"
 #include "engine_textures.h"
+#include "engine_algorithm_profile.h"
+#include "engine_dependency_trace.h"
 #include "cache_files.h"
 #include "crc.h"
 #include "data.h"
@@ -140,6 +144,7 @@ static int relocate(struct n3ds_cache_view *view, const char *path, const struct
     /* Validate every patch before changing any map bytes. Records include the
      * old word so a stale sidecar or duplicate/overlapping patch is rejected. */
     if (apply_records(view, records, header.count, global)) goto done;
+    view->source_tags_crc = (unsigned int)header.data_crc;
     view->xbox_base = (unsigned long)view->tags;
     if (!global) view->instances = view->tag_header->tag_instances;
     result = 0;
@@ -230,13 +235,11 @@ static int load_bsp(struct n3ds_cache_view *bsp, const struct n3ds_cache_view *g
 static struct n3ds_cache_view native_tags, native_bsp;
 static struct scenario_structure_bsp_reference *native_reference;
 static char native_map[128], native_name[32];
-/* Use the native file service's recursive lock for compound seek/read and map
- * lifetime operations; FILE remains opaque across the engine/platform ABI. */
+/* Keep seek/read, publication and close under the private map stream lock.
+ * Checkpoint I/O uses a different stream and does not need this cursor. */
 static FILE *native_read_stream;
 static unsigned int native_stream_opens,native_stream_reads,native_stream_bytes;
 void n3ds_log(const char *message);
-void n3ds_files_lock(void);
-void n3ds_files_unlock(void);
 static unsigned int native_cache_generation,native_tag_generation;
 unsigned int n3ds_engine_tag_generation(void) {return native_tag_generation;}
 unsigned int n3ds_engine_cache_generation(void) { return native_cache_generation; }
@@ -326,13 +329,22 @@ long n3ds_engine_tags_load(const char *name)
     struct n3ds_cache_view candidate={0};
     char path[128],base[32];
     if(native_tags.tags || load_tag_candidate(name,&candidate,path,base)) return NONE;
+    n3ds_map_stream_lock();
+    assert(!native_read_stream);
     native_tags = candidate;
-    cache_generation_advance();++native_tag_generation;
     strcpy(native_map, path);
     strcpy(native_name, base);
-    assert(!native_read_stream);
     native_stream_opens=native_stream_reads=native_stream_bytes=0;
+    n3ds_map_stream_unlock();
+    cache_generation_advance();++native_tag_generation;
+    n3ds_algorithm_profile_location(native_cache_generation,NONE);
+    n3ds_trace_location(native_cache_generation,NONE);
+#if HALO_N3DS_GEOMETRY_SOURCE == N3DS_GEOMETRY_SOURCE_COOKED
+    extern void n3ds_model_geometry_load(const char *,const struct n3ds_cache_view *);
+    n3ds_model_geometry_load(native_name,&native_tags);
+#endif
     cache_files_bind_native(&native_tags.header, native_tags.tag_header);
+    n3ds_engine_world_texture_map_loaded();
     return native_tags.tag_header->scenario_tag_index;
 }
 
@@ -364,6 +376,8 @@ boolean n3ds_engine_bsp_load(struct scenario_structure_bsp_reference *reference)
         !n3ds_cache_resolve(&candidate, header->base_address, sizeof(struct structure_bsp))) goto fail;
     native_bsp = candidate;
     cache_generation_advance();
+    n3ds_algorithm_profile_location(native_cache_generation,(int)index);
+    n3ds_trace_location(native_cache_generation,(int)index);
     native_reference = reference;
     cache_files_bind_native_bsp(header, reference->structure_bsp.index);
     bsp_prefetch_next(references,count,index,native_map);
@@ -382,6 +396,8 @@ void n3ds_engine_bsp_unload(struct scenario_structure_bsp_reference *reference)
     cache_files_bind_native_bsp(NULL, reference->structure_bsp.index);
     native_reference = NULL;
     cache_generation_advance();
+    n3ds_algorithm_profile_location(native_cache_generation,NONE);
+    n3ds_trace_location(native_cache_generation,NONE);
     bsp_close(&native_bsp);
 }
 
@@ -403,15 +419,17 @@ void n3ds_engine_tags_unload(void)
     n3ds_cache_close(&bsp_arena);bsp_arena_attempted=0;bsp_reads_clear();
     extern void n3ds_gpu_model_cache_release(void);
     n3ds_gpu_model_cache_release();
-    n3ds_files_lock();
+    n3ds_map_stream_lock();
     if(native_read_stream) {
         int closed=!fclose(native_read_stream);native_read_stream=NULL;assert(closed);
         char message[160];snprintf(message,sizeof(message),"MAP READ STREAM: opens=%u reads=%u bytes=%u closed=%d",native_stream_opens,native_stream_reads,native_stream_bytes,closed);n3ds_log(message);
     }
     if (native_tags.tags) {++native_tag_generation;cache_generation_advance();cache_files_bind_native(NULL, NULL);}
     n3ds_cache_close(&native_tags);
+    n3ds_algorithm_profile_location(native_cache_generation,NONE);
+    n3ds_trace_location(native_cache_generation,NONE);
     native_map[0] = native_name[0] = 0;
-    n3ds_files_unlock();
+    n3ds_map_stream_unlock();
     /* Original models need a contiguous region for the next campaign cache.
      * Release GPU scratch images allocated during the old map, after its last
      * frame and before the next allocation. Do not reserve unused map memory
@@ -434,13 +452,35 @@ void n3ds_engine_tags_unload(void)
     }
 }
 
+static int native_cache_range_valid(unsigned long offset,unsigned long bytes)
+{
+    return native_tags.tags && bytes && offset>=2048 &&
+        offset<=(unsigned long)native_tags.header.file_length &&
+        bytes<=(unsigned long)native_tags.header.file_length-offset;
+}
+
+int n3ds_engine_cache_read_path(unsigned int offset,unsigned int bytes,char path[128])
+{
+    n3ds_map_stream_lock();
+    const int valid = native_cache_range_valid(offset,bytes);
+    if (valid) strcpy(path,native_map);
+    n3ds_map_stream_unlock();
+    return valid;
+}
+
 boolean n3ds_engine_cache_read(unsigned long offset, unsigned long bytes, void *destination)
 {
     boolean result=FALSE;
-    n3ds_files_lock();
-    if (!native_tags.tags || !destination || !bytes || offset < 2048 ||
-        offset > (unsigned long)native_tags.header.file_length ||
-        bytes > (unsigned long)native_tags.header.file_length-offset) goto done;
+#ifdef HALO_N3DS_PERFORMANCE_PROFILE
+    extern long long n3ds_engine_ticks(void), n3ds_engine_tick_frequency(void);
+    long long finished;
+    const long long start = n3ds_engine_ticks();
+#endif
+    n3ds_map_stream_lock();
+#ifdef HALO_N3DS_PERFORMANCE_PROFILE
+    const long long acquired = n3ds_engine_ticks();
+#endif
+    if(!destination || !native_cache_range_valid(offset,bytes)) goto done;
     if(!native_read_stream) {
         native_read_stream=fopen(native_map,"rb");
         if(!native_read_stream) goto done;
@@ -450,12 +490,31 @@ boolean n3ds_engine_cache_read(unsigned long offset, unsigned long bytes, void *
     if(result) {++native_stream_reads;native_stream_bytes+=bytes;}
     else {fclose(native_read_stream);native_read_stream=NULL;}
 done:
-    n3ds_files_unlock();
+#ifdef HALO_N3DS_PERFORMANCE_PROFILE
+    finished = n3ds_engine_ticks();
+#endif
+    n3ds_map_stream_unlock();
+#ifdef HALO_N3DS_PERFORMANCE_PROFILE
+    const long long frequency = n3ds_engine_tick_frequency();
+    if (finished - start >= frequency * 8 / 1000) {
+        const double ms = 1000.0 / frequency;
+        char message[192];
+        snprintf(message, sizeof(message),
+            "CACHE READ HITCH: offset=%lu bytes=%lu lock_ms=%.3f io_ms=%.3f success=%d",
+            offset, bytes, (acquired - start) * ms, (finished - acquired) * ms, result);
+        n3ds_log(message);
+    }
+#endif
     return result;
 }
 
 int n3ds_engine_cache_stream_live(void)
-{n3ds_files_lock();int live=native_read_stream!=NULL;n3ds_files_unlock();return live;}
+{
+    n3ds_map_stream_lock();
+    const int live = native_read_stream != NULL;
+    n3ds_map_stream_unlock();
+    return live;
+}
 
 int n3ds_engine_cache_stream_tests(void)
 {

@@ -176,6 +176,12 @@ void draw_string_and_hack_in_icons(
 	short height_adjust,
 	wchar_t const *instring,
 	boolean ignore_icon_color);
+#ifdef HALO_N3DS
+enum { N3DS_GAMEPLAY_BUTTON_LABEL_SIZE = 24 };
+boolean n3ds_ui_gameplay_button_label(
+	short icon,
+	wchar_t label[N3DS_GAMEPLAY_BUTTON_LABEL_SIZE]);
+#endif
 void ui_widgets_dispose(
 	void);
 boolean widget_event_function_list_widget_goto_next_item(

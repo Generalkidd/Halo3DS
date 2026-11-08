@@ -6,7 +6,35 @@
 #include <time.h>
 #include "engine_textures.h"
 #include "engine_renderer.h"
+#include "engine_renderer_features.h"
+#include "engine_algorithm_profile.h"
+#include "engine_allocation_profile.h"
+#include "engine_dependency_trace.h"
 #include "engine_parallel.h"
+#include "engine_action_replay.h"
+
+#ifdef HALO_N3DS_TEXTURE_VRAM_MIRRORS
+#define ENGINE_LOG_NAME "halo-texture-vram-mirrors.log"
+#define ENGINE_LOG_PREVIOUS "halo-texture-vram-mirrors.previous.log"
+#elif defined(HALO_N3DS_UNUSED_TEXTURE_UNITS)
+#define ENGINE_LOG_NAME "halo-unused-texture-units.log"
+#define ENGINE_LOG_PREVIOUS "halo-unused-texture-units.previous.log"
+#elif defined(HALO_N3DS_OPAQUE_COLOR_READS)
+#define ENGINE_LOG_NAME "halo-opaque-color-reads.log"
+#define ENGINE_LOG_PREVIOUS "halo-opaque-color-reads.previous.log"
+#elif defined(HALO_N3DS_FRAMEBUFFER_REUSE)
+#define ENGINE_LOG_NAME "halo-framebuffer-reuse.log"
+#define ENGINE_LOG_PREVIOUS "halo-framebuffer-reuse.previous.log"
+#elif defined(HALO_N3DS_GPU_PROBE)
+#define ENGINE_LOG_NAME "halo-gpu-probe.log"
+#define ENGINE_LOG_PREVIOUS "halo-gpu-probe.previous.log"
+#elif defined(HALO_N3DS_A30_BENCHMARK)
+#define ENGINE_LOG_NAME "halo-a30-benchmark.log"
+#define ENGINE_LOG_PREVIOUS "halo-a30-benchmark.previous.log"
+#else
+#define ENGINE_LOG_NAME "halo-source-engine.log"
+#define ENGINE_LOG_PREVIOUS "halo-source-engine.previous.log"
+#endif
 
 static FILE *log_file;
 static char log_buffer[16*1024];
@@ -61,22 +89,68 @@ void n3ds_log(const char *message)
     flush_console();
 }
 #include "engine_log_tests.inl"
+static void renderer_configuration_log(void)
+{
+    char message[320];
+    snprintf(message,sizeof(message),
+        "RENDERER MODES: schema=%u textures=%s(%u) geometry=%s(%u) vertices=%s(%u)",
+        (unsigned)N3DS_RENDERER_FEATURE_SCHEMA,N3DS_TEXTURE_STORAGE_NAME,(unsigned)HALO_N3DS_TEXTURE_STORAGE,
+        N3DS_GEOMETRY_SOURCE_NAME,(unsigned)HALO_N3DS_GEOMETRY_SOURCE,
+        N3DS_VERTEX_LAYOUT_NAME,(unsigned)HALO_N3DS_VERTEX_LAYOUT);
+    n3ds_log(message);
+    snprintf(message,sizeof(message),
+        "PERFORMANCE CONFIG: purpose=%s ticks=%ld diagnostics=%d readback=%d validation_fixture=%d profile=%d uncaptured_profile_eligible=%d",
+        N3DS_RENDERER_RUN_PURPOSE,(long)N3DS_RENDERER_CONFIGURED_MISSION_TICKS,
+        N3DS_RENDERER_DIAGNOSTICS_CONFIGURED,N3DS_RENDERER_READBACK_CONFIGURED,
+        N3DS_RENDERER_VALIDATION_CONFIGURED,N3DS_RENDERER_PROFILE_CONFIGURED,
+        N3DS_RENDERER_UNCAPTURED_PROFILE_ELIGIBLE);
+    n3ds_log(message);
+    n3ds_log("PERFORMANCE CONFIG: configuration only; external capture unverified; not validation or measured performance");
+    snprintf(message,sizeof(message),
+        "ALGORITHM CONFIG: schema=%u instrumentation=%d profile_loop_limit=%ld verification=%d",
+        (unsigned)N3DS_ALGORITHM_FEATURE_SCHEMA,N3DS_ALGORITHM_PROFILE_CONFIGURED,
+        (long)HALO_N3DS_PROFILE_FRAMES,N3DS_RENDERER_ALGORITHM_VERIFICATION);
+    n3ds_log(message);
+#define LOG_ALGORITHM(id, name) \
+    snprintf(message,sizeof(message),"ALGORITHM MODE: %s=%u",name,(unsigned)HALO_N3DS_ALGO_ ## id); \
+    n3ds_log(message);
+    N3DS_IMPLEMENTED_ALGORITHMS(LOG_ALGORITHM)
+#undef LOG_ALGORITHM
+}
 int main(void)
 {
+    n3ds_allocation_profile_start();
     gfxInitDefault(); gfxSetDoubleBuffering(GFX_BOTTOM, false); consoleInit(GFX_BOTTOM, NULL);
     printf("\n\n             Halo3DS\n\n\n          Loading game data...\n\n    Initial loading may take a while.\n");
     fflush(stdout);flush_console();
-    remove("sdmc:/halo-source-engine.previous.log");
-    rename("sdmc:/halo-source-engine.log","sdmc:/halo-source-engine.previous.log");
-    log_file = fopen("sdmc:/halo-source-engine.log", "w");
+    remove("sdmc:/" ENGINE_LOG_PREVIOUS);
+    rename("sdmc:/" ENGINE_LOG_NAME,"sdmc:/" ENGINE_LOG_PREVIOUS);
+    log_file = fopen("sdmc:/" ENGINE_LOG_NAME, "w");
     if(log_file) setvbuf(log_file,log_buffer,_IOFBF,sizeof(log_buffer));
     n3ds_log("Halo native engine bootstrap");
     n3ds_log("BUILD: Halo3DS Original-model adaptive rendering 2026-10-05");
+    renderer_configuration_log();
+#ifndef HALO_N3DS_DEPENDENCY_TRACE
+    n3ds_log("DEPENDENCY TRACE: enabled=0");
+#endif
+    n3ds_trace_initialize();
 #ifdef HALO_N3DS_LOW_MEMORY_TEST
     n3ds_log("LOW MEMORY FIXTURE: 24 MiB application heap + 32 MiB linear heap");
 #endif
     bool new_model=false;APT_CheckNew3DS(&new_model);
     n3ds_log(new_model?"MODEL: New 3DS family; high-speed CPU and L2 cache requested":"MODEL: original 3DS/2DS family; standard CPU speed");
+#if defined(HALO_N3DS_PERFORMANCE_PROFILE) || defined(HALO_N3DS_GPU_PROBE)
+    s64 clock_mhz = -1, l2 = -1;
+    /* Luma exposes the active mode separately from libctru's request. */
+    if (new_model) {
+        if (R_FAILED(svcGetSystemInfo(&clock_mhz, 0x10001, 0))) clock_mhz = -1;
+        if (R_FAILED(svcGetSystemInfo(&l2, 0x10001, 2))) l2 = -1;
+    }
+    char model_info[128];
+    snprintf(model_info, sizeof(model_info), "PERFORMANCE HARDWARE: model=%d clock_mhz=%lld l2=%lld (-1 unavailable)",
+        n3ds_platform_console_model(), (long long)clock_mhz, (long long)l2);
+    n3ds_log(model_info);
+#endif
     /* Retain capacity for two A10 corridor views and their effects, while
      * keeping every draw and the live command-capacity checks. */
     n3ds_parallel_initialize();
@@ -87,10 +161,22 @@ int main(void)
     extern void n3ds_stall_watch_start(void),n3ds_stall_watch_stop(void);
     n3ds_stall_watch_start();
     int result = textures_ready ? halo_engine_boot() : 1;
+    if(!n3ds_action_replay_finish(result==0)) result=1;
+    n3ds_trace_finish();
+    n3ds_gpu_algorithm_profile_finish();
+    n3ds_algorithm_profile_stop();
     extern void n3ds_prefetch_shutdown(void);
     n3ds_prefetch_shutdown();
     n3ds_stall_watch_stop();
-    if (textures_ready) n3ds_gpu_textures_dispose();
+    if (textures_ready) {
+        /* A frontend failure can bypass normal map teardown and then wait on
+         * the error screen. Join texture preparation before freeing its private
+         * buffers, close both archive indexes, and fence resident textures
+         * while GPU services and their map owners are still available. This
+         * is also safe after the successful frontend has already flushed. */
+        texture_cache_flush();
+        n3ds_gpu_textures_dispose();
+    }
     if (gpu_ready) C3D_Fini();
     if (programs_ready) n3ds_gpu_programs_dispose();
     if(result) {
@@ -98,7 +184,7 @@ int main(void)
          * after GPU shutdown so a startup failure cannot look like a freeze. */
         error_console=1;graphics_owned=0;gfxSet3D(false);gfxSetDoubleBuffering(GFX_BOTTOM,false);
         consoleInit(GFX_BOTTOM,NULL);
-        printf("Halo3DS stopped during startup.\n\nSee halo-source-engine.log\non the SD card for details.\n\nPress START to exit.\n");
+        printf("Halo3DS stopped during startup.\n\nSee " ENGINE_LOG_NAME "\non the SD card for details.\n\nPress START to exit.\n");
         fflush(stdout);flush_console();
     }
     n3ds_log(result ? "RESULT: FAIL" : "RESULT: PASS");

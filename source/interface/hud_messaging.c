@@ -939,6 +939,15 @@ void hud_render_timer(
 
 	if (timer->enabled)
 	{
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+		struct hud_timer_data_definition scratch;
+		extern int n3ds_presentation_midpoint_active(void);
+		if (n3ds_presentation_midpoint_active())
+		{
+			scratch = *timer;
+			timer = &scratch;
+		}
+#endif
 		struct hud_absolute_placement_definition placement = { timer->corner };
 		struct number_hud_element_definition numbers;
 		long current_time = game_time_get();
@@ -1441,6 +1450,12 @@ void hud_messaging_update(
 		boolean help_active;
 		boolean state_active;
 		short message_index;
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+		extern int n3ds_presentation_midpoint_active(void);
+		int midpoint = n3ds_presentation_midpoint_active();
+		struct hud_message_definition preview_messages[NUMBER_OF_HUD_MESSAGES_PER_DATUM];
+#endif
+		struct hud_message_definition *messages;
 
 		hud_calculate_point(
 			local_player_index,
@@ -1465,6 +1480,14 @@ void hud_messaging_update(
 		}
 		first_line_height = line_height;
 		datum = &hud_messaging_globals->message_data[render.local_player_index];
+		messages = datum->messages;
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+		if (midpoint)
+		{
+			csmemcpy(preview_messages, messages, sizeof(preview_messages));
+			messages = preview_messages;
+		}
+#endif
 		maximum_message_count = 4 - (local_player_count() > 1);
 		objective_active = hud_messaging_globals->objective.message &&
 			hud_messaging_globals->objective.uptime;
@@ -1571,9 +1594,12 @@ void hud_messaging_update(
 						hud_messaging_globals->objective.message &&
 							hud_messaging_globals->objective.uptime,
 						"hud_messaging_globals->objective.message && hud_messaging_globals->objective.uptime");
-					hud_messaging_globals->objective.uptime = MAX(
-						hud_messaging_globals->objective.uptime - game_time_get_elapsed(),
-						0);
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+					if (!midpoint)
+#endif
+						hud_messaging_globals->objective.uptime = MAX(
+							hud_messaging_globals->objective.uptime - game_time_get_elapsed(),
+							0);
 					scenario = global_scenario_get();
 					hud_messages = HUD_MESSAGE_TEXT_DEFINITION_GET(
 						scenario->hud_messages.index);
@@ -1641,6 +1667,14 @@ void hud_messaging_update(
 					case _hud_message_type_icon:
 						{
 							short icon_index = NONE;
+#ifdef HALO_N3DS
+							wchar_t label[N3DS_GAMEPLAY_BUTTON_LABEL_SIZE];
+							if (n3ds_ui_gameplay_button_label(element->data, label))
+							{
+								render_state_text(&line_bounds, &line_cursor, label, FALSE);
+								break;
+							}
+#endif
 
 							if (element->data > _icon_right_stick)
 							{
@@ -1855,15 +1889,15 @@ void hud_messaging_update(
 		}
 
 		qsort(
-			datum->messages,
+			messages,
 			NUMBEROF(datum->messages),
-			sizeof(datum->messages[0]),
+			sizeof(messages[0]),
 			(int (__cdecl *)(void const *, void const *))compare_messages);
 		for (message_index = 0;
 			message_index < maximum_message_count;
 			message_index++)
 		{
-			struct hud_message_definition *message = &datum->messages[message_index];
+			struct hud_message_definition *message = &messages[message_index];
 			long now;
 			long elapsed;
 			real_argb_color text_color;

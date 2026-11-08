@@ -5,6 +5,9 @@
 #include <stdio.h>
 #include <string.h>
 #include "engine_textures.h"
+#include "engine_renderer.h"
+#include "engine_presentation.h"
+#include "engine_dependency_trace.h"
 
 enum { PLASMA_TEXTURE_SLOTS=16, PLASMA_TEXTURE_BYTES=128*1024 };
 static struct {void *owner,*resource;unsigned int identity,bytes;} plasma_textures[PLASMA_TEXTURE_SLOTS];
@@ -29,10 +32,11 @@ static C3D_TexCube bound_cube[3];
 static unsigned int bound_identity[3];
 static int bound_valid[3];
 static unsigned int bind_requests,bind_updates;
-/* Derivative identities must not displace the256 ordinary map identities.
- * Keep256 hash buckets; the16 extra records cost192 bytes on ARM32. */
-enum { IMMUTABLE_BUCKETS=256, IMMUTABLE_SLOTS=256+PLASMA_TEXTURE_SLOTS };
-static struct {void *resource;unsigned int id;unsigned short next;} immutable[IMMUTABLE_SLOTS];
+/* Generated revisions share lookups and nonrecycling IDs, but never take
+ * the 256 map or 16 derivative records. Their 64 records cost 768 ARM32 bytes. */
+enum { IMMUTABLE_BUCKETS=256, IMMUTABLE_SLOTS=256+PLASMA_TEXTURE_SLOTS,
+    REVISION_SLOTS=64, IDENTITY_SLOTS=IMMUTABLE_SLOTS+REVISION_SLOTS };
+static struct {void *resource;unsigned int id;unsigned short next;} immutable[IDENTITY_SLOTS];
 /* Index+1 chains keep lookups bounded without tombstones after map churn. */
 static unsigned short immutable_bucket[IMMUTABLE_BUCKETS];
 static unsigned int next_identity;
@@ -49,14 +53,15 @@ unsigned int n3ds_gpu_texture_content_id(void *resource)
         if(immutable[link-1].resource==resource) return immutable[link-1].id;
     return 0;
 }
-unsigned int n3ds_gpu_texture_publish_immutable(void *resource)
+#include "engine_texture_vram.inl"
+static unsigned int publish_identity(void *resource,unsigned int first,unsigned int limit)
 {
     C3D_Tex *texture=resource;
     if(!initialized || !texture || !texture->data) return 0;
     unsigned int id=n3ds_gpu_texture_content_id(resource);if(id) return id;
     /* Exhaustion falls back to exact content checks; never recycle an ID. */
     if(next_identity==~0u) return 0;
-    for(unsigned int i=0;i<IMMUTABLE_SLOTS;++i) if(!immutable[i].resource) {
+    for(unsigned int i=first;i<limit;++i) if(!immutable[i].resource) {
         unsigned int bucket=identity_bucket(resource);
         immutable[i].resource=resource;immutable[i].id=++next_identity;
         immutable[i].next=immutable_bucket[bucket];immutable_bucket[bucket]=i+1;
@@ -65,9 +70,14 @@ unsigned int n3ds_gpu_texture_publish_immutable(void *resource)
     }
     return 0;
 }
+unsigned int n3ds_gpu_texture_publish_immutable(void *resource)
+{return publish_identity(resource,0,IMMUTABLE_SLOTS);}
 static void forget_identity(void *resource)
 {
     if(!resource) return;
+#ifdef HALO_N3DS_TEXTURE_VRAM_MIRRORS
+    texture_mirror_forget(resource);
+#endif
     unsigned short *link=immutable_bucket+identity_bucket(resource);
     while(*link) {
         unsigned int i=*link-1;
@@ -77,11 +87,21 @@ static void forget_identity(void *resource)
         link=&immutable[i].next;
     }
 }
+void n3ds_gpu_texture_revision_begin(void *resource)
+{
+    if(!resource) return;
+    forget_identity(resource);
+    /* The next bind must re-read both content identity and descriptor, even
+     * when an owner rewrites or reallocates storage at the same address. */
+    for(unsigned int stage=0;stage<3;++stage) if(bound[stage]==resource) bound_valid[stage]=0;
+}
+unsigned int n3ds_gpu_texture_revision_publish(void *resource)
+{return publish_identity(resource,IMMUTABLE_SLOTS,IDENTITY_SLOTS);}
 int n3ds_gpu_texture_identity_tests(void)
 {
     C3D_Tex fake[IMMUTABLE_SLOTS+1];unsigned int ids[IMMUTABLE_SLOTS],pixel=0;
     if(!initialized) return 0;
-    for(unsigned int i=0;i<IMMUTABLE_SLOTS;++i) if(immutable[i].resource) return 0;
+    for(unsigned int i=0;i<IDENTITY_SLOTS;++i) if(immutable[i].resource) return 0;
     memset(fake,0,sizeof(fake));
     for(unsigned int i=0;i<=IMMUTABLE_SLOTS;++i) fake[i].data=&pixel;
     if(n3ds_gpu_texture_content_id(fake) || n3ds_gpu_texture_publish_immutable(NULL)) return 0;
@@ -120,26 +140,39 @@ int n3ds_gpu_textures_initialize(void)
     for (unsigned int stage = 0; stage < 3; ++stage) n3ds_gpu_texture_bind(stage,NULL);
     return 1;
 }
-static inline __attribute__((always_inline)) int bind_descriptor(unsigned int stage,void *resource,C3D_Tex sampler)
+static inline __attribute__((always_inline)) int bind_descriptor(unsigned int stage,void *resource,
+    const C3D_Tex *owner,u32 param)
 {
-    if (!initialized || stage >= 3) return 0;
-    int cube=C3D_TexGetType(&sampler)==GPU_TEX_CUBE_MAP || C3D_TexGetType(&sampler)==GPU_TEX_SHADOW_CUBE;
-    if(stage && C3D_TexGetType(&sampler)!=GPU_TEX_2D) return 0;
+    GPU_TEXTURE_MODE_PARAM type=(param>>28)&7u;
+    int cube=type==GPU_TEX_CUBE_MAP || type==GPU_TEX_SHADOW_CUBE;
+    if(stage && type!=GPU_TEX_2D) return 0;
     ++bind_requests;
+    void *data=owner->data;
+#ifdef HALO_N3DS_TEXTURE_VRAM_MIRRORS
+    texture_mirror_request(resource);
+    if(!cube) data=texture_mirror_storage(resource,texture_mirror_identity(resource),data);
+#endif
     unsigned int identity=bound_valid[stage] && resource==bound[stage] ?
         bound_identity[stage] : n3ds_gpu_texture_content_id(resource);
     int changed=!bound_valid[stage];
     if(cube) {
-        if(!sampler.cube) return 0;
-        changed=changed || memcmp(&bound_cube[stage],sampler.cube,sizeof(C3D_TexCube));
-        bound_cube[stage]=*sampler.cube;sampler.cube=&bound_cube[stage];
+        if(!owner->cube) return 0;
+        changed=changed || memcmp(&bound_cube[stage],owner->cube,sizeof(C3D_TexCube));
+        bound_cube[stage]=*owner->cube;
+        data=&bound_cube[stage];
     }
-    changed=changed || memcmp(&bound_sampler[stage],&sampler,sizeof(sampler));
+    /* Compare the effective fields in place. An immutable image owner can
+     * still change its sampler parameters between draws. */
+    C3D_Tex *sampler=bound_sampler+stage;
     /* Mutable pixel contents require a real bind even with unchanged sampler
      * bits. A newly published allocation also invalidates address reuse. */
-    if(changed || (resource && !identity) || identity!=bound_identity[stage]) {
-        bound_sampler[stage]=sampler;bound_valid[stage]=1;bound_identity[stage]=identity;
-        C3D_TexBind(stage,&bound_sampler[stage]);++bind_updates;
+    if(changed || (resource && !identity) || identity!=bound_identity[stage] ||
+       sampler->data!=data || sampler->param!=param || sampler->dim!=owner->dim ||
+       sampler->fmt!=owner->fmt || sampler->size!=owner->size ||
+       sampler->border!=owner->border || sampler->lodParam!=owner->lodParam) {
+        *sampler=*owner;sampler->data=data;sampler->param=param;
+        bound_valid[stage]=1;bound_identity[stage]=identity;
+        C3D_TexBind(stage,sampler);++bind_updates;
     }
     bound[stage] = resource;
     return 1;
@@ -147,12 +180,14 @@ static inline __attribute__((always_inline)) int bind_descriptor(unsigned int st
 int n3ds_gpu_texture_bind(unsigned int stage,void *resource)
 {
     if(!initialized || stage>=3) return 0;
-    return bind_descriptor(stage,resource,*(C3D_Tex *)(resource?resource:&neutral));
+    const C3D_Tex *owner=resource?resource:&neutral;
+    return bind_descriptor(stage,resource,owner,owner->param);
 }
 int n3ds_gpu_texture_bind_sampler(unsigned int stage,void *resource,unsigned int flags)
 {
     if(!initialized || stage>=3 || (flags&~31u)) return 0;
-    C3D_Tex sampler=*(C3D_Tex *)(resource?resource:&neutral);
+    const C3D_Tex *owner=resource?resource:&neutral;
+    C3D_Tex sampler={.param=owner->param};
     if(flags&NATIVE_SAMPLER_PROJECTIVE) {
         if(stage || C3D_TexGetType(&sampler)!=GPU_TEX_2D) return 0;
         sampler.param=(sampler.param&~(7u<<28))|(GPU_TEX_PROJECTION<<28);
@@ -161,7 +196,7 @@ int n3ds_gpu_texture_bind_sampler(unsigned int stage,void *resource,unsigned int
         flags&NATIVE_SAMPLER_MIN_POINT?GPU_NEAREST:GPU_LINEAR);
     C3D_TexSetWrap(&sampler,flags&NATIVE_SAMPLER_CLAMP_U?GPU_CLAMP_TO_EDGE:GPU_REPEAT,
         flags&NATIVE_SAMPLER_CLAMP_V?GPU_CLAMP_TO_EDGE:GPU_REPEAT);
-    return bind_descriptor(stage,resource,sampler);
+    return bind_descriptor(stage,resource,owner,sampler.param);
 }
 void *n3ds_gpu_texture_bound(unsigned int stage)
 {
@@ -220,6 +255,9 @@ void n3ds_gpu_textures_dispose(void)
 {
     if (!initialized) return;
     if (!n3ds_gpu_texture_barrier()) abort();
+#ifdef HALO_N3DS_TEXTURE_VRAM_MIRRORS
+    texture_mirror_dispose();
+#endif
     {extern void n3ds_log(const char *);char message[120];
      snprintf(message,sizeof(message),"NATIVE SAMPLERS: requests=%u descriptor_updates=%u",bind_requests,bind_updates);n3ds_log(message);}
     for(unsigned int i=0;i<PLASMA_TEXTURE_SLOTS;++i) if(plasma_textures[i].resource) {
@@ -240,6 +278,117 @@ void n3ds_gpu_textures_dispose(void)
     /* Caller immediately finalizes Citro3D; no draw may follow disposal. */
 }
 
+static int texture_descriptor_format(const struct native_texture_descriptor *descriptor,GPU_TEXCOLOR *format)
+{
+    if(!n3ds_texture_descriptor_valid(descriptor)) return 0;
+    /* Stable engine format IDs must never be cast to libctru's GPU enum. */
+    switch(descriptor->format) {
+        case NATIVE_TEXTURE_FORMAT_RGBA8: *format=GPU_RGBA8;return 1;
+        case NATIVE_TEXTURE_FORMAT_RGB8: *format=GPU_RGB8;return 1;
+#ifdef HALO_N3DS_TEXTURE_COMPARE
+        case NATIVE_TEXTURE_FORMAT_LA8: *format=GPU_LA8;return 1;
+#endif
+        default: return 0;
+    }
+}
+static int texture_descriptor_matches(C3D_Tex *texture,const struct native_texture_descriptor *descriptor)
+{
+    GPU_TEXCOLOR format;
+    if(!texture || !texture_descriptor_format(descriptor,&format) || texture->fmt!=format ||
+       texture->width!=descriptor->width || texture->height!=descriptor->height ||
+       texture->maxLevel!=descriptor->levels-1 || texture->minLevel) return 0;
+    unsigned int image_bytes=texture->size;
+    if(texture->maxLevel) {
+        unsigned int base_bytes=n3ds_texture_mip_bytes(descriptor->width,descriptor->height,1,descriptor->format);
+        if(!base_bytes || image_bytes!=base_bytes) return 0;
+        image_bytes=C3D_TexCalcTotalSize(image_bytes,texture->maxLevel);
+    }
+    if(image_bytes!=descriptor->face[0].bytes) return 0;
+    if(descriptor->faces==6) {
+        if(C3D_TexGetType(texture)!=GPU_TEX_CUBE_MAP || !texture->cube) return 0;
+        for(unsigned int i=0;i<6;++i) if(!texture->cube->data[i]) return 0;
+    } else if(C3D_TexGetType(texture)!=GPU_TEX_2D || !texture->data) return 0;
+    return 1;
+}
+void *n3ds_gpu_texture_reserve_descriptor(const struct native_texture_descriptor *descriptor,struct native_texture_span spans[6])
+{
+    GPU_TEXCOLOR format;
+    if(!spans) return NULL;
+    memset(spans,0,6*sizeof(*spans));
+    if(!initialized || !texture_descriptor_format(descriptor,&format)) return NULL;
+    unsigned int width=descriptor->width,height=descriptor->height;
+    int cube=descriptor->faces==6;
+    C3D_Tex *texture=calloc(1,sizeof(*texture)+(cube?sizeof(C3D_TexCube):0));
+    if(!texture) return NULL;
+    if(cube) {
+        C3D_TexCube *faces=(C3D_TexCube *)(texture+1);
+        if(!C3D_TexInitWithParams(texture,faces,(C3D_TexInitParams){width,height,0,format,GPU_TEX_CUBE_MAP,false})) {free(texture);return NULL;}
+    }
+    else if(descriptor->levels>1) {
+        C3D_TexInitParams params={width,height,descriptor->levels-1,format,GPU_TEX_2D,false};
+        if(!C3D_TexInitWithParams(texture,NULL,params)) {free(texture);return NULL;}
+    }
+    else {
+        if(!C3D_TexInit(texture,width,height,format)) {free(texture);return NULL;}
+    }
+    if(!texture_descriptor_matches(texture,descriptor) ||
+       (descriptor->levels>1 && linearGetSize(texture->data)<descriptor->resident_bytes)) {
+        C3D_TexDelete(texture);free(texture);return NULL;
+    }
+    for(unsigned int i=0;i<descriptor->faces;++i) {
+        spans[i].data=cube?texture->cube->data[i]:texture->data;
+        spans[i].bytes=descriptor->face[i].bytes;
+    }
+    C3D_TexSetFilter(texture,GPU_LINEAR,GPU_LINEAR);
+    if(descriptor->levels>1) C3D_TexSetFilterMipmap(texture,GPU_LINEAR);
+    C3D_TexSetWrap(texture,cube?GPU_CLAMP_TO_EDGE:GPU_REPEAT,cube?GPU_CLAMP_TO_EDGE:GPU_REPEAT);
+    return texture;
+}
+void *n3ds_gpu_texture_reserve(unsigned int width,unsigned int height,int cube,unsigned int *pixels[6])
+{
+    if(!pixels) return NULL;
+    memset(pixels,0,6*sizeof(*pixels));
+    struct native_texture_descriptor descriptor;
+    struct native_texture_span spans[6];
+    unsigned int faces=cube?6:1,face_bytes=n3ds_texture_descriptor_rgba8_face_bytes(width,height,faces);
+    if(!n3ds_texture_descriptor_rgba8(&descriptor,width,height,faces,0,face_bytes*faces,0)) return NULL;
+    void *resource=n3ds_gpu_texture_reserve_descriptor(&descriptor,spans);
+    if(resource) for(unsigned int i=0;i<faces;++i) pixels[i]=spans[i].data;
+    return resource;
+}
+int n3ds_gpu_texture_finalize_descriptor(void *resource,const struct native_texture_descriptor *descriptor)
+{
+    C3D_Tex *texture=resource;
+    if(!initialized || !texture_descriptor_matches(texture,descriptor)) return 0;
+    /* Validate all ranges/images before any flush. Cube data aliases the face
+     * table, so flush each real image. No content ID is published here: only
+     * the owner may publish after every image has been completed and flushed. */
+    for(unsigned int i=0;i<descriptor->faces;++i) {
+        void *data=descriptor->faces==6?texture->cube->data[i]:texture->data;
+        if(R_FAILED(GSPGPU_FlushDataCache(data,descriptor->face[i].bytes))) return 0;
+    }
+    return 1;
+}
+#if HALO_N3DS_TEXTURE_LOD_FIXTURE
+#include "engine_texture_lod_fixture.inl"
+#endif
+int n3ds_gpu_texture_finalize(void *resource)
+{
+    C3D_Tex *texture=resource;
+    if(!texture || texture->fmt!=GPU_RGBA8) return 0;
+    unsigned int faces;
+    if(C3D_TexGetType(texture)==GPU_TEX_CUBE_MAP) faces=6;
+    else if(C3D_TexGetType(texture)==GPU_TEX_2D) faces=1;
+    else return 0;
+    struct native_texture_descriptor descriptor;
+    unsigned int face_bytes=n3ds_texture_descriptor_rgba8_face_bytes(texture->width,texture->height,faces);
+    if(!n3ds_texture_descriptor_rgba8(&descriptor,texture->width,texture->height,faces,0,face_bytes*faces,0)) return 0;
+    return n3ds_gpu_texture_finalize_descriptor(resource,&descriptor);
+}
+void n3ds_gpu_texture_abandon(void *resource)
+{
+    if(resource) {C3D_TexDelete(resource);free(resource);}
+}
 static void *texture_create(const void *pixels, unsigned int width, unsigned int height, GPU_TEXCOLOR format)
 {
     C3D_Tex *texture;
@@ -269,18 +418,38 @@ static void *texture_create(const void *pixels, unsigned int width, unsigned int
     return texture;
 }
 void *n3ds_gpu_texture_create(const unsigned int *pixels, unsigned int width, unsigned int height)
-{ return texture_create(pixels,width,height,GPU_RGBA8); }
+{
+    if(!pixels) return NULL;
+    unsigned int *destination[6];
+    void *resource=n3ds_gpu_texture_reserve(width,height,0,destination);
+    if(!resource) return NULL;
+    memcpy(destination[0],pixels,width*height*4);
+    if(!n3ds_gpu_texture_finalize(resource)) {n3ds_gpu_texture_abandon(resource);return NULL;}
+    return resource;
+}
+int n3ds_gpu_texture_validate_rgba8(const void *resource,const unsigned int *pixels,
+    unsigned int width,unsigned int height)
+{
+    C3D_Tex *texture = (C3D_Tex *)resource;
+    unsigned int bytes=width*height*4;
+    if(!texture || !pixels || C3D_TexGetType(texture)!=GPU_TEX_2D || texture->fmt!=GPU_RGBA8 ||
+       texture->width!=width || texture->height!=height || texture->size!=bytes || !texture->data) return 0;
+#if defined(HALO_N3DS_ARCHIVE_VERIFY) || defined(HALO_N3DS_RENDERER_TESTS)
+    return !memcmp(texture->data,pixels,bytes);
+#else
+    return 1;
+#endif
+}
 void *n3ds_gpu_texture_create_rgba4(const void *pixels, unsigned int width, unsigned int height)
 { return texture_create(pixels,width,height,GPU_RGBA4); }
 void *n3ds_gpu_texture_create_cube(const unsigned char *rgba,unsigned int side)
 {
     if(!initialized || !rgba || side<8 || side>64 || (side&(side-1))) return NULL;
-    C3D_Tex *texture=calloc(1,sizeof(C3D_Tex)+sizeof(C3D_TexCube));if(!texture) return NULL;
-    C3D_TexCube *cube=(C3D_TexCube *)(texture+1);
-    if(!C3D_TexInitWithParams(texture,cube,(C3D_TexInitParams){side,side,0,GPU_RGBA8,GPU_TEX_CUBE_MAP,false})) {free(texture);return NULL;}
+    unsigned int *images[6];
+    void *texture=n3ds_gpu_texture_reserve(side,side,1,images);if(!texture) return NULL;
     static const unsigned int spread[8]={0,1,4,5,16,17,20,21};
     for(unsigned int face=0;face<6;++face) {
-        unsigned int *out=cube->data[face];
+        unsigned int *out=images[face];
         for(unsigned int y=0;y<side;++y) for(unsigned int x=0;x<side;++x) {
             unsigned int native_y=side-1-y;
             unsigned int offset=((native_y/8)*(side/8)+x/8)*64+spread[x&7]+2*spread[native_y&7];
@@ -288,26 +457,31 @@ void *n3ds_gpu_texture_create_cube(const unsigned char *rgba,unsigned int side)
             out[offset]=(unsigned int)pixel[0]<<24 | (unsigned int)pixel[1]<<16 | (unsigned int)pixel[2]<<8 | pixel[3];
         }
     }
-    C3D_TexSetFilter(texture,GPU_LINEAR,GPU_LINEAR);C3D_TexSetWrap(texture,GPU_CLAMP_TO_EDGE,GPU_CLAMP_TO_EDGE);
-    /* This Citro3D version flushes tex->data as a 2D image. For a cube that
-     * member is the face-pointer table, so flush each actual face explicitly. */
-    for(unsigned int face=0;face<6;++face) if(R_FAILED(GSPGPU_FlushDataCache(cube->data[face],side*side*4))) {
-        C3D_TexDelete(texture);free(texture);return NULL;
-    }
+    if(!n3ds_gpu_texture_finalize(texture)) {n3ds_gpu_texture_abandon(texture);return NULL;}
     return texture;
 }
 int n3ds_gpu_texture_barrier(void)
 {
+    n3ds_trace_event(N3DS_TRACE_GPU_TEXTURE_FENCE_BEGIN,0,0);
     /* FrameBegin waits for submitted GPU commands. Refuse resource reclamation
      * inside an active frame: its commands may still refer to these textures. */
     /* The suspend hook drained the queue before HOME took the GPU. Closing
      * must free resources without submitting an empty frame or waiting VBlank. */
-    if(aptShouldClose()) return 1;
-    if (!C3D_FrameBegin(0)) return 0;
-    /* No CPU vertex data is submitted by this barrier. Flushing all linear
-     * memory here can overwrite GPU-written scanout buffers with stale data. */
-    C3D_FrameEnd(GX_CMDLIST_FLUSH);
+    if(aptShouldClose()) { n3ds_trace_event(N3DS_TRACE_GPU_TEXTURE_FENCE_END,1,1); return 1; }
+    if (n3ds_gpu_frame_active()) { n3ds_trace_event(N3DS_TRACE_GPU_TEXTURE_FENCE_END,0,2); return 0; }
+    /* Retire submitted work without starting an empty frame or resetting the
+     * timer for the last real submission. Both paths use the pinned queue. */
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+    extern int n3ds_c3d_wait_idle(void);
+    int result=n3ds_c3d_wait_idle();
+    n3ds_trace_event(N3DS_TRACE_GPU_TEXTURE_FENCE_END,result,0);
+    return result;
+#else
+    extern void C3Di_RenderQueueWaitDone(void);
+    C3Di_RenderQueueWaitDone();
+    n3ds_trace_event(N3DS_TRACE_GPU_TEXTURE_FENCE_END,1,0);
     return 1;
+#endif
 }
 void n3ds_gpu_texture_destroy(void *resource)
 {
@@ -349,12 +523,16 @@ void *n3ds_gpu_texture_plasma(void *resource,unsigned int available)
     }
     if(slot==PLASMA_TEXTURE_SLOTS || plasma_texture_bytes>available || source->size>available-plasma_texture_bytes ||
        plasma_texture_bytes>PLASMA_TEXTURE_BYTES || source->size>PLASMA_TEXTURE_BYTES-plasma_texture_bytes) return NULL;
-    unsigned int *copy=malloc(source->size);if(!copy) return NULL;
+    if(n3ds_presentation_reject_texture()) return NULL;
+    unsigned int *images[6];
+    void *result=n3ds_gpu_texture_reserve(source->width,source->height,0,images);
+    if(!result) return NULL;
     const unsigned int *original=source->data;
     /* RGBA -> ARGB, same tiled coordinates. A linear permutation commutes
-     * with bilinear filtering; changing alpha into a nonlinear normal does not. */
-    for(unsigned int i=0;i<source->size/4;++i) copy[i]=(original[i]>>8)|(original[i]<<24);
-    void *result=n3ds_gpu_texture_create(copy,source->width,source->height);free(copy);if(!result) return NULL;
+     * with bilinear filtering. Fill the unpublished final image directly;
+     * no second image allocation or copy is needed for this permutation. */
+    for(unsigned int i=0;i<source->size/4;++i) images[0][i]=(original[i]>>8)|(original[i]<<24);
+    if(!n3ds_gpu_texture_finalize(result)) {n3ds_gpu_texture_abandon(result);return NULL;}
     n3ds_gpu_texture_publish_immutable(result);
     plasma_textures[slot].owner=source;plasma_textures[slot].resource=result;
     plasma_textures[slot].identity=identity;plasma_textures[slot].bytes=source->size;plasma_texture_bytes+=source->size;

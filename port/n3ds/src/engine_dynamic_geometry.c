@@ -49,8 +49,10 @@ void rasterizer_dynamic_geometry_begin(void)
 {
     unsigned int i;
     assert(initialized);
-    for (i=0; i<triangle_slots; ++i) { assert(!triangles[i].locked); triangles[i].live=FALSE; }
-    for (i=0; i<vertex_slots; ++i) { assert(!vertices[i].locked); vertices[i].live=FALSE; }
+    for (i=0; i<triangle_slots; ++i) assert(!triangles[i].locked);
+    for (i=0; i<vertex_slots; ++i) assert(!vertices[i].locked);
+    /* Lookups reject indices outside the current slot counts first. Reused
+     * slots receive a new generation before becoming addressable again. */
     triangle_used=triangle_slots=vertex_slots=0;
     for (i=0; i<NUMBER_OF_RASTERIZER_VERTEX_TYPES; ++i) arenas[i].used=0;
 }

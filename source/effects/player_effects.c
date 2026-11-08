@@ -467,6 +467,13 @@ void player_effect_get_damage_indicators(
 	short index;
 
 	csmemcpy(damage_indicators, effect->damage_indicator_ticks, sizeof(effect->damage_indicator_ticks));
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+	{
+		extern int n3ds_presentation_midpoint_active(void);
+		if (n3ds_presentation_midpoint_active())
+			return;
+	}
+#endif
 
 	for (index = 0; index < NUMBER_OF_DAMAGE_INDICATORS; index++)
 	{

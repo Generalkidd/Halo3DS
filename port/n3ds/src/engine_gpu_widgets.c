@@ -13,6 +13,7 @@ enum { WIDGET_VERTICES=6144, WIDGET_BLOCKS=4 };
 static DVLB_s *shader;
 static shaderProgram_s program;
 static int ready,matrix_location;
+static C3D_AttrInfo widget_attributes[2];
 static DVLB_s *packed_shader;
 static shaderProgram_s packed_program;
 static int packed_ready,packed_matrix;
@@ -85,6 +86,13 @@ int n3ds_gpu_widgets_initialize(void)
     if(R_FAILED(shaderProgramSetVsh(&packed_program,&packed_shader->DVLE[0]))) goto fail;
     packed_matrix=shaderInstanceGetUniformLocation(packed_program.vertexShader,"projection");
     if(packed_matrix<0) goto fail;
+    for(int packed=0;packed<2;++packed) {
+        C3D_AttrInfo *attributes=&widget_attributes[packed];
+        AttrInfo_Init(attributes);
+        AttrInfo_AddLoader(attributes,0,GPU_FLOAT,3);
+        AttrInfo_AddLoader(attributes,1,GPU_FLOAT,packed?2:4);
+        AttrInfo_AddLoader(attributes,2,packed?GPU_UNSIGNED_BYTE:GPU_FLOAT,packed?4:2);
+    }
     return 1;
 fail:n3ds_gpu_widgets_dispose();return 0;
 }
@@ -128,8 +136,7 @@ int n3ds_gpu_widget_draw(const struct native_widget_vertex vertices[4],int world
     else Mtx_OrthoTilt(&projection,0,width,height,0,0,1,true);
     C3D_BindProgram(&program);
     C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER,matrix_location,&projection);
-    C3D_AttrInfo *attributes=C3D_GetAttrInfo();AttrInfo_Init(attributes);
-    AttrInfo_AddLoader(attributes,0,GPU_FLOAT,3);AttrInfo_AddLoader(attributes,1,GPU_FLOAT,4);AttrInfo_AddLoader(attributes,2,GPU_FLOAT,2);
+    C3D_SetAttrInfo(&widget_attributes[0]);
     for(unsigned int i=0;i<6;++i) {
         C3D_TexEnv *env=C3D_GetTexEnv(i);C3D_TexEnvInit(env);
         C3D_TexEnvSrc(env,C3D_Alpha,GPU_PRIMARY_COLOR,GPU_PRIMARY_COLOR,GPU_PRIMARY_COLOR);
@@ -226,12 +233,7 @@ static int effect_draw(const void *input,unsigned int count,
     if(!retained) C3D_BindProgram(packed?&packed_program:&program);
     if(!retained || memcmp(&effect_projection,&projection,sizeof(projection))) C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER,packed?packed_matrix:matrix_location,&projection);
     effect_projection=projection;
-    if(!retained) {
-    C3D_AttrInfo *attributes=C3D_GetAttrInfo();AttrInfo_Init(attributes);
-    AttrInfo_AddLoader(attributes,0,GPU_FLOAT,3);
-    AttrInfo_AddLoader(attributes,1,GPU_FLOAT,packed?2:4);
-    AttrInfo_AddLoader(attributes,2,packed?GPU_UNSIGNED_BYTE:GPU_FLOAT,packed?4:2);
-    }
+    if(!retained) C3D_SetAttrInfo(&widget_attributes[!!packed]);
     int same=retained && effect_state_blend==blend && effect_state_shader==shader_flags && effect_state_geometry==geometry_flags;
     if(!same) {
     C3D_TexEnvBufUpdate(C3D_Both,0);C3D_TexEnvBufColor(0);
@@ -284,21 +286,25 @@ static int effect_draw(const void *input,unsigned int count,
 #endif
     }
     flush_written(count);
+    int success=0;
     const unsigned short *gpu_indices=indices?n3ds_gpu_indices_upload(indices,index_count):NULL;
-    if(indices && !gpu_indices) return 0;
-    int success=indices || n3ds_gpu_vertex_buffer_bind(submitted,stride,3,0x210);
+    if(indices && !gpu_indices) goto restore_sampler;
+    success=indices || n3ds_gpu_vertex_buffer_bind(submitted,stride,3,0x210);
     if(success) {
+        /* A later first-person pass can fail after an earlier pass queued
+         * this span. Never let a subsequent draw overwrite those vertices. */
+        used+=count;
         int first_person=(geometry_flags&(1u<<7))!=0;
         for(int pass=0;pass<(first_person?2:1);++pass) {
             if(first_person && !pass && (shader_flags&4)) continue;
             C3D_DepthTest(!(geometry_flags&(1u<<3)) && !pass,GPU_GEQUAL,GPU_WRITE_COLOR&~GPU_WRITE_ALPHA);
             C3D_StencilTest(true,GPU_EQUAL,first_person&&!pass?1:0,1,0);
             C3D_StencilOp(GPU_STENCIL_KEEP,GPU_STENCIL_KEEP,GPU_STENCIL_KEEP);
-            if(indices) {if(!n3ds_gpu_indexed_draw(submitted,gpu_indices,index_count,stride,3,0x210)) return 0;}
+            if(indices) {if(!n3ds_gpu_indexed_draw(submitted,gpu_indices,index_count,stride,3,0x210)) {success=0;goto restore_sampler;}}
             else C3D_DrawArrays(GPU_TRIANGLES,0,count);
         }
-        used+=count;
     }
+restore_sampler:
     texture->param=sampler;texture->border=border;n3ds_gpu_texture_bind(0,texture);
     return success;
 }

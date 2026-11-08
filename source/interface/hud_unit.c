@@ -792,7 +792,11 @@ void hud_render_damage_indicators(
 	}
 	else
 	{
-		player_effect_clear_damage_indicators(local_player_index);
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+		extern int n3ds_presentation_midpoint_active(void);
+		if (!n3ds_presentation_midpoint_active())
+#endif
+			player_effect_clear_damage_indicators(local_player_index);
 	}
 
 	return;

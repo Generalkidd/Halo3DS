@@ -50,7 +50,7 @@ struct crc_globals
 #endif
 struct crc_globals crc_globals;
 #ifdef HALO_N3DS
-static unsigned long native_crc_slices[3][256];
+static unsigned long native_crc_slices[7][256];
 #endif
 #ifndef HALO_ANDROID
 #pragma bss_seg()
@@ -112,7 +112,7 @@ void crc_checksum_buffer(
 #ifdef HALO_N3DS
         for(unsigned int n=0;n<256;++n) {
             unsigned long c=crc_globals.table[n];
-            for(unsigned int k=0;k<3;++k) {c=(c>>8)^crc_globals.table[c&255];native_crc_slices[k][n]=c;}
+            for(unsigned int k=0;k<7;++k) {c=(c>>8)^crc_globals.table[c&255];native_crc_slices[k][n]=c;}
         }
 #endif
 		crc_globals.initialized = TRUE;
@@ -120,11 +120,20 @@ void crc_checksum_buffer(
 
 	crc = *crc_reference;
 #ifdef HALO_N3DS
-    /* Preserve the exact Xbox polynomial/seed. Aligned four-byte slices
-     * shorten full checkpoint/map verification without approximate hashes. */
+    /* Process two aligned words per CRC update. The second word's table
+     * lookups do not depend on the incoming CRC. */
     const byte *p=buffer;
     while(buffer_size && ((unsigned long)p&3)) {crc=(crc>>8)^crc_globals.table[(crc^*p++)&255];--buffer_size;}
-    while(buffer_size>=4) {
+    while(buffer_size>=8) {
+        const unsigned long *words=(const unsigned long *)p;
+        unsigned long first=crc^words[0], second=words[1];
+        crc=native_crc_slices[6][first&255] ^ native_crc_slices[5][(first>>8)&255] ^
+            native_crc_slices[4][(first>>16)&255] ^ native_crc_slices[3][first>>24] ^
+            native_crc_slices[2][second&255] ^ native_crc_slices[1][(second>>8)&255] ^
+            native_crc_slices[0][(second>>16)&255] ^ crc_globals.table[second>>24];
+        p+=8;buffer_size-=8;
+    }
+    if(buffer_size>=4) {
         unsigned long word=*(const unsigned long *)p, v=crc^word;
         crc=native_crc_slices[2][v&255]^native_crc_slices[1][(v>>8)&255]^native_crc_slices[0][(v>>16)&255]^crc_globals.table[v>>24];
         p+=4;buffer_size-=4;

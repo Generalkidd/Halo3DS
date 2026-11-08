@@ -677,6 +677,20 @@ struct widget_instance;
 #include "text/text_group.h"
 #include "text/unicode.h"
 #include "ui_widget.h"
+#ifdef HALO_N3DS
+#include "engine_controls.h"
+#endif
+
+static unsigned long widget_clock_milliseconds(void)
+{
+#if HALO_N3DS_TEXTURE_COMPARE_FIXTURE
+	/* Fix animation phase across comparison runs with different I/O times. */
+	extern long n3ds_texture_compare_menu_milliseconds(void);
+	return n3ds_texture_compare_menu_milliseconds();
+#else
+	return system_milliseconds();
+#endif
+}
 
 /* ---------- constants */
 
@@ -1585,6 +1599,38 @@ static char button_mappings[_icon_custom_1 - _icon_action] =
 	_icon_right_stick	/* look */
 };
 
+#ifdef HALO_N3DS
+boolean n3ds_ui_gameplay_button_label(
+	short icon,
+	wchar_t label[N3DS_GAMEPLAY_BUTTON_LABEL_SIZE])
+{
+	static const enum native_control_action actions[_icon_accept - _icon_action] = {
+		[_icon_action - _icon_action] = NATIVE_ACTION_RELOAD,
+		[_icon_throw_grenade - _icon_action] = NATIVE_ACTION_GRENADE,
+		[_icon_primary_trigger - _icon_action] = NATIVE_ACTION_FIRE,
+		[_icon_integrated_light - _icon_action] = NATIVE_ACTION_FLASHLIGHT,
+		[_icon_jump - _icon_action] = NATIVE_ACTION_JUMP,
+		[_icon_use_equipment - _icon_action] = NATIVE_ACTION_MELEE,
+		[_icon_rotate_weapons - _icon_action] = NATIVE_ACTION_SWITCH_WEAPON,
+		[_icon_rotate_grenades - _icon_action] = NATIVE_ACTION_SWITCH_GRENADE,
+		[_icon_crouch - _icon_action] = NATIVE_ACTION_CROUCH,
+		[_icon_zoom - _icon_action] = NATIVE_ACTION_ZOOM,
+	};
+	if (icon < _icon_action || icon >= _icon_accept)
+		return FALSE;
+
+	const char *button = n3ds_controls_action_button_name(actions[icon - _icon_action],
+		n3ds_input_platform_original_model());
+	unsigned int i = 0;
+	label[i++] = L'[';
+	while (*button && i < N3DS_GAMEPLAY_BUTTON_LABEL_SIZE - 2)
+		label[i++] = (unsigned char)*button++;
+	label[i++] = L']';
+	label[i] = L'\0';
+	return TRUE;
+}
+#endif
+
 real global_ui_white_red = 0.8f;
 real global_ui_white_green = 0.8f;
 real global_ui_white_blue = 0.8f;
@@ -1759,7 +1805,7 @@ void draw_bitmap_in_rect(
 					interface_get_tag_index(_interface_bitmap_iface_map3))->bitmaps,
 				0,
 				struct bitmap_data);
-			long time = system_milliseconds();
+			long time = widget_clock_milliseconds();
 
 			map0_offset.x =
 				compute_offset_coordinate(time, 0.03215434f) * 311.0f;
@@ -2195,6 +2241,11 @@ void ui_widget_delete(
 	if (widget->delete_recursion_lock)
 		return;
 	widget->delete_recursion_lock = TRUE;
+#ifdef HALO_N3DS
+	/* A replacement can reuse this address from the widget pool. */
+	if (widget == widget_globals.active_widgets[0])
+		n3ds_controls_widget_deleted(widget);
+#endif
 	if (widget->local_player_index != NONE && !widget->parent)
 		player_control_inhibit_buttons(
 			widget->local_player_index,
@@ -2838,12 +2889,19 @@ void ui_widgets_delete_history(
 }
 
 #ifdef HALO_N3DS
-int n3ds_ui_pause_menu_active(void)
+const void *n3ds_ui_controls_root(void)
 {
-    struct widget_instance *root=widget_globals.active_widgets[0];
-    if(!root || root->widget_is_error_dialog || root->definition_tag_index==NONE)return 0;
+    const struct widget_instance *root=widget_globals.active_widgets[0];
+    return root && !root->widget_is_error_dialog ? root : NULL;
+}
+
+int n3ds_ui_controls_shortcut_active(void)
+{
+    const struct widget_instance *root=n3ds_ui_controls_root();
+    if(!root || root->definition_tag_index==NONE)return 0;
     const char *name=tag_get_name(root->definition_tag_index);
-    return name && (!strcmp(name,"ui\\shell\\solo_game\\pause_game\\pause_game") ||
+    return name && (!strcmp(name,"ui\\shell\\main_menu\\main_menu") ||
+        !strcmp(name,"ui\\shell\\solo_game\\pause_game\\pause_game") ||
         !strcmp(name,"ui\\shell\\solo_game\\pause_game\\pause_game_split_screen") ||
         !strcmp(name,"ui\\shell\\multiplayer_game\\pause_game\\1p_pause_game"));
 }
@@ -3837,7 +3895,7 @@ static void render_state_bitmap(
 	bitmap = NULL;
 	clip = NULL;
 	if (icon->frame_rate)
-		frame_index = system_milliseconds() * 30 / 1000 / icon->frame_rate;
+		frame_index = widget_clock_milliseconds() * 30 / 1000 / icon->frame_rate;
 	hud_retrieve_bitmap_and_bounding_rect(
 		bitmap_group_index,
 		icon->sequence_index,
@@ -3904,6 +3962,14 @@ void draw_string_and_hack_in_icons(
 			short icon_index;
 
 			current = icon_spec + wcslen(icon_names[icon_type]);
+#ifdef HALO_N3DS
+			wchar_t label[N3DS_GAMEPLAY_BUTTON_LABEL_SIZE];
+			if (n3ds_ui_gameplay_button_label(icon_type, label))
+			{
+				render_state_text(bounds, &cursor_bounds, label);
+				continue;
+			}
+#endif
 			remapped_icon_type = remap_sticks_for_local_player(
 				icon_type,
 				local_player_index_for_draw_string_and_hack_in_icons);
@@ -6472,7 +6538,7 @@ void process_ui_widgets(
 		"c:\\halo\\SOURCE\\interface\\ui_widget.c",
 		644,
 		widget_globals.initialized);
-	widget_globals.current_system_milliseconds = system_milliseconds();
+	widget_globals.current_system_milliseconds = widget_clock_milliseconds();
 	if (widget_globals.initialization_thread)
 	{
 		if (!thread_has_exited(widget_globals.initialization_thread))

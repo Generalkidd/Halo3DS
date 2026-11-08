@@ -8,29 +8,42 @@
 #include "engine_generic.h"
 #include "engine_textures.h"
 #include "engine_renderer.h"
+#include "engine_presentation.h"
 /* Native radar restores the original64px target. CPU allocation fallback
  * retains the prior32px New/16px original sampling budget. */
 enum { SLOTS=24, SENSOR=32, SENSOR_GPU=64 };
-static C3D_Tex textures[SLOTS];
-static unsigned int count,used;
-/* Exact content keys: resource addresses can be reused by the map cache.
- * Slot lifetime follows the waited FrameBegin; sensor writes invalidate it. */
-static struct meter_cache_entry {
+enum hud_texture_kind { HUD_SCRATCH, HUD_METER, HUD_MULTIPLY };
+struct hud_meter_key {
     void *pixels;
     unsigned int bytes;
     unsigned int source_id;
-    int valid;
     struct native_hud_meter packet;
-} meter_cache[SLOTS];
-static unsigned int cache_hits,cache_misses;
+};
+struct hud_multiply_key {
+    unsigned int source_id[2];
+    float uv[2][4][2],tint[2][4],color[4][4];
+    int point,wrap[2];
+};
+/* Draw order is unrelated to cache identity. Keep every slot already used
+ * by the current command list immutable until the next waited FrameBegin. */
+static struct hud_texture_slot {
+    C3D_Tex texture;
+    u64 referenced,recent;
+    enum hud_texture_kind kind;
+    union { struct hud_meter_key meter; struct hud_multiply_key multiply; } key;
+} textures[SLOTS];
+static u64 hud_frame=1;
+static unsigned int cache_hits,cache_misses,multiply_hits,multiply_misses;
 static unsigned int identity_hits,content_comparisons;
 static unsigned int texel_evaluations,texel_reuses,texel_kills;
 long long n3ds_engine_ticks(void);
 void n3ds_log(const char *);
+#ifdef HALO_N3DS_HUD_PROFILE
 static long long hud_ticks[4];
 void n3ds_gpu_hud_profile_reset(void) { memset(hud_ticks,0,sizeof(hud_ticks)); }
 void n3ds_gpu_hud_profile_add(unsigned int stage,long long ticks) { if(stage<4) hud_ticks[stage]+=ticks; }
 void n3ds_gpu_hud_profile_read(long long ticks[4]) { memcpy(ticks,hud_ticks,sizeof(hud_ticks)); }
+#endif
 static int sensor_size=SENSOR;
 static struct {C3D_Tex *texture;C3D_RenderTarget *target;int failed;} sensor_gpu[3];
 static int sensor_native;
@@ -41,7 +54,7 @@ static int sensor_native_tests(void);
 static float sensor[SENSOR][SENSOR][3];
 static struct {
     void *source;
-    unsigned int bytes,width,height,hits,misses;
+    unsigned int bytes,width,height,hits,misses,source_id;
     int sample_size;
     int valid;
     float alpha[SENSOR][SENSOR];
@@ -210,27 +223,32 @@ int n3ds_gpu_hud_icon_bounds(void *texture,float bounds[4])
 
 static const float *sensor_mask_samples(const C3D_Tex *t)
 {
-    /* The mask coordinates never depend on the animated sweep. Compare exact
-     * source bytes, including same-address mutations and changed dimensions.
-     * Oversized textures/allocation failure use the original scalar path. */
+    /* The mask coordinates never depend on the animated sweep. Immutable
+     * resource IDs cover pixel lifetime; mutable sources retain an exact
+     * byte comparison. Dimensions and output size belong to either key. */
     if(!t || !t->data || !t->width || !t->height || t->width>128 || t->height>128) return NULL;
     unsigned int bytes=t->width*t->height*4;
-    if(sensor_mask.valid && sensor_mask.sample_size==sensor_size && sensor_mask.width==t->width && sensor_mask.height==t->height && !memcmp(sensor_mask.source,t->data,bytes)) {
+    unsigned int source_id=n3ds_gpu_texture_content_id((void *)t);
+    if(sensor_mask.valid && sensor_mask.sample_size==sensor_size && sensor_mask.width==t->width && sensor_mask.height==t->height &&
+       sensor_mask.source_id==source_id && (source_id || (sensor_mask.source && !memcmp(sensor_mask.source,t->data,bytes)))) {
         ++sensor_mask.hits;return &sensor_mask.alpha[0][0];
     }
     ++sensor_mask.misses;sensor_mask.valid=0;
-    if(sensor_mask.bytes!=bytes) {
+    if(source_id) {
+        free(sensor_mask.source);sensor_mask.source=NULL;sensor_mask.bytes=0;
+    } else if(sensor_mask.bytes!=bytes) {
         free(sensor_mask.source);sensor_mask.source=malloc(bytes);
         sensor_mask.bytes=sensor_mask.source?bytes:0;
     }
-    if(!sensor_mask.source) return NULL;
+    if(!source_id && !sensor_mask.source) return NULL;
     const float inverse_size=1.f/sensor_size;
     for(int y=0;y<sensor_size;++y) for(int x=0;x<sensor_size;++x) {
         float qx=(2.f*(x+.5f)*inverse_size-1+1.015625f)/2.0625f;
         float qy=(1.046875f-(1-2.f*(y+.5f)*inverse_size))/2.0625f,m[4];
         sample(t,1-qx,qy,70.f/255.f,m);sensor_mask.alpha[y][x]=m[3];
     }
-    memcpy(sensor_mask.source,t->data,bytes);
+    if(!source_id) memcpy(sensor_mask.source,t->data,bytes);
+    sensor_mask.source_id=source_id;
     sensor_mask.sample_size=sensor_size;sensor_mask.width=t->width;sensor_mask.height=t->height;sensor_mask.valid=1;
     return &sensor_mask.alpha[0][0];
 }
@@ -265,26 +283,74 @@ static int sensor_mask_tests(void)
     n3ds_log("PASS: sensor mask cache: 1280 scalar samples, source mutation, dimensions, content identity, hits and oversize fallback");
     return 1;
 }
-static C3D_Tex *acquire(unsigned int width,unsigned int height)
+static void clear_hud_key(struct hud_texture_slot *slot)
 {
-    if(used>=SLOTS) {n3ds_log("HUD ALLOCATION: exhausted per-frame slots");return NULL;}
-    C3D_Tex *t=&textures[used];
-    if(used<count && (t->width!=width || t->height!=height)) {
+    n3ds_gpu_texture_revision_begin(&slot->texture);
+    if(slot->kind==HUD_METER) free(slot->key.meter.pixels);
+    slot->kind=HUD_SCRATCH;
+}
+
+static C3D_Tex *reference_hud_slot(struct hud_texture_slot *slot)
+{
+    slot->referenced=hud_frame;
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+    if(!n3ds_presentation_midpoint_active())
+#endif
+        slot->recent=hud_frame;
+    return &slot->texture;
+}
+
+static struct hud_texture_slot *choose_hud_slot(unsigned int width,unsigned int height,int reuse_only)
+{
+    struct hud_texture_slot *scratch=NULL,*empty=NULL,*oldest=NULL;
+    for(unsigned int i=0;i<SLOTS;++i) {
+        struct hud_texture_slot *slot=&textures[i];
+        if(slot->referenced==hud_frame) continue;
+        if(reuse_only && (!slot->texture.data || slot->texture.width!=width || slot->texture.height!=height)) continue;
+        if(!slot->texture.data) {
+            if(!empty) empty=slot;
+        } else if(slot->kind==HUD_SCRATCH) {
+            if(slot->texture.width==width && slot->texture.height==height) return slot;
+            if(!scratch) scratch=slot;
+        } else if(!oldest || slot->recent<oldest->recent) {
+            oldest=slot;
+        }
+    }
+    if(scratch) return scratch;
+    if(empty) return empty;
+    return oldest;
+}
+
+static struct hud_texture_slot *acquire(unsigned int width,unsigned int height)
+{
+    struct hud_texture_slot *slot=choose_hud_slot(width,height,0);
+    if(!slot) {n3ds_log("HUD ALLOCATION: exhausted per-frame slots");return NULL;}
+    clear_hud_key(slot);
+    C3D_Tex *t=&slot->texture;
+    if(t->data && (t->width!=width || t->height!=height)) {
         C3D_TexDelete(t);memset(t,0,sizeof(*t));
-        meter_cache[used].valid=0;
     }
     if(!t->data && !C3D_TexInit(t,width,height,GPU_RGBA8)) {
-        char message[160];snprintf(message,sizeof(message),"HUD ALLOCATION: slot=%u width=%u height=%u linear_free=%u",used,width,height,(unsigned int)linearSpaceFree());
+        /* Give up a matching old bake before dropping the requested draw. */
+        struct hud_texture_slot *reuse=choose_hud_slot(width,height,1);
+        if(reuse) {clear_hud_key(reuse);reference_hud_slot(reuse);return reuse;}
+        char message[160];snprintf(message,sizeof(message),"HUD ALLOCATION: slot=%u width=%u height=%u linear_free=%u",(unsigned int)(slot-textures),width,height,(unsigned int)linearSpaceFree());
         n3ds_log(message);return NULL;
     }
-    ++used;if(count<used) count=used;
-    return t;
+    reference_hud_slot(slot);
+    return slot;
 }
-void n3ds_gpu_hud_frame_begin(void) { used=0; }
+void n3ds_gpu_hud_frame_begin(void) { ++hud_frame; }
 static float quad_value(float a,float b,float c,float d,float u,float v)
 { return (a+(b-a)*u)*(1-v)+(d+(c-d)*u)*v; }
 static int plasma_wrap(int x,int size,int wrap)
-{ return wrap?((x%size)+size)%size:(x<0?0:x>=size?size-1:x); }
+{
+    if(!wrap) return x<0?0:x>=size?size-1:x;
+    /* All native texture sizes are powers of two. Unsigned masking retains
+     * Euclidean wrapping for negative taps without signed division. */
+    if(size>0 && !(size&(size-1))) return (unsigned int)x&(unsigned int)(size-1);
+    return ((x%size)+size)%size;
+}
 static void plasma_sample(const C3D_Tex *t,float u,float v,int point,int wrap,float out[4])
 {
     /* Reduce wrapped coordinates first to keep long-running animation away
@@ -292,10 +358,14 @@ static void plasma_sample(const C3D_Tex *t,float u,float v,int point,int wrap,fl
     u=wrap?u-floorf(u):clamp(u);v=wrap?v-floorf(v):clamp(v);
     float x=u*t->width-(point?0:.5f),y=v*t->height-(point?0:.5f);
     int ix=(int)floorf(x),iy=(int)floorf(y);float fx=x-ix,fy=y-iy;
+    int taps=point?1:2,tx[2],ty[2];
+    for(int i=0;i<taps;++i) {
+        tx[i]=plasma_wrap(ix+i,t->width,wrap);
+        ty[i]=t->height-1-plasma_wrap(iy+i,t->height,wrap);
+    }
     memset(out,0,4*sizeof(float));
-    for(int j=0;j<(point?1:2);++j) for(int i=0;i<(point?1:2);++i) {
-        int tx=plasma_wrap(ix+i,t->width,wrap),ty=plasma_wrap(iy+j,t->height,wrap);
-        unsigned int p=((const unsigned int *)t->data)[tile(tx,t->height-1-ty,t->width)];
+    for(int j=0;j<taps;++j) for(int i=0;i<taps;++i) {
+        unsigned int p=((const unsigned int *)t->data)[tile(tx[i],ty[j],t->width)];
         float w=point?1:(i?fx:1-fx)*(j?fy:1-fy);
         for(int c=0;c<4;++c) out[c]+=((p>>(24-c*8))&255)*(w/255.f);
     }
@@ -307,26 +377,50 @@ int n3ds_gpu_screen_multiply(const struct native_menu_plasma *p,const struct nat
     unsigned int sx=8,sy=8;
     while(sx<64 && (sx<a->width || sx<b->width)) sx*=2;
     while(sy<64 && (sy<a->height || sy<b->height)) sy*=2;
-    unsigned int slot=used;C3D_Tex *t=acquire(sx,sy);if(!t) return 0;
-    meter_cache[slot].valid=0;
-    for(unsigned int y=0;y<sy;++y) for(unsigned int x=0;x<sx;++x) {
-        float u=(x+.5f)/sx,v=(y+.5f)/sy,samples[2][4];unsigned int pixel=0;
-        for(int m=0;m<2;++m) {
-            float coords[2];
-            for(int c=0;c<2;++c) coords[c]=quad_value(p->uv[m][0][c],p->uv[m][1][c],p->uv[m][2][c],p->uv[m][3][c],u,v);
-            if(!isfinite(coords[0]) || !isfinite(coords[1])) return 0;
-            plasma_sample(p->textures[m],coords[0],coords[1],p->point,p->wrap[m],samples[m]);
+    struct hud_multiply_key key={0};
+    key.source_id[0]=n3ds_gpu_texture_content_id(a);
+    key.source_id[1]=n3ds_gpu_texture_content_id(b);
+    int reusable=key.source_id[0] && key.source_id[1];
+    C3D_Tex *t=NULL;
+    if(reusable) {
+        /* Position, viewport and final framebuffer blend do not affect the bake. */
+        memcpy(key.uv,p->uv,sizeof(key.uv));memcpy(key.tint,p->tint,sizeof(key.tint));
+        memcpy(key.wrap,p->wrap,sizeof(key.wrap));key.point=p->point;
+        for(int i=0;i<4;++i) memcpy(key.color[i],vertices[i].color,sizeof(key.color[i]));
+        for(unsigned int i=0;i<SLOTS;++i) {
+            struct hud_texture_slot *slot=&textures[i];
+            if(slot->kind==HUD_MULTIPLY && slot->texture.width==sx && slot->texture.height==sy &&
+               !memcmp(&slot->key.multiply,&key,sizeof(key))) {
+                t=reference_hud_slot(slot);++multiply_hits;break;
+            }
         }
-        /* Original screen packets: map0*tint0*vertex, then map1*tint1.
-         * Preserve independent animated UVs, tint/fade and framebuffer blend. */
-        for(int c=0;c<4;++c) {
-            float color=quad_value(vertices[0].color[c],vertices[1].color[c],vertices[2].color[c],vertices[3].color[c],u,v);
-            float value=samples[0][c]*p->tint[0][c]*color*samples[1][c]*p->tint[1][c];
-            pixel|=(unsigned int)(clamp(value)*255.f+.5f)<<(24-c*8);
-        }
-        ((unsigned int *)t->data)[tile(x,sy-1-y,sx)]=pixel;
     }
-    C3D_TexFlush(t);void *saved=n3ds_gpu_texture_bound(0);
+    if(!t) {
+        if(n3ds_presentation_reject_texture()) return 0;
+        struct hud_texture_slot *slot=acquire(sx,sy);if(!slot) return 0;
+        t=&slot->texture;
+        ++multiply_misses;
+        for(unsigned int y=0;y<sy;++y) for(unsigned int x=0;x<sx;++x) {
+            float u=(x+.5f)/sx,v=(y+.5f)/sy,samples[2][4];unsigned int pixel=0;
+            for(int m=0;m<2;++m) {
+                float coords[2];
+                for(int c=0;c<2;++c) coords[c]=quad_value(p->uv[m][0][c],p->uv[m][1][c],p->uv[m][2][c],p->uv[m][3][c],u,v);
+                if(!isfinite(coords[0]) || !isfinite(coords[1])) return 0;
+                plasma_sample(p->textures[m],coords[0],coords[1],p->point,p->wrap[m],samples[m]);
+            }
+            /* Original screen packets: map0*tint0*vertex, then map1*tint1. */
+            for(int c=0;c<4;++c) {
+                float color=quad_value(vertices[0].color[c],vertices[1].color[c],vertices[2].color[c],vertices[3].color[c],u,v);
+                float value=samples[0][c]*p->tint[0][c]*color*samples[1][c]*p->tint[1][c];
+                pixel|=(unsigned int)(clamp(value)*255.f+.5f)<<(24-c*8);
+            }
+            ((unsigned int *)t->data)[tile(x,sy-1-y,sx)]=pixel;
+        }
+        C3D_TexFlush(t);
+        n3ds_gpu_texture_revision_publish(t);
+        if(reusable) {slot->key.multiply=key;slot->kind=HUD_MULTIPLY;}
+    }
+    void *saved=n3ds_gpu_texture_bound(0);
     if(!n3ds_gpu_text_begin(width,height,0xffffffff,0,0) || !n3ds_gpu_texture_bind(0,t) || !n3ds_gpu_framebuffer_blend(p->blend)) {n3ds_gpu_texture_bind(0,saved);return 0;}
     struct native_text_vertex q[4];memcpy(q,vertices,sizeof(q));
     static const float uv[4][2]={{0,0},{1,0},{1,1},{0,1}};
@@ -488,8 +582,14 @@ done:
 void n3ds_gpu_hud_dispose(void)
 {
     extern void n3ds_log(const char *);char message[128];unsigned int bytes=0;
-    for(unsigned int i=0;i<SLOTS;++i) {bytes+=meter_cache[i].bytes;free(meter_cache[i].pixels);}
+    for(unsigned int i=0;i<SLOTS;++i) {
+        struct hud_texture_slot *slot=&textures[i];
+        if(slot->kind==HUD_METER && slot->key.meter.pixels) bytes+=slot->key.meter.bytes;
+        clear_hud_key(slot);
+        if(slot->texture.data) C3D_TexDelete(&slot->texture);
+    }
     snprintf(message,sizeof(message),"HUD BAKE CACHE: hits=%u misses=%u source_bytes=%u",cache_hits,cache_misses,bytes);n3ds_log(message);
+    snprintf(message,sizeof(message),"HUD MULTIPLY CACHE: hits=%u misses=%u",multiply_hits,multiply_misses);n3ds_log(message);
     snprintf(message,sizeof(message),"HUD TEXELS: evaluations=%u reused=%u alpha_killed=%u",texel_evaluations,texel_reuses,texel_kills);n3ds_log(message);
     snprintf(message,sizeof(message),"HUD SOURCE CHECKS: immutable_hits=%u mutable_comparisons=%u",identity_hits,content_comparisons);n3ds_log(message);
     identity_hits=content_comparisons=0;
@@ -497,43 +597,54 @@ void n3ds_gpu_hud_dispose(void)
     sensor_gpu_dispose();
     free(sensor_mask.source);memset(&sensor_mask,0,sizeof(sensor_mask));
     texel_evaluations=texel_reuses=texel_kills=0;
-    memset(meter_cache,0,sizeof(meter_cache));cache_hits=cache_misses=0;
-    for(unsigned int i=0;i<count;++i) C3D_TexDelete(&textures[i]);
-    memset(textures,0,sizeof(textures));memset(sensor,0,sizeof(sensor));used=count=0;
+    cache_hits=cache_misses=multiply_hits=multiply_misses=0;
+    memset(textures,0,sizeof(textures));memset(sensor,0,sizeof(sensor));hud_frame=1;
 }
 int n3ds_gpu_hud_meter(const struct native_hud_meter *m,const struct native_text_vertex v[4],float width,float height,int point,int wrapped)
 {
-    long long stamp=n3ds_engine_ticks();
+    HUD_PROFILE_BEGIN();
     C3D_Tex *source=n3ds_gpu_texture_bound(0);
     if(!source || !m || !m->mode2 || m->gradient!=1) return 0;
-    unsigned int slot=used;
-    C3D_Tex *t=acquire(source->width,source->height);if(!t) return 0;
-    struct meter_cache_entry *cache=&meter_cache[slot];
     struct native_hud_meter key=*m;key.pad[0]=key.pad[1]=0;
     unsigned int bytes=source->width*source->height*4;
     unsigned int source_id=n3ds_gpu_texture_content_id(source);
-    int same_source=0;
-    if(cache->valid && cache->bytes==bytes && !memcmp(&cache->packet,&key,sizeof(key))) {
-        if(source_id) {same_source=cache->source_id==source_id;if(same_source) ++identity_hits;}
-        else {++content_comparisons;same_source=!memcmp(cache->pixels,source->data,bytes);}
+    C3D_Tex *t=NULL;
+    for(unsigned int i=0;i<SLOTS;++i) {
+        struct hud_texture_slot *slot=&textures[i];
+        if(slot->kind!=HUD_METER || slot->texture.width!=source->width || slot->texture.height!=source->height)
+            continue;
+        const struct hud_meter_key *cached=&slot->key.meter;
+        if(cached->source_id!=source_id || cached->bytes!=bytes || memcmp(&cached->packet,&key,sizeof(key)))
+            continue;
+        if(source_id) ++identity_hits;
+        else {
+            ++content_comparisons;
+            if(memcmp(cached->pixels,source->data,bytes)) continue;
+        }
+        t=reference_hud_slot(slot);++cache_hits;break;
     }
-    if(same_source) ++cache_hits;
-    else {
-    ++cache_misses;cache->valid=0;
-    float constants[5][4];
-    const unsigned int colors[5]={m->minimum,m->maximum,m->flash,m->background,m->tint};
-    for(int i=0;i<5;++i) {
-        for(int c=0;c<3;++c) constants[i][c]=((colors[i]>>(16-c*8))&255)/255.f;
-        constants[i][3]=(colors[i]>>24)/255.f;
+    if(!t) {
+        if(n3ds_presentation_reject_texture()) return 0;
+        struct hud_texture_slot *slot=acquire(source->width,source->height);if(!slot) return 0;
+        t=&slot->texture;
+        ++cache_misses;
+        float constants[5][4];
+        const unsigned int colors[5]={m->minimum,m->maximum,m->flash,m->background,m->tint};
+        for(int i=0;i<5;++i) {
+            for(int c=0;c<3;++c) constants[i][c]=((colors[i]>>(16-c*8))&255)/255.f;
+            constants[i][3]=(colors[i]>>24)/255.f;
+        }
+        bake_meter_pixels(constants,m->negative,source->data,t->data,bytes/4);
+        C3D_TexFlush(t);
+        n3ds_gpu_texture_revision_publish(t);
+        void *pixels=source_id?NULL:malloc(bytes);
+        if(pixels) memcpy(pixels,source->data,bytes);
+        if(source_id || pixels) {
+            slot->key.meter=(struct hud_meter_key){.pixels=pixels,.bytes=bytes,.source_id=source_id,.packet=key};
+            slot->kind=HUD_METER;
+        }
     }
-    bake_meter_pixels(constants,m->negative,source->data,t->data,bytes/4);
-    C3D_TexFlush(t);
-    if(cache->bytes!=bytes) {
-        free(cache->pixels);cache->pixels=malloc(bytes);cache->bytes=cache->pixels?bytes:0;
-    }
-    if(cache->pixels) {memcpy(cache->pixels,source->data,bytes);cache->packet=key;cache->source_id=source_id;cache->valid=1;}
-    }
-    n3ds_gpu_hud_profile_add(0,n3ds_engine_ticks()-stamp);
+    HUD_PROFILE_END(0);
     if(!n3ds_gpu_text_begin(width,height,0xffffffff,point,wrapped) || !n3ds_gpu_texture_bind(0,t)) return 0;
     C3D_TexEnv *env=C3D_GetTexEnv(0);
     C3D_TexEnvSrc(env,C3D_Both,GPU_TEXTURE0,GPU_TEXTURE0,GPU_TEXTURE0);C3D_TexEnvFunc(env,C3D_Both,GPU_REPLACE);
@@ -564,6 +675,7 @@ static int sensor_gpu_begin(void)
      * can execute stale commands when the motion tracker becomes visible.
      * Queue order and deferred vertex/index flushes at present are unchanged;
      * FrameSplit enqueues work, and FrameEnd starts the queue. */
+    n3ds_gpu_framebuffer_invalidate();
     C3D_FrameSplit(GX_CMDLIST_FLUSH);
     C3D_RenderTargetClear(sensor_gpu[slot].target,C3D_CLEAR_COLOR,0,0);
     C3D_FrameDrawOn(sensor_gpu[slot].target);
@@ -708,25 +820,24 @@ int n3ds_gpu_sensor_profile_tests(void)
 }
 int n3ds_gpu_sensor_blip(void *texture,float px,float py,float size,const float color[3])
 {
-    long long stamp=n3ds_engine_ticks();
+    HUD_PROFILE_BEGIN();
     if(!texture || !isfinite(px) || !isfinite(py) || !isfinite(size) || size<0) return 0;
     if(size==0) return 1;
     if(sensor_native) {if(!sensor_gpu_blip(texture,px,py,size,color)) return 0;}
     else sensor_blip_add(texture,px,py,size,color);
-    n3ds_gpu_hud_profile_add(1,n3ds_engine_ticks()-stamp);
+    HUD_PROFILE_END(1);
     return 1;
 }
 int n3ds_gpu_sensor_end(void *sweep,void *mask,float scale,float cx,float cy,float radius,float width,float height)
 {
-    long long stamp=n3ds_engine_ticks();
+    HUD_PROFILE_BEGIN();
     if(!sweep || !mask || !isfinite(scale)) return 0;
     C3D_Tex *t;
     if(sensor_native) {t=sensor_gpu_end(sweep,mask,scale);if(!t) return 0;}
     else {
     ++sensor_cpu_frames;
-    unsigned int slot=used;
-    t=acquire(sensor_size,sensor_size);if(!t) return 0;
-    meter_cache[slot].valid=0;
+    struct hud_texture_slot *slot=acquire(sensor_size,sensor_size);if(!slot) return 0;
+    t=&slot->texture;
     const float tint[3]={.4588f,.7294f,1};
     const float *mask_alpha=sensor_mask_samples(mask);
     const float inverse_size=1.f/sensor_size;
@@ -742,8 +853,9 @@ int n3ds_gpu_sensor_end(void *sweep,void *mask,float scale,float cx,float cy,flo
         put(t,x,y,rgba);
     }
     C3D_TexFlush(t);
+    n3ds_gpu_texture_revision_publish(t);
     }
-    n3ds_gpu_hud_profile_add(1,n3ds_engine_ticks()-stamp);
+    HUD_PROFILE_END(1);
     if(!n3ds_gpu_text_begin(width,height,0xffffffff,0,0) || !n3ds_gpu_texture_bind(0,t)) return 0;
     /* Original surface RGB-only writes retain its cleared alpha=0, then
      * composite ONE/INVSRCALPHA. This adds its colored radar over the frame. */

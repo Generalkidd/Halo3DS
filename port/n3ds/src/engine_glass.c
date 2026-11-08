@@ -8,6 +8,7 @@
 #include "engine_cache.h"
 #include "cache_reader.h"
 #include "engine_textures.h"
+#include "engine_presentation.h"
 #include "engine_bitmaps.h"
 #include "s3tc.h"
 #include "bitmaps/bitmap_group.h"
@@ -51,6 +52,7 @@ const byte *n3ds_cube_load(long tag,short permutation)
         memset(cubes,0,sizeof(cubes));cube_count=0;cube_generation=n3ds_engine_cache_generation();
     }
     for(unsigned int i=0;i<cube_count;++i) if(cubes[i].bitmap==b) return cubes[i].rgba;
+    if(n3ds_presentation_reject_texture()) return NULL;
     assert(cube_count<CUBE_COUNT && n3ds_cache_resolve(view,b,sizeof(*b))==b);
     assert(b->signature=='bitm' && b->type==2 && b->depth==1 && b->width==b->height);
     assert(b->width>=8 && b->width<=256 && !(b->width&(b->width-1)) && b->mipmap_count>=0 && b->mipmap_count<=8);
@@ -88,10 +90,13 @@ const byte *n3ds_cube_load(long tag,short permutation)
     }
     free(decoded);free(encoded);cubes[cube_count++].bitmap=b;
     char text[160];snprintf(text,sizeof(text),"NATIVE CUBE: tag=%08lx format=%d faces=6 size=32 level=%u stride=%u",tag,b->format,level,face_stride);n3ds_log(text);
-    /* Read-only decode evidence, captured once per resource generation. */
+#if defined(HALO_N3DS_RENDERER_TESTS) || defined(HALO_N3DS_ARCHIVE_VERIFY)
+    /* Capture decode evidence only when explicitly building diagnostics.
+     * Ordinary demand loading must not write a proof image to the SD card. */
     snprintf(text,sizeof(text),"z:\\native-cube-%08lx.bin",tag);
     FILE *proof=fopen(text,"wb");assert(proof);
     assert(fwrite(destination,6*CUBE_SIZE*CUBE_SIZE*4,1,proof)==1);assert(!fclose(proof));
+#endif
     return destination;
 }
 void n3ds_cube_sample(const byte *pixels,const float direction[3],float rgb[4])
@@ -140,7 +145,10 @@ static int glass_native(const struct glass_shader *g,short permutation,
     if(rigid) {m.pose=rows;}
     else {
     const real_vector2d unit={1,1};
-    const struct native_render_vertex *pose=n3ds_model_skin_stream(cached,count,&p->skinning,&unit,p->unique_identifier);
+    const real_vector3d *normals=NULL;
+    const struct native_render_vertex *pose=(m.cube || m.diffuse)?
+        n3ds_model_unlit_skin_stream(cached,count,&p->skinning,&unit,p->unique_identifier,&normals):
+        n3ds_model_skin_stream(cached,count,&p->skinning,&unit,p->unique_identifier);
     out=n3ds_gpu_model_vertices_allocate(count);assert(out);
     for(unsigned int i=0;i<count;++i) {
         struct model_vertex_uncompressed decoded;struct native_render_vertex temporary;
@@ -150,7 +158,8 @@ static int glass_native(const struct glass_shader *g,short permutation,
         if(!pose) assert(n3ds_model_skin_vertex(v,&p->skinning,&unit,&temporary));
         memcpy(out[i].position,pose?pose[i].position:temporary.position,12);
         real_vector3d normal={0};
-        if(m.cube || m.diffuse) {
+        if(normals)normal=normals[i];
+        else if(m.cube || m.diffuse) {
             for(int k=0;k<2;++k) if(v->node_weights[k]) {
                 assert(v->nodes[k]>=0 && v->nodes[k]<p->skinning.node_matrix_count);
                 real_vector3d n;matrix4x3_transform_vector(p->skinning.node_matrices+v->nodes[k],&v->normal,&n);
@@ -164,7 +173,7 @@ static int glass_native(const struct glass_shader *g,short permutation,
     }
     n3ds_gpu_geometry_flush(out,count*sizeof(*out));
     }
-    const unsigned short *gpu_indices=n3ds_gpu_indices_upload(indices,index_count);assert(gpu_indices);
+    const unsigned short *gpu_indices=n3ds_gpu_indices_prepare(indices,index_count);assert(gpu_indices);
     assert(n3ds_gpu_glass_native_sky_draw(rigid?rigid:out,gpu_indices,index_count,&m,!!(p->geometry_flags&(1<<4))));
     static unsigned int generation,seen_count;static const void *seen[32];
     if(generation!=n3ds_engine_cache_generation()) {generation=n3ds_engine_cache_generation();seen_count=0;}
@@ -197,18 +206,35 @@ void n3ds_glass_model_draw(const struct shader *shader,short permutation,
         }
     }
     if(glass_native(g,permutation,p,data,count,type,indices,index_count)) return;
+    if(n3ds_presentation_midpoint_rejected()) return;
     const byte *cube=g->reflection_map.index!=NONE && (g->perpendicular.alpha>0 || g->parallel.alpha>0)?n3ds_cube_load(g->reflection_map.index,permutation):NULL;
+    if(n3ds_presentation_midpoint_rejected()) return;
+    int pose_ready=0;
+    const struct model_vertex_uncompressed *cached=NULL;
+    const struct native_render_vertex *posed=NULL;
+    const unsigned short *gpu_indices=NULL;
+    const real_vector2d unit_scale={1,1};
     for(int pass=0;pass<3;++pass) {
         if(pass==0 && g->tint_map.index==NONE && !g->tint.red && !g->tint.green && !g->tint.blue) continue;
         if(pass==1 && !cube) continue;
         if(pass==2 && g->diffuse_map.index==NONE) continue;
         long bitmap=pass==0?g->tint_map.index:pass==2?g->diffuse_map.index:NONE;
-        if(bitmap!=NONE) { assert(rasterizer_set_texture_direct(0,bitmap,permutation)); }
+        if(bitmap!=NONE) {
+            boolean bound=rasterizer_set_texture_direct(0,bitmap,permutation);
+            if(!bound && n3ds_presentation_midpoint_rejected()) return;
+            assert(bound);
+        }
         else assert(n3ds_gpu_texture_bind(0,NULL));
+        /* The three layers share the same immutable source and pose for this
+         * draw. Each layer still owns its GPU vertices and material state. */
+        if(!pose_ready) {
+            cached=type==5?n3ds_model_decode_stream(data,count):NULL;
+            posed=n3ds_model_skin_stream(cached,count,&p->skinning,&unit_scale,p->unique_identifier);
+            pose_ready=1;
+        }
+        const real_vector3d *normals=pass==1?
+            n3ds_model_normal_stream(cached,count,&p->skinning,p->unique_identifier):NULL;
         struct native_render_vertex *v=n3ds_gpu_model_vertices_allocate(count);assert(v);
-        const struct model_vertex_uncompressed *cached=type==5?n3ds_model_decode_stream(data,count):NULL;
-        const real_vector2d unit_scale={1,1};
-        const struct native_render_vertex *posed=n3ds_model_skin_stream(cached,count,&p->skinning,&unit_scale,p->unique_identifier);
         if(posed) memcpy(v,posed,count*sizeof(*v));
         real scale=pass==0?g->tint_scale:g->diffuse_scale;
         real_vector2d uv={scale*p->base_map_scale.i,scale*p->base_map_scale.j};
@@ -225,7 +251,8 @@ void n3ds_glass_model_draw(const struct shader *shader,short permutation,
             if(pass==0) memcpy(v[i].color,g->tint.n,12);
             if(pass==1) {
                 real_vector3d normal={0},eye;float n2=0,e2=0,dot=0,reflected[3];
-                for(int k=0;k<2;++k) if(vertex->node_weights[k]) {
+                if(normals)normal=normals[i];
+                else for(int k=0;k<2;++k) if(vertex->node_weights[k]) {
                     real_vector3d n;matrix4x3_transform_vector(p->skinning.node_matrices+vertex->nodes[k],&vertex->normal,&n);
                     for(int c=0;c<3;++c) normal.n[c]+=n.n[c]*vertex->node_weights[k];
                 }
@@ -234,7 +261,8 @@ void n3ds_glass_model_draw(const struct shader *shader,short permutation,
                     n2+=normal.n[c]*normal.n[c];e2+=eye.n[c]*eye.n[c];
                 }
                 assert(n2>1e-12f && e2>1e-12f);
-                for(int c=0;c<3;++c) {normal.n[c]/=sqrtf(n2);eye.n[c]/=sqrtf(e2);dot+=normal.n[c]*eye.n[c];}
+                const float normal_length=sqrtf(n2),eye_length=sqrtf(e2);
+                for(int c=0;c<3;++c) {normal.n[c]/=normal_length;eye.n[c]/=eye_length;dot+=normal.n[c]*eye.n[c];}
                 for(int c=0;c<3;++c) reflected[c]=2*dot*normal.n[c]-eye.n[c];
                 float facing=PIN(fabsf(dot),0.f,1.f),rgb[4];n3ds_cube_sample(cube,reflected,rgb);
                 float alpha=g->parallel.alpha+(g->perpendicular.alpha-g->parallel.alpha)*facing;
@@ -242,7 +270,10 @@ void n3ds_glass_model_draw(const struct shader *shader,short permutation,
             }
         }
         n3ds_gpu_geometry_flush(v,count*sizeof(*v));
-        assert(n3ds_gpu_glass_sky_draw(v,indices,index_count,pass,!!(g->flags&4),!!(p->geometry_flags&(1<<4))));
+        /* All layers use the same immutable triangles. Stage only once,
+         * after the first layer has passed texture admission. */
+        if(!gpu_indices) {gpu_indices=n3ds_gpu_indices_prepare(indices,index_count);assert(gpu_indices);}
+        assert(n3ds_gpu_glass_sky_draw(v,gpu_indices,index_count,pass,!!(g->flags&4),!!(p->geometry_flags&(1<<4))));
     }
     static const void *seen[16];static int seen_count;int i;
     for(i=0;i<seen_count && seen[i]!=shader;++i) {}

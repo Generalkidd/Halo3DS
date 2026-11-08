@@ -35,12 +35,33 @@ static char *format_copy(const char *format)
     copy[out] = 0;
     return copy;
 }
+static const char *format_prepare(const char *format, char **owned)
+{
+    *owned = NULL;
+    const char *cursor = format;
+    /* Ordinary game formats need no translation. Borrow them for this call
+     * instead of allocating/copying/freeing on every HUD or log operation.
+     * Keep exactly format_copy's grammar, including escaped percent signs;
+     * literal I64/I32 text must not force a translation allocation. */
+    while ((cursor = strchr(cursor, '%')) != NULL) {
+        ++cursor;
+        if (*cursor == '%') { ++cursor; continue; }
+        while (*cursor && strchr("-+ #0123456789.*", *cursor)) ++cursor;
+        if (!strncmp(cursor, "I64", 3) || !strncmp(cursor, "I32", 3)) {
+            *owned = format_copy(format);
+            return *owned;
+        }
+    }
+    return format;
+}
 int halo_n3ds_vsnprintf(char *out, size_t count, const char *format, va_list args)
 {
-    char *copy = format_copy(format);
-    if (!copy) return -1;
-    int result = vsnprintf(out, count, copy, args);
-    free(copy); return result;
+    char *owned;
+    const char *native = format_prepare(format, &owned);
+    if (!native) return -1;
+    int result = vsnprintf(out, count, native, args);
+    if (owned) free(owned);
+    return result;
 }
 int halo_n3ds_snprintf(char *out, size_t count, const char *format, ...)
 {
@@ -50,10 +71,12 @@ int halo_n3ds_snprintf(char *out, size_t count, const char *format, ...)
 }
 int halo_n3ds_vsprintf(char *out, const char *format, va_list args)
 {
-    char *copy = format_copy(format);
-    if (!copy) return -1;
-    int result = vsprintf(out, copy, args);
-    free(copy); return result;
+    char *owned;
+    const char *native = format_prepare(format, &owned);
+    if (!native) return -1;
+    int result = vsprintf(out, native, args);
+    if (owned) free(owned);
+    return result;
 }
 int halo_n3ds_sprintf(char *out, const char *format, ...)
 {
@@ -63,10 +86,12 @@ int halo_n3ds_sprintf(char *out, const char *format, ...)
 }
 int halo_n3ds_vfprintf(FILE *stream, const char *format, va_list args)
 {
-    char *copy = format_copy(format);
-    if (!copy) return -1;
-    int result = vfprintf(stream, copy, args);
-    free(copy); return result;
+    char *owned;
+    const char *native = format_prepare(format, &owned);
+    if (!native) return -1;
+    int result = vfprintf(stream, native, args);
+    if (owned) free(owned);
+    return result;
 }
 int halo_n3ds_fprintf(FILE *stream, const char *format, ...)
 {

@@ -6,7 +6,14 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include "engine_action_replay.h"
+#include "engine_allocation_profile.h"
 #include "engine_diagnostics.h"
+#include "engine_renderer.h"
+
+#ifdef HALO_N3DS_ALLOCATION_PROFILE
+#include "engine_allocation_profile.inl"
+#endif
 
 /* Original AI path states alone occupy about 112 KiB per nested caller.
  * B30's firing-position search exceeds the former 256 KiB stack (observed SP
@@ -36,7 +43,36 @@ int n3ds_engine_float_tests(void)
 long long n3ds_engine_ticks(void) { return (long long)svcGetSystemTick(); }
 long long n3ds_engine_tick_frequency(void) { return SYSCLOCK_ARM11; }
 int n3ds_engine_app_running(void) { return aptMainLoop(); }
-float n3ds_platform_3d_slider(void) { return osGet3DSliderState(); }
+int n3ds_platform_console_model(void)
+{
+    static int model=-2;
+    if(model==-2) {
+        model=-1;
+        if(R_SUCCEEDED(cfguInit())) {
+            u8 value=0;
+            Result result=CFGU_GetSystemModel(&value);
+            cfguExit();
+            if(R_SUCCEEDED(result)) model=value;
+        }
+    }
+    return model;
+}
+int n3ds_platform_stereo_supported(void)
+{
+    int model=n3ds_platform_console_model();
+    /* Preserve stereo for systems whose model is unknown or unavailable. */
+    return model!=CFG_MODEL_2DS && model!=CFG_MODEL_N2DSXL;
+}
+#ifdef HALO_N3DS_PRESENT_INTERPOLATION
+int n3ds_platform_is_new_2ds_xl(void)
+{
+    return n3ds_platform_console_model() == CFG_MODEL_N2DSXL;
+}
+#endif
+float n3ds_platform_3d_slider(void)
+{
+    return n3ds_platform_stereo_supported()?osGet3DSliderState():0.f;
+}
 int n3ds_input_platform_original_model(void)
 {
     static int original=-1;
@@ -76,6 +112,7 @@ void n3ds_state_flush(void *pointer, unsigned int bytes) {
     extern void n3ds_object_light_cache_reset(void);
     n3ds_object_light_cache_reset(); /* restored cluster references belong to the snapshot */
     GSPGPU_FlushDataCache(pointer, bytes);
+    n3ds_action_replay_restore();
 }
 int n3ds_state_make_directory(void)
 {
@@ -121,6 +158,14 @@ unsigned long n3ds_engine_available_memory(void)
      * return the known free arena space, not a wrapped near-4GiB estimate. */
     return state.application_free + state.heap_free + state.linear_free;
 }
+#ifdef HALO_N3DS_ALGORITHM_PROFILE
+void n3ds_engine_allocator_usage(unsigned int *heap_used,unsigned int *linear_used)
+{
+    struct mallinfo heap=mallinfo();
+    *heap_used=heap.uordblks>0?(unsigned int)heap.uordblks:0;
+    *linear_used=n3ds_linear_allocator_used();
+}
+#endif
 void n3ds_engine_memory_snapshot(struct native_memory_snapshot *result)
 {
     struct mallinfo heap=mallinfo();

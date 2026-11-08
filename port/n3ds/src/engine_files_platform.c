@@ -23,6 +23,12 @@ static struct { struct search_level levels[SEARCH_DEPTH]; char root[NATIVE_PATH]
 static RecursiveLock file_lock;
 void n3ds_files_lock(void) { RecursiveLock_Lock(&file_lock); }
 void n3ds_files_unlock(void) { RecursiveLock_Unlock(&file_lock); }
+
+/* The read-only map stream is private to the cache and has its own cursor. */
+static LightLock map_stream_lock;
+void n3ds_map_stream_lock(void) { LightLock_Lock(&map_stream_lock); }
+void n3ds_map_stream_unlock(void) { LightLock_Unlock(&map_stream_lock); }
+
 static unsigned int current_thread_id(void)
 {
     u32 id=0;

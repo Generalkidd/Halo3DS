@@ -130,6 +130,14 @@ Rosalina: **L + D-pad Down + SELECT → Miscellaneous options → Dump DSP firmw
 
 ## Developing and packaging
 
+For the optional RGBA8 archive development path, add `--candidate-textures` to
+`prepare`. This writes `.ntx4` alongside the retained `.ntx`, using the same
+texture conversion. It is disabled by default and rejected for `update` and
+`verify`; launcher-only updates retain their existing fast path. The game must
+separately be built with `--texture-storage candidate-archive` to use it.
+See the [archive contract and unvalidated status](NTX4.md). The guided and
+Windows UI flows retain their default behavior.
+
 Install .NET SDK 10. From the repository root:
 
 ```sh

@@ -166,6 +166,10 @@ symbols in this file:
 #include "physics/collisions.h"
 #include "scenario/scenario.h"
 #include "structures/structure_bsp_definitions.h"
+#ifdef HALO_N3DS
+#include "engine_algorithm_profile.h"
+#include "engine_cache.h"
+#endif
 
 #include <stddef.h>
 
@@ -244,17 +248,18 @@ static void path_heap_insert(
 	short node_index,
 	short quantized_cost_estimate);
 static boolean surface_is_broken(
-	struct structure_bsp const *structure,
+	struct collision_bsp const *bsp,
 	long surface_index);
 static boolean path_state_begin(
 	struct path_state *state);
 static real closest_available_point_on_surface(
-	struct structure_bsp const *structure,
+	struct collision_bsp const *bsp,
 	long surface_index,
 	real_point3d const *point,
 	real_point3d *closest_point);
 static short build_path_edges_for_surface(
 	struct structure_bsp const *structure,
+	struct collision_bsp const *bsp,
 	long surface_index,
 	struct path_edge *edges);
 static boolean path_state_traverse(
@@ -630,13 +635,9 @@ static void path_heap_insert(
 }
 
 static boolean surface_is_broken(
-	struct structure_bsp const *structure,
+	struct collision_bsp const *bsp,
 	long surface_index)
 {
-	struct collision_bsp const *bsp = TAG_BLOCK_GET_ELEMENT(
-		&structure->collision_bsp,
-		0,
-		struct collision_bsp);
 	struct collision_surface const *surface = TAG_BLOCK_GET_ELEMENT(
 		&bsp->surfaces,
 		surface_index,
@@ -1138,10 +1139,6 @@ static boolean path_state_begin(
 			initial_node->depth = 0;
 			initial_node->last_render_id = NONE;
 
-			bsp = TAG_BLOCK_GET_ELEMENT(
-				&state->structure->collision_bsp,
-				0,
-				struct collision_bsp);
 			match_assert(
 				"c:\\halo\\SOURCE\\ai\\path.c",
 				0x2E3,
@@ -1168,15 +1165,11 @@ static boolean path_state_begin(
 }
 
 static real closest_available_point_on_surface(
-	struct structure_bsp const *structure,
+	struct collision_bsp const *bsp,
 	long surface_index,
 	real_point3d const *point,
 	real_point3d *closest_point)
 {
-	struct collision_bsp const *bsp = TAG_BLOCK_GET_ELEMENT(
-		&structure->collision_bsp,
-		0,
-		struct collision_bsp);
 	real_point2d closest_point2d;
 
 	collision_surface_find_closest_point2d(
@@ -1199,14 +1192,11 @@ static real closest_available_point_on_surface(
 
 static short build_path_edges_for_surface(
 	struct structure_bsp const *structure,
+	struct collision_bsp const *bsp,
 	long surface_index,
 	struct path_edge *edges)
 {
 	byte const *pathfinding_surfaces = structure->pathfinding_surfaces.address;
-	struct collision_bsp const *bsp = TAG_BLOCK_GET_ELEMENT(
-		&structure->collision_bsp,
-		0,
-		struct collision_bsp);
 	short edge_count = 0;
 	struct collision_surface const *surface;
 	long edge_index;
@@ -1269,6 +1259,64 @@ static short build_path_edges_for_surface(
 
 	return edge_count;
 }
+
+#ifdef HALO_N3DS
+enum { PATH_EDGE_CACHE_SLOTS = 32, PATH_EDGE_CACHE_LIMIT = 8 };
+static struct path_edge_cache_entry
+{
+	const struct structure_bsp *structure;
+	unsigned int generation;
+	long surface_index;
+	short count;
+	struct path_edge edges[PATH_EDGE_CACHE_LIMIT];
+} path_edge_cache[PATH_EDGE_CACHE_SLOTS];
+
+static const struct path_edge *path_edges_for_surface(
+	const struct structure_bsp *structure,
+	const struct collision_bsp *bsp,
+	unsigned int generation,
+	long surface_index,
+	struct path_edge *scratch,
+	short *count)
+{
+	if (!generation)
+	{
+		*count = build_path_edges_for_surface(structure, bsp, surface_index, scratch);
+		return scratch;
+	}
+
+	unsigned long key = (unsigned long)surface_index;
+	struct path_edge_cache_entry *entry = &path_edge_cache[(key ^ (key >> 5)) & (PATH_EDGE_CACHE_SLOTS - 1)];
+	if (entry->generation == generation && entry->structure == structure && entry->surface_index == surface_index)
+	{
+		const byte *flags = structure->pathfinding_surfaces.address;
+		for (short i = 0; i < entry->count; ++i)
+			entry->edges[i].adjacent_pathfinding_surface = flags[entry->edges[i].adjacent_surface_index];
+		*count = entry->count;
+		n3ds_algorithm_profile_add(N3DS_ALG_CPU_PATH_EDGE_CACHE_HIT, 1);
+		return entry->edges;
+	}
+
+	*count = build_path_edges_for_surface(structure, bsp, surface_index, scratch);
+	n3ds_algorithm_profile_add(N3DS_ALG_CPU_PATH_EDGE_CACHE_BUILD, 1);
+	if (*count > PATH_EDGE_CACHE_LIMIT)
+		return scratch;
+	for (short i = 0; i < *count; ++i)
+	{
+		/* Boundary sentinels retain the legacy builder's behavior. */
+		if (scratch[i].adjacent_surface_index < 0 ||
+			scratch[i].adjacent_surface_index >= structure->pathfinding_surfaces.count)
+			return scratch;
+	}
+
+	memcpy(entry->edges, scratch, *count * sizeof(*scratch));
+	entry->structure = structure;
+	entry->surface_index = surface_index;
+	entry->count = *count;
+	entry->generation = generation;
+	return scratch;
+}
+#endif
 
 void closest_point_to_attractor(
 	real_point3d const *p0,
@@ -1435,7 +1483,20 @@ static boolean path_state_traverse(
 	struct path_state *state)
 {
 	real pathfinding_radius = MAX(0.2f, state->input.pathfinding_radius);
+	/* A synchronous search stays in the same collision BSP. */
+	const struct collision_bsp *bsp = TAG_BLOCK_GET_ELEMENT(
+		&state->structure->collision_bsp, 0, struct collision_bsp);
+#ifdef HALO_N3DS
+	struct path_edge scratch[MAXIMUM_PATH_EDGES_PER_COLLISION_SURFACE];
+	/* BSP geometry is immutable for the active native cache generation.
+	 * Reuse vectors only with the engine's normal scalar floating-point mode. */
+	const unsigned int generation =
+		state->structure == global_structure_bsp_get() &&
+		(__builtin_arm_get_fpscr() & 0x03ffff00u) == 0x03000000u ?
+		n3ds_engine_cache_generation() : 0;
+#else
 	struct path_edge edges[MAXIMUM_PATH_EDGES_PER_COLLISION_SURFACE];
+#endif
 	boolean result = TRUE;
 	boolean reported_cost_overflow = FALSE;
 
@@ -1443,7 +1504,6 @@ static boolean path_state_traverse(
 	{
 		short cheapest_node_index = path_heap_pop_cheapest_node(state);
 		struct path_node *cheapest_node;
-		struct collision_bsp const *bsp;
 		short edge_count;
 		short edge_index;
 
@@ -1458,10 +1518,6 @@ static boolean path_state_traverse(
 		}
 
 		cheapest_node = path_get_node(state, cheapest_node_index);
-		bsp = TAG_BLOCK_GET_ELEMENT(
-			&state->structure->collision_bsp,
-			0,
-			struct collision_bsp);
 		match_assert(
 			"c:\\halo\\SOURCE\\ai\\path.c",
 			0x35D,
@@ -1490,10 +1546,16 @@ static boolean path_state_traverse(
 			}
 		}
 
+#ifdef HALO_N3DS
+		const struct path_edge *edges = path_edges_for_surface(
+			state->structure, bsp, generation, cheapest_node->surface_index, scratch, &edge_count);
+#else
 		edge_count = build_path_edges_for_surface(
 			state->structure,
+			bsp,
 			cheapest_node->surface_index,
 			edges);
+#endif
 		for (edge_index = 0; edge_index < edge_count; edge_index++)
 		{
 			struct path_edge const *edge = &edges[edge_index];
@@ -1522,7 +1584,7 @@ static boolean path_state_traverse(
 			}
 			if (!state->input.ignore_broken_surfaces &&
 				TEST_FLAG(edge->adjacent_pathfinding_surface, _pathfinding_surface_breakable_bit) &&
-				surface_is_broken(state->structure, adjacent_surface_index))
+				surface_is_broken(bsp, adjacent_surface_index))
 			{
 				passable = FALSE;
 			}
@@ -1690,17 +1752,10 @@ static boolean path_state_traverse(
 			new_node->last_render_id = NONE;
 			new_node->closest_distance_to_attractor = REAL_MAX;
 
-			{
-				struct collision_bsp const *bsp = TAG_BLOCK_GET_ELEMENT(
-					&state->structure->collision_bsp,
-					0,
-					struct collision_bsp);
-
-				match_assert(
-					"c:\\halo\\SOURCE\\ai\\path.c",
-					0x466,
-					(new_node->surface_index >= 0) && (new_node->surface_index < bsp->surfaces.count));
-			}
+			match_assert(
+				"c:\\halo\\SOURCE\\ai\\path.c",
+				0x466,
+				(new_node->surface_index >= 0) && (new_node->surface_index < bsp->surfaces.count));
 
 			if (new_node->heap_location == NONE)
 			{
@@ -1732,7 +1787,7 @@ static boolean path_state_traverse(
 				if (closest_distance < 4.0f)
 				{
 					closest_distance = closest_available_point_on_surface(
-						state->structure,
+						bsp,
 						edge->adjacent_surface_index,
 						&state->destination.point,
 						&closest_point);

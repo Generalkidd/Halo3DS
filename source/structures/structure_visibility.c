@@ -119,6 +119,15 @@ symbols in this file:
 #include "shaders/shader_definitions.h"
 #include "structures/structure_bsp_definitions.h"
 #include "tag_files/tag_groups.h"
+#ifdef HALO_N3DS
+#include "engine_algorithm_profile.h"
+#if HALO_N3DS_ALGO_PREPARED_VIEW != N3DS_ALGORITHM_REFERENCE
+#include "engine_prepared_view.h"
+#endif
+#define NATIVE_CPU_ADD(metric, value) n3ds_algorithm_profile_add(metric, value)
+#else
+#define NATIVE_CPU_ADD(metric, value) ((void)0)
+#endif
 
 /* ---------- constants */
 
@@ -214,12 +223,6 @@ struct structure_visibility_mirror
 	struct tag_block points;
 };
 
-struct structure_visibility_globals
-{
-	unsigned long *visited_cluster_flags;
-	short rendered_cluster_indices[MAXIMUM_CLUSTERS_PER_STRUCTURE];
-};
-
 struct structure_visibility_shader_environment
 {
 	struct shader shader;
@@ -252,6 +255,7 @@ static void grow_clipping_rectangle_by_portal_hull(
 	real_rectangle2d *rectangle,
 	struct portal_hull const *hull);
 static boolean points_within_distance(
+	const struct render_camera *camera,
 	short point_count,
 	real_point3d const *points,
 	real distance);
@@ -263,7 +267,72 @@ static short portal_hull_from_points(
 	real_point3d const *vertices,
 	short winding,
 	struct portal_hull *result);
+#if defined(HALO_N3DS) && !defined(HALO_N3DS_DISABLE_PORTAL_CACHE)
+#define NATIVE_PORTAL_CACHE
+/* Portal projection cache adapted from Kevin Boggs's New3DS integration.
+ * See LICENSE-KEVIN-MIT.md. Each pass has one camera and frustum, and
+ * stores only the projection, before clipping against the incoming portal. */
+enum
+{
+	ORIGINAL_PORTAL_CACHE_SLOTS = 128,
+	NEW_PORTAL_CACHE_SLOTS = 512,
+	PORTAL_CACHE_VERTICES = 24,
+};
+
+struct native_portal_cache_entry
+{
+	unsigned int generation, key;
+	short result, vertex_count;
+	real_point2d vertices[PORTAL_CACHE_VERTICES];
+};
+
+static struct native_portal_cache_entry original_portal_cache[ORIGINAL_PORTAL_CACHE_SLOTS];
+static struct native_portal_cache_entry *native_portal_cache = original_portal_cache;
+static unsigned int native_portal_cache_slots = ORIGINAL_PORTAL_CACHE_SLOTS;
+static unsigned int native_portal_generation;
+static boolean native_portal_cache_active;
+
+static void native_portal_cache_dispose(void)
+{
+	(free)(native_portal_cache);
+}
+
+static void native_portal_cache_begin(void)
+{
+	static boolean initialized;
+	if (!initialized)
+	{
+		extern int n3ds_input_platform_original_model(void);
+		initialized = TRUE;
+		/* Allocate the larger table only on New hardware. Keep the smaller
+		 * table when allocation fails or on Original models. */
+		if (!n3ds_input_platform_original_model())
+		{
+			struct native_portal_cache_entry *cache = calloc(NEW_PORTAL_CACHE_SLOTS, sizeof(*cache));
+			if (cache && atexit(native_portal_cache_dispose) == 0)
+			{
+				native_portal_cache = cache;
+				native_portal_cache_slots = NEW_PORTAL_CACHE_SLOTS;
+			}
+			else
+			{
+				(free)(cache);
+			}
+		}
+	}
+
+	if (++native_portal_generation == 0)
+	{
+		/* Generation 1 may still be in an unused slot after wraparound. */
+		csmemset(native_portal_cache, 0, native_portal_cache_slots * sizeof(*native_portal_cache));
+		native_portal_generation = 1;
+	}
+	native_portal_cache_active = TRUE;
+}
+#endif
 static short portal_hull_from_portal(
+	const struct render_camera *camera,
+	const struct render_frustum *frustum,
 	short portal_index,
 	boolean direction,
 	struct portal_hull *result);
@@ -271,11 +340,19 @@ static void structure_visibility_render_debug_portal_hull(
 	struct portal_hull const *hull,
 	real_argb_color const *color,
 	real offset);
-static void structure_visibility_traverse_cluster(
-	short cluster_index,
-	struct portal_hull const *visible_region);
-static void structure_visibility_find_clusters(
-	void);
+struct visibility_traversal
+{
+	const struct render_camera *camera;
+	const struct render_frustum *frustum;
+	long cluster_index;
+	boolean visible_sky_model;
+	boolean draw_debug;
+	unsigned long *visible_flags;
+	struct rendered_cluster *clusters;
+	short *cluster_count;
+	short *indices_by_cluster;
+};
+
 static short structure_visibility_build_surfaces_traverse_clusters(
 	long *surface_indices,
 	short maximum_count,
@@ -328,7 +405,20 @@ static const real_plane3d screen_plane =
 };
 
 static boolean warned_about_missing_subclusters;
-static struct structure_visibility_globals structure_visibility_globals;
+static short rendered_cluster_indices[MAXIMUM_CLUSTERS_PER_STRUCTURE];
+#ifdef HALO_N3DS
+/* The results stay in render and rendered_cluster_indices until one of the
+ * visibility publishers replaces them. Retain only the exact input view. */
+static struct native_visibility_view
+{
+	boolean valid;
+	boolean sky_model;
+	long cluster_index;
+	unsigned int generation;
+	struct render_camera camera;
+	struct render_frustum frustum;
+} native_visibility_view;
+#endif
 static struct profile_section render_structure_visibility_portal_traversal =
 	{ "render_structure_visibility_portal_traversal", NONE, TRUE };
 static struct profile_section render_structure_visibility_subcluster_traversal =
@@ -348,8 +438,9 @@ void debug_pvs(
 	return;
 }
 
-void structure_visibility_find_camera(
-	const struct render_camera *camera)
+static void visibility_find_camera(const struct render_camera *camera,
+	long *previous_leaf_index, long *cluster_index, short *visible_sky_index,
+	boolean *visible_sky_model)
 {
 	struct structure_bsp *structure = global_structure_bsp_get();
 	long leaf_index = bsp3d_test_point(
@@ -359,7 +450,7 @@ void structure_visibility_find_camera(
 
 	if (leaf_index == NONE)
 	{
-		leaf_index = render.leaf_index;
+		leaf_index = *previous_leaf_index;
 		if (leaf_index < structure->leaves.count)
 		{
 			goto leaf_index_ready;
@@ -368,12 +459,12 @@ void structure_visibility_find_camera(
 		leaf_index = NONE;
 	}
 
-	render.leaf_index = leaf_index;
+	*previous_leaf_index = leaf_index;
 
 leaf_index_ready:
-	render.cluster_index = NONE;
-	render.visible_sky_index = NONE;
-	render.visible_sky_model = FALSE;
+	*cluster_index = NONE;
+	*visible_sky_index = NONE;
+	*visible_sky_model = FALSE;
 
 	if (leaf_index != NONE)
 	{
@@ -384,17 +475,23 @@ leaf_index_ready:
 		struct structure_cluster *cluster;
 		struct structure_visibility_sky *sky;
 
-		render.cluster_index = leaf->cluster_index;
-		cluster = TAG_BLOCK_GET_ELEMENT(&structure->clusters, render.cluster_index, struct structure_cluster);
-		render.visible_sky_index = cluster->sky_index;
-		sky = (struct structure_visibility_sky *)scenario_get_sky(render.visible_sky_index);
+		*cluster_index = leaf->cluster_index;
+		cluster = TAG_BLOCK_GET_ELEMENT(&structure->clusters, *cluster_index, struct structure_cluster);
+		*visible_sky_index = cluster->sky_index;
+		sky = (struct structure_visibility_sky *)scenario_get_sky(*visible_sky_index);
 		if (sky && sky->model.index != NONE)
 		{
-			render.visible_sky_model = TRUE;
+			*visible_sky_model = TRUE;
 		}
 	}
 
 	return;
+}
+
+void structure_visibility_find_camera(const struct render_camera *camera)
+{
+	visibility_find_camera(camera, &render.leaf_index, &render.cluster_index,
+		&render.visible_sky_index, &render.visible_sky_model);
 }
 
 /* ---------- private code */
@@ -565,6 +662,7 @@ static short bounding_rectangles_intersect(
 {
 	short result;
 
+	NATIVE_CPU_ADD(N3DS_ALG_CPU_VIS_RECTANGLE, 1);
 	if (rectangle->x1 < test_rectangle->x0 ||
 		rectangle->x0 > test_rectangle->x1 ||
 		rectangle->y1 < test_rectangle->y0 ||
@@ -600,6 +698,7 @@ static long planes_intersect_rectangle(
 	real_rectangle3d local_bounds = *bounds;
 	short plane_index;
 
+	NATIVE_CPU_ADD(N3DS_ALG_CPU_VIS_PLANES, 1);
 	for (plane_index = 0; plane_index < cull_plane_count; plane_index++)
 	{
 		real_plane3d plane = cull_planes[plane_index];
@@ -640,12 +739,14 @@ static long planes_intersect_rectangle(
 
 		if (corner_mask == UNSIGNED_CHAR_MAX)
 		{
+			NATIVE_CPU_ADD(N3DS_ALG_CPU_VIS_PLANE_TEST, plane_index + 1);
 			return _intersection_out;
 		}
 
 		accumulated_behind |= corner_mask;
 	}
 
+	NATIVE_CPU_ADD(N3DS_ALG_CPU_VIS_PLANE_TEST, plane_index);
 	if (accumulated_behind)
 	{
 		return _intersection_spanning;
@@ -654,7 +755,10 @@ static long planes_intersect_rectangle(
 	return _intersection_in;
 }
 
-short structure_visibility_find_objects(
+static short visibility_find_objects(
+	const struct rendered_cluster *clusters,
+	short cluster_count,
+	long view_cluster,
 	long *result_indices,
 	short maximum_count,
 	long (*cluster_get_first)(long *iterator, short cluster_index),
@@ -663,15 +767,14 @@ short structure_visibility_find_objects(
 	boolean (*unmarked)(long object_index),
 	long (*mark)(long object_index))
 {
-	struct structure_bsp *structure = global_structure_bsp_get();
 	short found_count = 0;
 	long rendered_cluster_index;
 
 	for (rendered_cluster_index = 0;
-		(short)rendered_cluster_index < render.rendered_cluster_count;
+		(short)rendered_cluster_index < cluster_count;
 		rendered_cluster_index++)
 	{
-		struct rendered_cluster *rendered_cluster = rendered_cluster_get(rendered_cluster_index);
+		const struct rendered_cluster *rendered_cluster = &clusters[rendered_cluster_index];
 		long iterator;
 		long object_index;
 
@@ -689,7 +792,7 @@ short structure_visibility_find_objects(
 
 			get_bounding_sphere(object_index, &center, &radius);
 			if (found_count < maximum_count &&
-				(render.cluster_index == NONE ||
+				(view_cluster == NONE ||
 				render_frustum_sphere_visible(&rendered_cluster->frustum, &center, radius)))
 			{
 				result_indices[found_count++] = object_index;
@@ -698,9 +801,39 @@ short structure_visibility_find_objects(
 		}
 	}
 
-	(void)structure;
 	return found_count;
 }
+
+short structure_visibility_find_objects(
+	long *result_indices,
+	short maximum_count,
+	long (*cluster_get_first)(long *iterator, short cluster_index),
+	long (*cluster_get_next)(long *iterator),
+	void (*get_bounding_sphere)(long object_index, real_point3d *center, real *radius),
+	boolean (*unmarked)(long object_index),
+	long (*mark)(long object_index))
+{
+	(void)global_structure_bsp_get();
+	return visibility_find_objects(render.rendered_clusters, render.rendered_cluster_count,
+		render.cluster_index, result_indices, maximum_count, cluster_get_first, cluster_get_next,
+		get_bounding_sphere, unmarked, mark);
+}
+#if defined(HALO_N3DS) && HALO_N3DS_ALGO_PREPARED_VIEW != N3DS_ALGORITHM_REFERENCE
+short n3ds_prepared_visibility_find_objects(
+	const struct n3ds_prepared_visibility *visibility,
+	long *result_indices,
+	short maximum_count,
+	long (*cluster_get_first)(long *iterator, short cluster_index),
+	long (*cluster_get_next)(long *iterator),
+	void (*get_bounding_sphere)(long object_index, real_point3d *center, real *radius),
+	boolean (*unmarked)(long object_index),
+	long (*mark)(long object_index))
+{
+	return visibility_find_objects(visibility->clusters, visibility->cluster_count,
+		visibility->cluster_index, result_indices, maximum_count, cluster_get_first, cluster_get_next,
+		get_bounding_sphere, unmarked, mark);
+}
+#endif
 
 static void grow_clipping_rectangle_by_portal_hull(
 	real_rectangle2d *rectangle,
@@ -785,6 +918,7 @@ static void structure_visibility_render_debug_portal_hull(
 }
 
 static boolean points_within_distance(
+	const struct render_camera *camera,
 	short point_count,
 	real_point3d const *points,
 	real distance)
@@ -798,10 +932,10 @@ static boolean points_within_distance(
 		real camera_distance;
 
 		vector_from_points3d(
-			&render.camera.position,
+			&camera->position,
 			point,
 			&camera_to_point);
-		camera_distance = dot_product3d(&render.camera.forward, &camera_to_point);
+		camera_distance = dot_product3d(&camera->forward, &camera_to_point);
 
 		if (camera_distance <= distance)
 		{
@@ -860,6 +994,7 @@ static short portal_hull_from_points(
 	short output_index;
 	short hull_result;
 
+	NATIVE_CPU_ADD(N3DS_ALG_CPU_PORTAL_PROJECT, 1);
 	result->vertex_count = 0;
 	facing = plane3d_distance_to_point(plane, &camera->position) * winding;
 
@@ -874,6 +1009,7 @@ static short portal_hull_from_points(
 	}
 	else if (facing > 0.0f)
 	{
+		NATIVE_CPU_ADD(N3DS_ALG_CPU_PORTAL_TRANSFORM, vertex_count > 0 ? vertex_count : 0);
 		for (vertex_index = 0; vertex_index < vertex_count; vertex_index++)
 		{
 			matrix4x3_transform_point(
@@ -934,19 +1070,41 @@ static short portal_hull_from_points(
 }
 
 static short portal_hull_from_portal(
+	const struct render_camera *camera,
+	const struct render_frustum *frustum,
 	short portal_index,
 	boolean direction,
 	struct portal_hull *result)
 {
+	NATIVE_CPU_ADD(N3DS_ALG_CPU_PORTAL_REQUEST, 1);
+#ifdef NATIVE_PORTAL_CACHE
+	struct native_portal_cache_entry *entry = NULL;
+	unsigned int key = ((unsigned int)(unsigned short)portal_index << 1) | (direction ? 1u : 0u);
+	if (native_portal_cache_active)
+	{
+		entry = &native_portal_cache[key & (native_portal_cache_slots - 1)];
+		if (entry->generation == native_portal_generation && entry->key == key)
+		{
+			NATIVE_CPU_ADD(N3DS_ALG_CPU_PORTAL_HIT, 1);
+			result->vertex_count = entry->vertex_count;
+			if (entry->vertex_count)
+			{
+				csmemcpy(result->vertices, entry->vertices, entry->vertex_count * sizeof(entry->vertices[0]));
+				NATIVE_CPU_ADD(N3DS_ALG_CPU_PORTAL_COPY, entry->vertex_count * sizeof(entry->vertices[0]));
+			}
+			return entry->result;
+		}
+	}
+#endif
 	struct structure_bsp *structure = global_structure_bsp_get();
 	struct structure_visibility_portal *portal = TAG_BLOCK_GET_ELEMENT(
 		&structure->cluster_portals,
 		portal_index,
 		struct structure_visibility_portal);
 
-	return portal_hull_from_points(
-		&render.camera,
-		&render.frustum,
+	short hull_result = portal_hull_from_points(
+		camera,
+		frustum,
 		TAG_BLOCK_GET_ELEMENT(
 			&TAG_BLOCK_GET_ELEMENT(
 				&structure->collision_bsp,
@@ -958,6 +1116,20 @@ static short portal_hull_from_portal(
 		(real_point3d const *)portal->vertices.address,
 		direction ? -1 : 1,
 		result);
+#ifdef NATIVE_PORTAL_CACHE
+	if (entry && result->vertex_count >= 0 && result->vertex_count <= PORTAL_CACHE_VERTICES)
+	{
+		entry->generation = native_portal_generation;
+		entry->key = key;
+		entry->result = hull_result;
+		entry->vertex_count = result->vertex_count;
+		if (entry->vertex_count)
+		{
+			csmemcpy(entry->vertices, result->vertices, entry->vertex_count * sizeof(entry->vertices[0]));
+		}
+	}
+#endif
+	return hull_result;
 }
 
 boolean structure_visibility_find_mirror(
@@ -1471,6 +1643,9 @@ short structure_visibility_build_surfaces(
 }
 
 static void structure_visibility_traverse_cluster(
+	const struct visibility_traversal *view,
+	const unsigned long *cluster_pvs,
+	unsigned long *visited_cluster_flags,
 	short cluster_index,
 	struct portal_hull const *visible_region)
 {
@@ -1480,53 +1655,51 @@ static void structure_visibility_traverse_cluster(
 		clusters,
 		cluster_index,
 		struct structure_visibility_cluster);
-	unsigned long *cluster_pvs = structure_bsp_get_cluster_pvs(
-		structure,
-		(short)render.cluster_index);
 	struct rendered_cluster *rendered_cluster;
 	long portal_list_index;
 
+	NATIVE_CPU_ADD(N3DS_ALG_CPU_VIS_CLUSTER, 1);
 	match_assert(
 		"c:\\halo\\SOURCE\\structures\\structure_visibility.c",
 		0x3EE,
 		valid_portal_hull(visible_region));
 	BIT_VECTOR_SET_FLAG(
-		structure_visibility_globals.visited_cluster_flags,
+		visited_cluster_flags,
 		cluster_index,
 		TRUE);
 
-	if (!BIT_VECTOR_TEST_FLAG(render.visible_cluster_flags, cluster_index))
+	if (!BIT_VECTOR_TEST_FLAG(view->visible_flags, cluster_index))
 	{
 		match_vassert(
 			"c:\\halo\\SOURCE\\structures\\structure_visibility.c",
 			0x3F5,
-			render.rendered_cluster_count < MAXIMUM_RENDERED_CLUSTERS,
+			(*view->cluster_count) < MAXIMUM_RENDERED_CLUSTERS,
 			"raise MAXIMUM_RENDERED_CLUSTERS");
 		match_assert(
 			"c:\\halo\\SOURCE\\structures\\structure_visibility.c",
 			0x3F8,
 			cluster_index>=0 && cluster_index<MAXIMUM_CLUSTERS_PER_STRUCTURE);
 
-		structure_visibility_globals.rendered_cluster_indices[cluster_index] = render.rendered_cluster_count++;
-		rendered_cluster = rendered_cluster_get(structure_visibility_globals.rendered_cluster_indices[cluster_index]);
+		view->indices_by_cluster[cluster_index] = (*view->cluster_count)++;
+		rendered_cluster = &view->clusters[view->indices_by_cluster[cluster_index]];
 		rendered_cluster->cluster_index = cluster_index;
 		rendered_cluster->clip_bounds = *global_null_rectangle2d;
 	}
 	else
 	{
-		rendered_cluster = rendered_cluster_get(
-			structure_visibility_globals.rendered_cluster_indices[cluster_index]);
+		rendered_cluster = &view->clusters[view->indices_by_cluster[cluster_index]];
 		match_assert(
 			"c:\\halo\\SOURCE\\structures\\structure_visibility.c",
 			0x403,
 			rendered_cluster->cluster_index==cluster_index);
 	}
 
-	BIT_VECTOR_SET_FLAG(render.visible_cluster_flags, cluster_index, TRUE);
+	BIT_VECTOR_SET_FLAG(view->visible_flags, cluster_index, TRUE);
 	grow_clipping_rectangle_by_portal_hull(
 		&rendered_cluster->clip_bounds,
 		visible_region);
 
+	if (view->draw_debug)
 	{
 		real_argb_color const *color;
 
@@ -1564,12 +1737,14 @@ static void structure_visibility_traverse_cluster(
 		if (neighbor_cluster_index >= 0 &&
 			neighbor_cluster_index < clusters->count &&
 			!BIT_VECTOR_TEST_FLAG(
-				structure_visibility_globals.visited_cluster_flags,
+				visited_cluster_flags,
 				neighbor_cluster_index) &&
 			BIT_VECTOR_TEST_FLAG(cluster_pvs, neighbor_cluster_index))
 		{
 			struct portal_hull portal_hull;
 			short portal_result = portal_hull_from_portal(
+				view->camera,
+				view->frustum,
 				portal_index,
 				direction,
 				&portal_hull);
@@ -1577,15 +1752,19 @@ static void structure_visibility_traverse_cluster(
 			if (portal_result == _portal_hull_from_portal_degenerate)
 			{
 				structure_visibility_traverse_cluster(
+					view,
+					cluster_pvs,
+					visited_cluster_flags,
 					neighbor_cluster_index,
 					visible_region);
 			}
 			else if (portal_result == _portal_hull_from_portal_succeeded &&
-				(render.visible_sky_model ||
+				(view->visible_sky_model ||
 					points_within_distance(
+						view->camera,
 						(short)portal->vertices.count,
 						(real_point3d const *)portal->vertices.address,
-						render.camera.z_far)))
+						view->camera->z_far)))
 			{
 				struct portal_hull clipped_hull;
 
@@ -1600,6 +1779,9 @@ static void structure_visibility_traverse_cluster(
 				if (clipped_hull.vertex_count > 0)
 				{
 					structure_visibility_traverse_cluster(
+						view,
+						cluster_pvs,
+						visited_cluster_flags,
 						neighbor_cluster_index,
 						&clipped_hull);
 				}
@@ -1607,6 +1789,9 @@ static void structure_visibility_traverse_cluster(
 				{
 					error(_error_silent, "portal intersection failed.");
 					structure_visibility_traverse_cluster(
+						view,
+						cluster_pvs,
+						visited_cluster_flags,
 						neighbor_cluster_index,
 						visible_region);
 				}
@@ -1615,15 +1800,14 @@ static void structure_visibility_traverse_cluster(
 	}
 
 	BIT_VECTOR_SET_FLAG(
-		structure_visibility_globals.visited_cluster_flags,
+		visited_cluster_flags,
 		cluster_index,
 		FALSE);
 
 	return;
 }
 
-static void structure_visibility_find_clusters(
-	void)
+static void structure_visibility_find_clusters(const struct visibility_traversal *view)
 {
 	struct structure_bsp *structure = global_structure_bsp_get();
 	real_rectangle2d projection_bounds;
@@ -1631,9 +1815,9 @@ static void structure_visibility_find_clusters(
 	struct portal_hull screen_hull;
 	long rendered_cluster_index;
 
-	if (render.cluster_index != NONE)
+	if (view->cluster_index != NONE)
 	{
-		render_frustum_get_projection_bounds(&render.frustum, &projection_bounds);
+		render_frustum_get_projection_bounds(view->frustum, &projection_bounds);
 		screen_hull.vertex_count = NUMBER_OF_POINTS_PER_RECTANGLE;
 		screen_hull.vertices[0].x = projection_bounds.x0;
 		screen_hull.vertices[0].y = projection_bounds.y0;
@@ -1643,21 +1827,24 @@ static void structure_visibility_find_clusters(
 		screen_hull.vertices[2].y = projection_bounds.y1;
 		screen_hull.vertices[3].x = projection_bounds.x0;
 		screen_hull.vertices[3].y = projection_bounds.y1;
-		structure_visibility_globals.visited_cluster_flags = visited_cluster_flags;
 		csmemset(
 			visited_cluster_flags,
 			0,
 			sizeof(visited_cluster_flags));
+		/* Every portal revisit tests the same starting-cluster PVS. Its map
+		 * storage stays immutable for this synchronous traversal. */
 		structure_visibility_traverse_cluster(
-			(short)render.cluster_index,
+			view,
+			structure_bsp_get_cluster_pvs(structure, (short)view->cluster_index),
+			visited_cluster_flags,
+			(short)view->cluster_index,
 			&screen_hull);
 
 		for (rendered_cluster_index = 0;
-			(short)rendered_cluster_index < render.rendered_cluster_count;
+			(short)rendered_cluster_index < (*view->cluster_count);
 			rendered_cluster_index++)
 		{
-			struct rendered_cluster *rendered_cluster = rendered_cluster_get(
-				(short)rendered_cluster_index);
+			struct rendered_cluster *rendered_cluster = &view->clusters[rendered_cluster_index];
 			real_rectangle2d frustum_bounds;
 
 			TAG_BLOCK_GET_ELEMENT(
@@ -1665,11 +1852,11 @@ static void structure_visibility_find_clusters(
 				rendered_cluster->cluster_index,
 				struct structure_visibility_cluster);
 			render_camera_build_clipped_frustum_bounds(
-				&render.camera,
+				view->camera,
 				&rendered_cluster->clip_bounds,
 				&frustum_bounds);
 			render_camera_build_frustum(
-				&render.camera,
+				view->camera,
 				&frustum_bounds,
 				&rendered_cluster->frustum,
 				TRUE);
@@ -1679,34 +1866,44 @@ static void structure_visibility_find_clusters(
 	return;
 }
 
+static void visibility_compute_clusters(struct structure_bsp *structure,
+	const struct visibility_traversal *view, boolean build_environment_surfaces)
+{
+	csmemset(view->visible_flags, view->cluster_index == NONE ? -1 : 0,
+		BIT_VECTOR_SIZE_IN_BYTES(structure->clusters.count));
+	*view->cluster_count = 0;
+#ifdef NATIVE_PORTAL_CACHE
+	/* The Xbox traversal is also the uncached reference in the native
+	 * visibility diagnostic. Only the native render pass uses the cache. */
+	if (!build_environment_surfaces)
+	{
+		native_portal_cache_begin();
+	}
+#endif
+	structure_visibility_find_clusters(view);
+#ifdef NATIVE_PORTAL_CACHE
+	native_portal_cache_active = FALSE;
+#endif
+}
+
 static void structure_visibility_compute_internal(
 	boolean build_environment_surfaces)
 {
 	struct structure_bsp *structure = global_structure_bsp_get();
+	const struct visibility_traversal view = {
+		&render.camera, &render.frustum, render.cluster_index, render.visible_sky_model,
+		TRUE, render.visible_cluster_flags, render.rendered_clusters, &render.rendered_cluster_count,
+		rendered_cluster_indices
+	};
 
+#ifdef HALO_N3DS
+	native_visibility_view.valid = FALSE;
+#endif
+	NATIVE_CPU_ADD(N3DS_ALG_CPU_VISIBILITY, 1);
 	profile_enter(render_structure_visibility_portal_traversal);
-	if (render.cluster_index != NONE)
-	{
-		csmemset(
-			render.visible_cluster_flags,
-			0,
-			BIT_VECTOR_SIZE_IN_BYTES(structure->clusters.count));
-	}
-	else
-	{
-		csmemset(
-			render.visible_cluster_flags,
-			-1,
-			BIT_VECTOR_SIZE_IN_BYTES(structure->clusters.count));
-	}
-
 	render.environment_surface_count = 0;
-	csmemset(
-		render.environment_surface_flags,
-		0,
-		BIT_VECTOR_SIZE_IN_BYTES(structure->surfaces.count));
-	render.rendered_cluster_count = 0;
-	structure_visibility_find_clusters();
+	csmemset(render.environment_surface_flags, 0, BIT_VECTOR_SIZE_IN_BYTES(structure->surfaces.count));
+	visibility_compute_clusters(structure, &view, build_environment_surfaces);
 
 	if (structures_use_pvs_for_vs)
 	{
@@ -1738,8 +1935,8 @@ static void structure_visibility_compute_internal(
 					0x11B,
 					cluster_index>=0 && cluster_index<MAXIMUM_CLUSTERS_PER_STRUCTURE);
 
-				structure_visibility_globals.rendered_cluster_indices[cluster_index] = render.rendered_cluster_count++;
-				rendered_cluster = rendered_cluster_get(structure_visibility_globals.rendered_cluster_indices[cluster_index]);
+				rendered_cluster_indices[cluster_index] = render.rendered_cluster_count++;
+				rendered_cluster = rendered_cluster_get(rendered_cluster_indices[cluster_index]);
 				rendered_cluster->cluster_index = cluster_index;
 				render_frustum_get_projection_bounds(
 					&render.frustum,
@@ -1785,11 +1982,115 @@ void structure_visibility_compute(void)
 #ifdef HALO_N3DS
 void n3ds_structure_visibility_compute(void)
 {
-    /* The native BSP renderer submits its own material/index batches and has
-     * no readers of the Xbox environment-surface list. Keep portal traversal,
-     * cluster clipping, sky selection and object visibility exactly intact. */
-    structure_visibility_compute_internal(FALSE);
+	extern boolean debug_no_frustum_clip;
+	extern unsigned int n3ds_engine_cache_generation(void);
+	boolean reusable = !debug_portals && !structures_use_pvs_for_vs &&
+		!ai_debug.render_encounter_activeregion && !debug_no_frustum_clip &&
+		(__builtin_arm_get_fpscr() & 0x03ffff00u) == 0x03000000u;
+	unsigned int generation = n3ds_engine_cache_generation();
+	if (reusable && native_visibility_view.valid &&
+		native_visibility_view.generation == generation &&
+		native_visibility_view.cluster_index == render.cluster_index &&
+		native_visibility_view.sky_model == render.visible_sky_model &&
+		!memcmp(&native_visibility_view.camera, &render.camera, sizeof(render.camera)) &&
+		!memcmp(&native_visibility_view.frustum, &render.frustum, sizeof(render.frustum)))
+	{
+		NATIVE_CPU_ADD(N3DS_ALG_CPU_VISIBILITY_REUSED, 1);
+		return;
+	}
+
+	/* The native BSP renderer submits its own material/index batches. */
+	structure_visibility_compute_internal(FALSE);
+	if (reusable)
+	{
+		native_visibility_view.generation = generation;
+		native_visibility_view.cluster_index = render.cluster_index;
+		native_visibility_view.sky_model = render.visible_sky_model;
+		memcpy(&native_visibility_view.camera, &render.camera, sizeof(render.camera));
+		memcpy(&native_visibility_view.frustum, &render.frustum, sizeof(render.frustum));
+		native_visibility_view.valid = TRUE;
+	}
 }
+#if HALO_N3DS_ALGO_PREPARED_VIEW != N3DS_ALGORITHM_REFERENCE
+boolean n3ds_prepare_visibility_allowed(void)
+{
+	return !debug_portals && !structures_use_pvs_for_vs && !ai_debug.render_encounter_activeregion;
+}
+
+void n3ds_prepare_visibility(const struct render_camera *camera, const struct render_frustum *frustum,
+	struct n3ds_prepared_visibility *result)
+{
+	result->leaf_index = render.leaf_index;
+	visibility_find_camera(camera, &result->leaf_index, &result->cluster_index,
+		&result->visible_sky_index, &result->visible_sky_model);
+
+	short indices_by_cluster[MAXIMUM_CLUSTERS_PER_STRUCTURE];
+	const struct visibility_traversal view = {
+		camera, frustum, result->cluster_index, result->visible_sky_model,
+		FALSE, result->visible_flags, result->clusters, &result->cluster_count, indices_by_cluster
+	};
+	NATIVE_CPU_ADD(N3DS_ALG_CPU_VISIBILITY, 1);
+	profile_enter(render_structure_visibility_portal_traversal);
+	visibility_compute_clusters(global_structure_bsp_get(), &view, FALSE);
+	profile_exit(render_structure_visibility_portal_traversal);
+}
+
+void n3ds_publish_visibility(const struct n3ds_prepared_visibility *visibility)
+{
+	const struct structure_bsp *structure = global_structure_bsp_get();
+	native_visibility_view.valid = FALSE;
+	render.leaf_index = visibility->leaf_index;
+	render.cluster_index = visibility->cluster_index;
+	render.visible_sky_index = visibility->visible_sky_index;
+	render.visible_sky_model = visibility->visible_sky_model;
+	render.rendered_cluster_count = visibility->cluster_count;
+	csmemcpy(render.visible_cluster_flags, visibility->visible_flags,
+		BIT_VECTOR_SIZE_IN_BYTES(structure->clusters.count));
+	csmemcpy(render.rendered_clusters, visibility->clusters,
+		visibility->cluster_count * sizeof(visibility->clusters[0]));
+	for (short i = 0; i < visibility->cluster_count; ++i)
+		rendered_cluster_indices[visibility->clusters[i].cluster_index] = i;
+	render.environment_surface_count = 0;
+	csmemset(render.environment_surface_flags, 0, BIT_VECTOR_SIZE_IN_BYTES(structure->surfaces.count));
+}
+
+#if HALO_N3DS_ALGO_PREPARED_VIEW == N3DS_ALGORITHM_VERIFY
+boolean n3ds_frusta_match(const struct render_frustum *a, const struct render_frustum *b)
+{
+	/* The Boolean is followed by padding. Compare both numeric ranges and
+	 * the Boolean itself, ignoring only the padding. */
+	return !memcmp(a, b, offsetof(struct render_frustum, projection_valid)) &&
+		a->projection_valid == b->projection_valid &&
+		!memcmp(a->projection_matrix, b->projection_matrix, sizeof(a->projection_matrix)) &&
+		!memcmp(&a->projection_world_to_screen, &b->projection_world_to_screen,
+			sizeof(a->projection_world_to_screen));
+}
+
+boolean n3ds_prepared_visibility_matches(const struct n3ds_prepared_visibility *visibility)
+{
+	const struct structure_bsp *structure = global_structure_bsp_get();
+	if (visibility->leaf_index != render.leaf_index ||
+		visibility->cluster_index != render.cluster_index ||
+		visibility->visible_sky_index != render.visible_sky_index ||
+		visibility->visible_sky_model != render.visible_sky_model ||
+		visibility->cluster_count != render.rendered_cluster_count ||
+		memcmp(render.visible_cluster_flags, visibility->visible_flags,
+			BIT_VECTOR_SIZE_IN_BYTES(structure->clusters.count)))
+		return FALSE;
+
+	for (short i = 0; i < visibility->cluster_count; ++i)
+	{
+		const struct rendered_cluster *a = &visibility->clusters[i], *b = &render.rendered_clusters[i];
+		if (a->cluster_index != b->cluster_index ||
+			memcmp(&a->clip_bounds, &b->clip_bounds, sizeof(a->clip_bounds)) ||
+			!n3ds_frusta_match(&a->frustum, &b->frustum))
+			return FALSE;
+	}
+	return TRUE;
+}
+#endif
+#endif
+
 static unsigned int native_visibility_hash(const void *data,unsigned int bytes,unsigned int hash)
 {
     const byte *p=data;while(bytes--) hash=(hash^*p++)*16777619u;return hash;
@@ -1798,7 +2099,7 @@ static unsigned int native_cluster_hash(void)
 {
     unsigned int hash=native_visibility_hash(render.visible_cluster_flags,sizeof(render.visible_cluster_flags),2166136261u);
     hash=native_visibility_hash(render.rendered_clusters,render.rendered_cluster_count*sizeof(render.rendered_clusters[0]),hash);
-    return native_visibility_hash(structure_visibility_globals.rendered_cluster_indices,sizeof(structure_visibility_globals.rendered_cluster_indices),hash);
+    return native_visibility_hash(rendered_cluster_indices,sizeof(rendered_cluster_indices),hash);
 }
 boolean n3ds_structure_visibility_test(void)
 {
