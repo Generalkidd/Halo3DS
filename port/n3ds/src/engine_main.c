@@ -36,6 +36,10 @@ static void flush_console(void)
 }
 void n3ds_log(const char *message)
 {
+#ifdef HALO_N3DS_STRIP_DIAGNOSTICS
+    if(!strstr(message,"FATAL:") && !strstr(message,"FAIL") &&
+       !strstr(message,"ERROR") && !strstr(message,"ASSERT")) return;
+#endif
     /* Keep the original failure even if the next launch replaces its session
      * log. Fatal paths are rare; close immediately to commit to the SD card. */
     if(strstr(message,"FATAL:") || strstr(message,"FAIL:") || !strcmp(message,"RESULT: FAIL")) {
@@ -91,7 +95,9 @@ int main(void)
     int programs_ready = gpu_ready && n3ds_gpu_programs_initialize();
     int textures_ready = programs_ready && n3ds_gpu_textures_initialize();
     extern void n3ds_stall_watch_start(void),n3ds_stall_watch_stop(void);
+#ifndef HALO_N3DS_STRIP_DIAGNOSTICS
     n3ds_stall_watch_start();
+#endif
     int result = textures_ready ? halo_engine_boot() : 1;
     extern void n3ds_prefetch_shutdown(void);
     n3ds_prefetch_shutdown();

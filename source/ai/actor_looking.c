@@ -950,7 +950,7 @@ static boolean actor_look_find_random_vector(
 			real_vector3d collision_vector;
 			struct collision_result collision;
 
-			ai_profile.meters[_ai_meter_collisions].accumulator++;
+			AI_PROFILE_ONLY(ai_profile.meters[_ai_meter_collisions].accumulator++);
 			match_assert(
 				"c:\\halo\\SOURCE\\ai\\actor_looking.c",
 				1066,

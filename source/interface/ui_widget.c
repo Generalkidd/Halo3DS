@@ -2099,6 +2099,24 @@ int n3ds_ui_map_browser_selection(void)
     }
     return -1;
 }
+/* Kevin Boggs: n3ds_ui_map_browser_slot - the carousel can focus any of its three visible cards. */
+int n3ds_ui_map_browser_slot(void)
+{
+    if(!widget_globals.initialized || !we_are_at_the_main_menu)return -1;
+    struct widget_instance *widget=widget_globals.active_widgets[0];
+    for(int depth=0;widget && depth<32;++depth,widget=widget->focused_child){
+        if(!widget->visible)return -1;
+        const char *path=tag_get_name(widget->definition_tag_index);
+        if(widget->type==_ui_widget_type_spinner_list && path &&
+           strstr(path,"\\mp_map_select\\mp_map_select_list")){
+            struct widget_instance *item=widget->child;
+            for(int slot=0;item && slot<3;++slot,item=item->next)
+                if(item==widget->focused_child)return slot;
+            return -1;
+        }
+    }
+    return -1;
+}
 #endif
 
 boolean main_menu_screen_is_active(
@@ -2873,6 +2891,23 @@ int n3ds_ui_pause_menu_active(void)
     return name && (!strcmp(name,"ui\\shell\\solo_game\\pause_game\\pause_game") ||
         !strcmp(name,"ui\\shell\\solo_game\\pause_game\\pause_game_split_screen") ||
         !strcmp(name,"ui\\shell\\multiplayer_game\\pause_game\\1p_pause_game"));
+}
+/* Kevin Boggs: n3ds_ui_wireless_lobby_active - restrict bot controls to the host lobby. */
+int n3ds_ui_wireless_lobby_active(void)
+{
+    struct widget_instance *root=widget_globals.active_widgets[0];
+    if(!root || root->widget_is_error_dialog || root->definition_tag_index==NONE)return 0;
+    const char *name=tag_get_name(root->definition_tag_index);
+    return name && !strcmp(name,"ui\\shell\\main_menu\\multiplayer_type_select\\connected\\pregame\\connected_pregame_screen");
+}
+/* Kevin Boggs: n3ds_ui_campaign_menu_active */
+int n3ds_ui_campaign_menu_active(void)
+{
+    struct widget_instance *root=widget_globals.active_widgets[0];
+    if(!root || root->widget_is_error_dialog || root->definition_tag_index==NONE)return 0;
+    const char *name=tag_get_name(root->definition_tag_index);
+    return name && (!strcmp(name,"ui\\shell\\main_menu\\menu_load_campaign") ||
+        !strcmp(name,"ui\\shell\\main_menu\\solo_level_select\\solo_level_select_screen"));
 }
 /* Kevin Boggs: n3ds_ui_difficulty_menu_active - New3DS integration. */
 int n3ds_ui_difficulty_menu_active(void)

@@ -1074,6 +1074,7 @@ void particles_update(
  extern int n3ds_input_platform_original_model(void);
  int native_original=n3ds_input_platform_original_model();
  unsigned int cosmetic_count=0,cosmetic_cap=native_original?32:144;
+ if(n3ds_controls_performance())cosmetic_cap/=2;
  static unsigned int native_removed,native_updates;
 #endif
 #ifdef HALO_N3DS_PARTICLE_PROFILE
@@ -1101,7 +1102,7 @@ void particles_update(
      !native_particle_combat_tag(particle->definition_index)) {
    datum_delete(particle_data,particle_index);++native_removed;continue;
   }
-  native_particle_simple_mode=native_original && cosmetic_count>12;
+  native_particle_simple_mode=(native_original || n3ds_controls_performance()) && cosmetic_count>12;
 #endif
 
 		if (render.frame_index - particle->last_rendered_frame_index >

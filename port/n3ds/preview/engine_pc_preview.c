@@ -72,6 +72,8 @@ static float yaw=.65f,elevation=.72f,zoom=2.7f;
 static unsigned int idle_frames;
 static int dragging,last_x,last_y;
 static void *white,*xray_texture,*xray_culled_texture,*wire_texture,*hologram_default;
+static void *thumbnail_pixels,*thumbnail_texture;
+enum { THUMBNAIL_SIZE=128 };
 
 /* Kevin Boggs: preview_release - main thread only, after the GPU queue completes. */
 static void preview_release(void)
@@ -81,6 +83,8 @@ static void preview_release(void)
         free(batches[i].pixels);
     }
     batch_count=texture_count=0;
+    free(thumbnail_pixels);thumbnail_pixels=NULL;
+    if(thumbnail_texture){n3ds_gpu_texture_destroy(thumbnail_texture);thumbnail_texture=NULL;}
     n3ds_gpu_geometry_free(vertices);n3ds_gpu_geometry_free(indices);
     free(material_uv);material_uv=NULL;
     free(model_normals);model_normals=NULL;
@@ -525,12 +529,60 @@ static void normalize_mesh(void)
     }
 
 }
+/* Kevin Boggs: preview_load_thumbnail - read the owner's PC UI artwork on the cancellable worker. */
+static void preview_load_thumbnail(int map)
+{
+    static const signed char frames[19]={0,9,8,7,6,2,15,14,18,5,13,16,12,4,11,3,1,17,10};
+    if(map<0 || map>=19)return;
+    struct halo_cache ui={0};struct halo_cache_tag tag;struct halo_cache_bitmap bitmap;
+    char error[96];
+    if(!halo_cache_open_preview(&ui,"sdmc:/halo-source/pc-retail/ui.map",error,sizeof(error)))return;
+    ui.cancelled=preview_cancelled;
+    unsigned char *compressed=NULL,*decoded=NULL;
+    for(unsigned i=0;i<ui.tag_count && !preview_cancelled(NULL);++i){
+        if(!halo_cache_tag_at(&ui,i,&tag,error,sizeof(error)) || tag.group!=0x6269746du ||
+           strcmp(tag.name,"ui\\shell\\bitmaps\\mp_map_grafix"))continue;
+        if(!halo_cache_bitmap_at(&ui,&tag,frames[map],&bitmap,error,sizeof(error)) ||
+           bitmap.width>512 || bitmap.height>512 || bitmap.first_mip_bytes>512u*512u)break;
+        compressed=malloc(bitmap.first_mip_bytes);
+        size_t bytes=(size_t)bitmap.width*bitmap.height*4u;
+        decoded=malloc(bytes);
+        if(!compressed || !decoded || !halo_cache_read_bitmap(&ui,&bitmap,
+            "sdmc:/halo-source/pc-retail/bitmaps.map",compressed,bitmap.first_mip_bytes,error,sizeof(error)) ||
+            halo_s3tc_decode(bitmap.format==14?0x0c:bitmap.format==15?0x0e:0x0f,
+                compressed,bitmap.first_mip_bytes,bitmap.width,bitmap.height,decoded,bytes,bitmap.width*4u))break;
+        /* Retail artwork occupies 140x114 texels of the padded 256x128 bitmap,
+         * matching the original map-picture widget rather than its allocation. */
+        unsigned image_width=bitmap.width<140?bitmap.width:140;
+        unsigned image_height=bitmap.height<114?bitmap.height:114;
+        unsigned int *pixels=malloc(THUMBNAIL_SIZE*THUMBNAIL_SIZE*4u);
+        if(!pixels)break;
+        static const unsigned spread[8]={0,1,4,5,16,17,20,21};
+        for(unsigned y=0;y<THUMBNAIL_SIZE;++y)for(unsigned x=0;x<THUMBNAIL_SIZE;++x){
+            const unsigned char *rgba=decoded+((y*image_height/THUMBNAIL_SIZE)*bitmap.width+x*image_width/THUMBNAIL_SIZE)*4u;
+            unsigned ny=THUMBNAIL_SIZE-1-y;
+            unsigned tile=((ny/8)*(THUMBNAIL_SIZE/8)+x/8)*64+spread[x&7]+2*spread[ny&7];
+            pixels[tile]=(unsigned)rgba[0]<<24|(unsigned)rgba[1]<<16|(unsigned)rgba[2]<<8|255u;
+        }
+        if(preview_cancelled(NULL))free(pixels);else thumbnail_pixels=pixels;
+        break;
+    }
+    free(decoded);free(compressed);halo_cache_close(&ui);
+}
+/* Kevin Boggs: n3ds_pc_preview_thumbnail - borrow only a published texture matching this selection. */
+void *n3ds_pc_preview_thumbnail(int map)
+{
+    return active.valid && wanted.valid && !active.xbox && !active.page &&
+        preview_same(&active,&wanted) && active.map==map ? thumbnail_texture:NULL;
+}
+
 /* Kevin Boggs: preview_worker - disk reads and mesh/texture decoding without GPU calls. */
 static unsigned int preview_worker(void *unused)
 {
     (void)unused;
     int map=selected_map,page=selected_page,field=selected_field;
     int weapon_set=selected_weapon,vehicle_choice=selected_vehicle;
+    if(!selected_xbox && !page)preview_load_thumbnail(map);
     long long begun=n3ds_engine_ticks();
     char path[128],message[180],error[128];
     snprintf(path,sizeof(path),selected_xbox?"sdmc:/halo-source/%s.map":"sdmc:/halo-source/pc-retail/%s.map",map_files[map]);
@@ -569,7 +621,7 @@ void n3ds_preview_update(void)
     if(worker){
         if(!n3ds_thread_result(worker,&result))return;
         n3ds_thread_close(worker);worker=0;
-        state_loaded=result?PREVIEW_UPLOAD:PREVIEW_FAILED;
+        state_loaded=(result || thumbnail_pixels)?PREVIEW_UPLOAD:PREVIEW_FAILED;
         upload_batch=flush_offset=0;
     }
     if(!wanted.valid || preview_cancelled(NULL) || !preview_same(&wanted,&active)){
@@ -590,6 +642,10 @@ void n3ds_preview_update(void)
         return;
     }
     if(state_loaded!=PREVIEW_UPLOAD)return;
+    if(thumbnail_pixels){
+        thumbnail_texture=n3ds_gpu_texture_create(thumbnail_pixels,THUMBNAIL_SIZE,THUMBNAIL_SIZE);
+        free(thumbnail_pixels);thumbnail_pixels=NULL;return;
+    }
     /* Flush at most 64 KiB or upload one 16 KiB texture per frame. */
     unsigned int vertex_bytes=triangles*3u*sizeof(*vertices);
     unsigned int index_bytes=triangles*3u*sizeof(*indices);

@@ -35,6 +35,7 @@ static int distance_fog_clip(float out[8][3],float in[8][3],int count,float limi
 /* Kevin Boggs: n3ds_gpu_fog_backdrop */
 void n3ds_gpu_fog_backdrop(void)
 {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_STATE);
  if(!distance_fog_end || bottom_selected || first_person_active)return;
  /* A culled sea/terrain must reveal fog rather than the sky model's black
   * underside. One small sky-background draw covers the horizon and below;
@@ -71,12 +72,14 @@ void n3ds_gpu_fog_backdrop(void)
 /* Kevin Boggs: n3ds_gpu_fog_config */
 void n3ds_gpu_fog_config(float start,float end,unsigned int rgb)
 {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_STATE);
  if(distance_fog_color!=rgb)distance_fog_mode=-99;
  distance_fog_start=start;distance_fog_end=end;distance_fog_color=rgb;
 }
 /* Kevin Boggs: n3ds_gpu_fog_blend */
 void n3ds_gpu_fog_blend(int blend)
 {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_STATE);
  int enabled=distance_fog_world && !distance_fog_sky && !first_person_active && !bottom_selected;
  /* Premultiplied shaders already carry authored fog/fade in their alpha.
   * Adding an unscaled fog color there creates luminous rectangular particles. */
@@ -94,6 +97,7 @@ void n3ds_gpu_fog_blend(int blend)
 /* Kevin Boggs: n3ds_gpu_fog_sky */
 void n3ds_gpu_fog_sky(int sky)
 {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_STATE);
  distance_fog_world=distance_fog_end>0 && !bottom_selected && !first_person_active;
  distance_fog_sky=!!sky;n3ds_gpu_fog_blend(-1);
  distance_fog_depth(distance_fog_world && !sky);
@@ -101,6 +105,7 @@ void n3ds_gpu_fog_sky(int sky)
 /* Kevin Boggs: n3ds_gpu_fog_overlay */
 void n3ds_gpu_fog_overlay(void)
 {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_STATE);
  distance_fog_world=0;n3ds_gpu_fog_blend(-1);distance_fog_depth(0);
 }
 /* Kevin Boggs: distance_fog_window */

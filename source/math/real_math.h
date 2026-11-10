@@ -26,6 +26,40 @@ file has inline function assertions.
 #define DEGREES_TO_RADIANS(angle) ((real)(((real)angle) * ((real)M_PI) / 180.f))
 #define RADIANS_TO_DEGREES(angle) ((real)(((real)angle) * 180.f / ((real)M_PI)))
 #define realcmp(a, b) (fabs((a) - (b)) < _real_epsilon)
+#ifdef HALO_N3DS_STRIP_DIAGNOSTICS
+/* Validation-only macros: no simulation writes or random draws. Unlike the
+ * general assertions, their call sites have no required argument side effects. */
+#define assert_valid_real(v) { (void)0; }
+#define assert_valid_real_point3d(point) { (void)0; }
+#define assert_valid_real_vector3d(vector) { (void)0; }
+#define assert_valid_real_normal3d(vector) { (void)0; }
+#define assert_valid_real_vector3d_axes2(forward, up) { (void)0; }
+#define assert_valid_real_point2d(point) { (void)0; }
+#define assert_valid_real_vector2d(vector) { (void)0; }
+#define assert_valid_real_normal2d(vector) { (void)0; }
+#define assert_valid_realcmp(a, b) { (void)0; }
+#define assert_valid_real_plane3d(plane) { (void)0; }
+#define assert_valid_real_vector3d_axes3(forward, left, up) { (void)0; }
+#define assert_valid_real_sine_cosine(sine, cosine) { (void)0; }
+#define assert_valid_real_matrix4x3_internal(matrix, string) { (void)0; }
+#define assert_valid_real_matrix4x3(file, line, matrix) { (void)0; }
+#define assert_valid_real_matrix4x3_custom_string(matrix, custom_string) { (void)0; }
+#define match_assert_valid_real(file, line, v) { (void)0; }
+#define match_assert_valid_real_point3d(file, line, point) { (void)0; }
+#define match_assert_valid_real_vector3d(file, line, vector) { (void)0; }
+#define match_assert_valid_real_normal3d(file, line, vector) { (void)0; }
+#define match_assert_valid_real_vector3d_axes2(file, line, forward, up) { (void)0; }
+#define match_assert_valid_real_point2d(file, line, point) { (void)0; }
+#define match_assert_valid_real_vector2d(file, line, vector) { (void)0; }
+#define match_assert_valid_real_normal2d(file, line, vector) { (void)0; }
+#define match_assert_valid_realcmp(file, line, a, b) { (void)0; }
+#define match_assert_valid_real_plane3d(file, line, plane) { (void)0; }
+#define match_assert_valid_real_vector3d_axes3(file, line, forward, left, up) { (void)0; }
+#define match_assert_valid_real_sine_cosine(file, line, sine, cosine) { (void)0; }
+#define match_assert_valid_real_matrix4x3_internal(file, line, matrix, string) { (void)0; }
+#define match_assert_valid_real_matrix4x3(file, line, matrix) { (void)0; }
+#define match_assert_valid_real_matrix4x3_custom_string(file, line, matrix, custom_string) { (void)0; }
+#else
 #define assert_valid_real(v)				\
 vassert(									\
 	valid_real(v),							\
@@ -390,6 +424,8 @@ if (!valid_real_matrix4x3(matrix))															\
 	char const* string = (custom_string);													\
 	match_assert_valid_real_matrix4x3_internal(file, line, matrix, string);					\
 }
+
+#endif
 
 /* ---------- structures */
 

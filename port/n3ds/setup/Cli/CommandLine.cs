@@ -20,16 +20,18 @@ public static class CommandLine
         prepare  Convert Xbox game data and install Halo3DS to an existing SD-card
                  root or output folder. Correct files are reused; saves are kept.
         update   Replace only the launcher in an existing installation.
-        verify   Check source map headers and SHA-256 hashes without writing files.
+        verify   Compare map headers and SHA-256 hashes with the original retail
+                 reference catalog without writing files. Revised maps may differ.
                  This does not verify HUD compatibility, DSP or an installation.
 
         --source         Xbox ISO/XISO, maps folder or extracted Xbox game folder.
-                         Requires English North American retail build 01.10.12.2276.
-                         PC/MCC game data is unsupported.
+                         prepare accepts Xbox disc revisions and warns about
+                         unrecognized releases. PC/MCC cannot replace Xbox data.
+                         Use the GUI's optional PC import for additional PC maps.
         --destination    Existing SD-card root or output folder. Never formatted.
         --game           Halo3DS.3dsx to install (required; not compiled by this tool).
         --compatibility  Matching default.xbe or ntsc2276-hud-strings.bin, if needed.
-        --quiet          Suppress progress; retain the result and any errors.
+        --quiet          Suppress progress; retain results, warnings and errors.
 
         Quote paths containing spaces. Press Ctrl+C to cancel safely.
         Exit codes: 0 success, 1 setup/input failure, 2 usage error, 130 cancelled.
@@ -62,6 +64,8 @@ public static class CommandLine
             output.WriteLine(command.Name == "update"
                 ? $"Launcher updated: {result.Destination}"
                 : $"Prepared {result.Prepared} map(s); reused {result.AlreadyCorrect}. Destination: {result.Destination}");
+            if (!string.IsNullOrEmpty(result.CompatibilityWarning))
+                error.WriteLine("Warning: " + result.CompatibilityWarning);
             if (!result.DspPresent)
                 output.WriteLine("Sound needs DSP firmware. On your console, open Rosalina with L + D-pad Down + SELECT, then Miscellaneous options > Dump DSP firmware.");
             output.WriteLine("Use a FAT32 SD card. If you prepared an output folder, copy its 3ds and halo-source folders to the card root.");

@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /*
 GAME_SOUND.C
 
@@ -115,6 +116,9 @@ symbols in this file:
 #include "structures/structure_bsp_definitions.h"
 #include "structures/structures.h"
 #include "units/units.h"
+#ifdef HALO_N3DS
+#include "engine_cache.h"
+#endif
 
 /* ---------- constants */
 
@@ -910,6 +914,30 @@ void compute_sound_obstruction(
 	real distance)
 {
 	struct observer_result const *camera = observer_get_camera(local_player_index);
+#ifdef HALO_N3DS
+    /* Obstruction is cosmetic. Reuse it for at most two subsequent ticks
+     * while both endpoints stay within 1/8 world unit and their clusters
+     * remain unchanged. Rewinds/BSP changes force a fresh ray test. */
+    static struct {
+        struct sound_source *source;
+        real_point3d listener,position;
+        unsigned long generation,tick;
+        short player,listener_cluster,source_cluster;
+        real obstruction,occlusion;
+    } cache[128];
+    unsigned slot=((unsigned long)source>>3)&127u;
+    unsigned long tick=(unsigned long)game_time_get();
+    unsigned long generation=n3ds_engine_cache_generation();
+    if(cache[slot].source==source && cache[slot].generation==generation &&
+       (unsigned long)(tick-cache[slot].tick)<3 && cache[slot].player==local_player_index &&
+       cache[slot].listener_cluster==camera->location.cluster_index &&
+       cache[slot].source_cluster==source->location.game_location.cluster_index &&
+       distance_squared3d(&cache[slot].listener,&camera->position)<0.015625f &&
+       distance_squared3d(&cache[slot].position,&source->location.position)<0.015625f) {
+        source->obstruction=cache[slot].obstruction;source->occlusion=cache[slot].occlusion;return;
+    }
+#endif
+
 
 	match_assert(
 		"c:\\halo\\SOURCE\\sound\\game_sound.c",
@@ -982,6 +1010,15 @@ void compute_sound_obstruction(
 		926,
 		global_current_collision_user_depth > 1);
 	--global_current_collision_user_depth;
+
+#ifdef HALO_N3DS
+    cache[slot].source=source;cache[slot].generation=generation;cache[slot].tick=tick;
+    cache[slot].player=local_player_index;cache[slot].listener=camera->position;
+    cache[slot].position=source->location.position;
+    cache[slot].listener_cluster=camera->location.cluster_index;
+    cache[slot].source_cluster=source->location.game_location.cluster_index;
+    cache[slot].obstruction=source->obstruction;cache[slot].occlusion=source->occlusion;
+#endif
 
 	return;
 }

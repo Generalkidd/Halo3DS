@@ -92,6 +92,8 @@ try
         byte[] header = new byte[2048]; "daeh"u8.CopyTo(header); "toof"u8.CopyTo(header.AsSpan(2044));
         BitConverter.GetBytes(5u).CopyTo(header, 4);
         BitConverter.GetBytes((uint)Data.Catalog[name].Bytes).CopyTo(header, 8);
+        BitConverter.GetBytes(2048u).CopyTo(header, 16);
+        BitConverter.GetBytes(40u).CopyTo(header, 20);
         System.Text.Encoding.ASCII.GetBytes(name).CopyTo(header, 32);
         System.Text.Encoding.ASCII.GetBytes(Data.Build).CopyTo(header, 64);
         using var f = File.Create(Path.Combine(maps, name + ".map"));

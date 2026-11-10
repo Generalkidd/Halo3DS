@@ -356,7 +356,7 @@ void update_server_next_update(
 			&queue->current_action,
 			sizeof(struct player_action));
 #ifdef HALO_N3DS
-		if(game_connection()==_game_connection_local)
+		if(game_connection()==_game_connection_local || game_connection()==_game_connection_network_server)
 			n3ds_bots_fill_action(queue_index, queue->identifier,
 				&update->update.actions[queue_index]);
 #endif

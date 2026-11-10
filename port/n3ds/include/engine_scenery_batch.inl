@@ -31,7 +31,10 @@ static struct scenery_batch_mesh *scenery_batch_mesh_get(const void *source,cons
   for(unsigned int k=0;k<count;++k){struct native_skin_vertex *out=slot->v+j*count+k;memcpy(out,v+k,sizeof(*v));out->bones[0]=j*3;out->bones[1]=0;out->bones[2]=1;out->bones[3]=0;}
   for(unsigned int k=0;k<ni;++k){assert(indices[k]<count);slot->i[j*ni+k]=indices[k]+j*count;}
  }
- n3ds_gpu_geometry_flush(slot->v,count*SCENERY_INSTANCES*sizeof(*slot->v));n3ds_gpu_geometry_flush(slot->i,ni*SCENERY_INSTANCES*2);scenery_batch_bytes+=bytes;return slot;
+ n3ds_gpu_geometry_flush(slot->v,count*SCENERY_INSTANCES*sizeof(*slot->v));n3ds_gpu_geometry_flush(slot->i,ni*SCENERY_INSTANCES*2);
+ n3ds_gpu_geometry_publish(slot->v,count*SCENERY_INSTANCES*sizeof(*slot->v));
+ n3ds_gpu_geometry_publish(slot->rigid,count*sizeof(*slot->rigid));
+ scenery_batch_bytes+=bytes;return slot;
 }
 static void scenery_batch_submit(struct scenery_batch_group *g)
 {
@@ -42,9 +45,10 @@ static void scenery_batch_submit(struct scenery_batch_group *g)
  scenery_batch_avoided+=g->count-1;scenery_batch_instances+=g->count;++scenery_batch_draws;g->count=0;
 }
 static void scenery_batch_flush(void)
-{for(unsigned int i=0;i<SCENERY_BATCH_GROUPS;++i)scenery_batch_submit(scenery_batch_groups+i);}
+{character_batch_flush();for(unsigned int i=0;i<SCENERY_BATCH_GROUPS;++i)scenery_batch_submit(scenery_batch_groups+i);}
 static void scenery_batch_release(void)
 {
+ character_batch_release();
  assert(!scenery_batch_allowed);
  if(scenery_batch_bytes){assert(n3ds_gpu_texture_barrier());}
  for(unsigned int i=0;i<SCENERY_BATCH_CACHE;++i){n3ds_gpu_geometry_free(scenery_batch_meshes[i].rigid);n3ds_gpu_geometry_free(scenery_batch_meshes[i].v);n3ds_gpu_geometry_free(scenery_batch_meshes[i].i);}

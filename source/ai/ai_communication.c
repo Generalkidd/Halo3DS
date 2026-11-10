@@ -3026,7 +3026,7 @@ real ai_communication_get_player_rating(
 						continue;
 					}
 
-					ai_profile.meters[_ai_meter_collisions].accumulator++;
+					AI_PROFILE_ONLY(ai_profile.meters[_ai_meter_collisions].accumulator++);
 					match_assert(
 						"c:\\halo\\SOURCE\\ai\\ai_communication.c",
 						0xE91,

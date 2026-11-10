@@ -7,6 +7,7 @@ identity=s[s.index('enum { PREVIEW_EMPTY'):s.index('static unsigned int triangle
 scheduler=s[s.index('/* Kevin Boggs: n3ds_preview_update'):s.index('void n3ds_pc_preview_input')]
 close=s[s.index('void n3ds_pc_preview_close'):s.index('/* Kevin Boggs: n3ds_preview_dispose')]
 available=s[s.index('int n3ds_preview_available(void)'):]
+thumbnail=s[s.index('void *n3ds_pc_preview_thumbnail(int map)'):s.index('/* Kevin Boggs: preview_worker')]
 prefix=r'''
 #include <assert.h>
 #include <stdio.h>
@@ -17,6 +18,8 @@ prefix=r'''
 static int selected_map,selected_page,selected_field,selected_weapon,selected_vehicle;
 static int dragging,touch_held,touch_owner;
 static unsigned int triangle_limit,triangles,batch_count;
+static void *thumbnail_pixels,*thumbnail_texture;
+#define THUMBNAIL_SIZE 128
 struct vertex {float values[8];};static struct vertex *vertices;
 static unsigned short *indices;
 struct preview_batch {void *texture,*pixels;};static struct preview_batch batches[4];
@@ -37,15 +40,16 @@ static void n3ds_thread_close(unsigned int token){assert(token==token_live);toke
 static int n3ds_input_platform_original_model(void){return 1;}
 static void preview_release(void){
  assert(!token_live);free(vertices);free(indices);vertices=NULL;indices=NULL;
+ free(thumbnail_pixels);thumbnail_pixels=NULL;thumbnail_texture=NULL;
  for(unsigned i=0;i<batch_count;++i)free(batches[i].pixels);
  memset(batches,0,sizeof(batches));triangles=batch_count=0;state_loaded=PREVIEW_EMPTY;++releases;
 }
 static int allocate_mesh(void){
- assert(triangle_limit==8192);if(fail_mesh)return 0;
+ assert(triangle_limit==8192 || triangle_limit==PREVIEW_TRIANGLES);if(fail_mesh)return 0;
  vertices=calloc(3,sizeof(*vertices));indices=calloc(3,sizeof(*indices));return 1;
 }
 static void n3ds_gpu_geometry_flush(void *p,unsigned int n){assert(!token_live && p && n && n<=65536);++flushes;}
-static void *n3ds_gpu_texture_create(void *p,int w,int h){assert(!token_live && p && w==64 && h==64);++uploads;return (void*)1;}
+static void *n3ds_gpu_texture_create(void *p,int w,int h){assert(!token_live && p && w==h && (w==64 || w==128));++uploads;return (void*)1;}
 static void finish_worker(void){
  triangles=1;batch_count=2;batches[0].pixels=malloc(16);batches[1].pixels=malloc(16);thread_done=1;
 }
@@ -77,6 +81,15 @@ int main(void){
  n3ds_pc_preview_close();n3ds_preview_update();fail_thread=0;fail_mesh=1;
  preview_request(16,0,0,0,0);n3ds_preview_update();assert(!n3ds_preview_loading());
  n3ds_pc_preview_close();n3ds_preview_update();
+ /* A thumbnail publishes before the mesh, but never for a stale selection. */
+ fail_mesh=0;requested_xbox=0;preview_request(6,0,0,0,0);n3ds_preview_update();
+ assert(!n3ds_pc_preview_thumbnail(6));thumbnail_pixels=malloc(65536);finish_worker();
+ before=uploads;n3ds_preview_update();assert(uploads==before+1 && n3ds_pc_preview_thumbnail(6));
+ assert(!n3ds_preview_available() && !n3ds_pc_preview_thumbnail(7));
+ preview_request(7,0,0,0,0);assert(!n3ds_pc_preview_thumbnail(6));
+ n3ds_preview_update();assert(!thumbnail_texture && token_live);
+ thumbnail_pixels=malloc(65536);finish_worker();n3ds_pc_preview_close();
+ before=uploads;n3ds_preview_update();assert(uploads==before && !thumbnail_pixels && !thumbnail_texture);
  puts("PASS: preview cancellation, latest-only publication, bounded uploads, deferred cleanup and failure fallback");
 }
 '''
@@ -85,6 +98,6 @@ if command and command[0]=='--':command.pop(0)
 if not command:command=['clang']
 with tempfile.TemporaryDirectory(prefix='halo-preview-jobs-',ignore_cleanup_errors=True) as tmp:
  p=Path(tmp);src=p/'jobs.c';exe=p/('jobs.exe' if sys.platform=='win32' else 'jobs')
- src.write_text(prefix+identity+stubs+close+scheduler+available+test)
+ src.write_text(prefix+identity+stubs+close+scheduler+available+thumbnail+test)
  subprocess.run(command+['-std=c11',str(src),'-o',str(exe)],check=True)
  subprocess.run([str(exe)],check=True)

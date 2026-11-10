@@ -26,8 +26,6 @@ struct plasma_shader {
 _Static_assert(offsetof(struct plasma_shader,primary_period)==0xc0,"Plasma primary ABI");
 _Static_assert(offsetof(struct plasma_shader,secondary_map.index)==0x128,"Plasma secondary ABI");
 _Static_assert(sizeof(struct plasma_shader)==332,"Plasma ABI");
-extern struct rasterizer_window_begin_parameters global_window_parameters;
-extern struct rasterizer_frame_begin_parameters global_frame_parameters;
 void n3ds_log(const char *);
 struct plasma_volume {
     const struct bitmap_data *bitmap;int size[3],stride;long address[3][32];byte pixels[32*32*32*2];
@@ -94,7 +92,7 @@ static float animation_value(const struct render_animation *a,int source,float e
 }
 void n3ds_plasma_model_draw(const struct shader *shader,short permutation,
     const struct rasterizer_model_begin_parameters *p,const void *data,unsigned int count,
-    short type,const unsigned short *indices,unsigned int index_count)
+    short type,const unsigned short *indices,unsigned int index_count,const struct native_model_view *frame_view)
 {
     const struct n3ds_cache_view *view=n3ds_engine_cache_view(0);
     const struct plasma_shader *s=(const void *)shader;
@@ -123,7 +121,7 @@ void n3ds_plasma_model_draw(const struct shader *shader,short permutation,
     const struct plasma_volume *primary=volume_load(s->primary_map.index,permutation,NULL);
     const struct plasma_volume *secondary=volume_load(s->secondary_map.index,permutation,primary);
     assert(isfinite(s->primary_period) && s->primary_period!=0 && isfinite(s->secondary_period) && s->secondary_period!=0);
-    float time[2]={global_frame_parameters.game_time_sec/s->primary_period,global_frame_parameters.game_time_sec/s->secondary_period};
+    float time[2]={frame_view->game_time/s->primary_period,frame_view->game_time/s->secondary_period};
     const struct model_vertex_uncompressed *cached=type==5?n3ds_model_decode_stream(data,count):NULL;
     const real_vector2d unit={1,1};
     const struct native_render_vertex *pose=n3ds_model_skin_stream(cached,count,&p->skinning,&unit,p->unique_identifier);
@@ -143,7 +141,7 @@ void n3ds_plasma_model_draw(const struct shader *shader,short permutation,
         }
         float xyz[2][3],noise[2][2];
         for(int c=0;c<3;++c) {
-            eye[c]=global_window_parameters.camera.position.n[c]-out[i].position[c];
+            eye[c]=frame_view->camera_position.n[c]-out[i].position[c];
             n2+=normal.n[c]*normal.n[c];e2+=eye[c]*eye[c];dot+=normal.n[c]*eye[c];
             xyz[0][c]=v->position.n[c]*s->primary_scale+time[0]*s->primary_direction.n[c];
             xyz[1][c]=v->position.n[c]*s->secondary_scale+time[1]*s->secondary_direction.n[c];
@@ -164,7 +162,7 @@ void n3ds_plasma_model_draw(const struct shader *shader,short permutation,
     assert(n3ds_gpu_glass_draw(out,indices,index_count,1,1));
     if(++draws==1 || draws==60 || draws==300) {
         for(long t=0;t<view->tag_header->tag_count;++t) if(view->instances[t].base_address==shader) {
-            char message[256];snprintf(message,sizeof(message),"NATIVE PLASMA: draw=%u triangles=%u intensity=%.3f time=%.3f name=%.140s",draws,index_count/3,intensity,global_frame_parameters.game_time_sec,view->instances[t].name);n3ds_log(message);break;
+            char message[256];snprintf(message,sizeof(message),"NATIVE PLASMA: draw=%u triangles=%u intensity=%.3f time=%.3f name=%.140s",draws,index_count/3,intensity,frame_view->game_time,view->instances[t].name);n3ds_log(message);break;
         }
     }
 }

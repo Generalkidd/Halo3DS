@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /*
 EVENT_MANAGER.C
 
@@ -282,9 +283,11 @@ static void queue_event(
 	if (post)
 	{
 		event->controller_index = controller_index;
+		/* Keep older events at higher indices: get_next_event consumes those
+		 * first. Shifting toward zero discards A when a held R follows it. */
 		csmemmove(
-			event_manager_globals.state.events[controller_index],
 			&event_manager_globals.state.events[controller_index][1],
+			event_manager_globals.state.events[controller_index],
 			sizeof(event_manager_globals.state.events[controller_index]) - sizeof(struct event_record));
 		event_manager_globals.state.events[controller_index][0] = *event;
 		if (event->type != _event_type_null)

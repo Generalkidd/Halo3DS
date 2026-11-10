@@ -12,6 +12,12 @@ enum { NATIVE_SAMPLER_MAG_POINT=1, NATIVE_SAMPLER_MIN_POINT=2,
 int n3ds_gpu_texture_bind_sampler(unsigned int stage,void *resource,unsigned int flags);
 int n3ds_gpu_texture_sampler_tests(void);
 void *n3ds_gpu_texture_bound(unsigned int stage);
+/* Backend-only binding of a captured Citro3D descriptor. The descriptor and
+ * cube faces are owned by the command; image memory retains its map lifetime. */
+int n3ds_gpu_texture_bind_snapshot(unsigned int stage,void *owner,const void *descriptor);
+/* Producer view of queued bindings; does not wait for GPU command replay.
+ * Caller supplies C3D_Tex and C3D_TexCube storage and receives the owner handle. */
+int n3ds_gpu_texture_capture_bound(unsigned int stage,void **owner,void *descriptor,void *cube);
 /* Queued map resource lookup without changing GPU sampler state. */
 void *n3ds_engine_bitmap_resource(int group_index,int index);
 int n3ds_engine_bitmap_resource_tests(void);
@@ -23,6 +29,10 @@ struct bitmap_data;
 const struct bitmap_data *n3ds_engine_bitmap_metadata(int group_index,int index);
 /* Bind the final sampler once, without installing a temporary default wrap. */
 int n3ds_engine_bitmap_bind_sampler(unsigned int stage,const struct bitmap_data *bitmap,unsigned int flags);
+/* Engine-side preparation only: capture the sampler before an owned draw.
+ * GPU callbacks use immediate bind functions. ~0u preserves the owner sampler. */
+int n3ds_gpu_texture_prepare_bind(unsigned int stage,void *resource,unsigned int flags);
+int n3ds_gpu_texture_prepared_tests(void);
 int n3ds_gpu_texture_sampling_test(unsigned int stage, const unsigned int expected_corners[4]);
 void *n3ds_gpu_texture_create(const unsigned int *pixels, unsigned int width, unsigned int height);
 void *n3ds_gpu_texture_create_two_mips(const unsigned int *pixels, unsigned int width, unsigned int height);

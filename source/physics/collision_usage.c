@@ -1,3 +1,5 @@
+/* New3DS integration additions by Kevin Boggs. */
+#define N3DS_COLLISION_USAGE_IMPLEMENTATION 1
 /*
 COLLISION_USAGE.C
 
@@ -265,7 +267,12 @@ void collision_log_initialize(
 void collision_log_enable(
 	boolean enable)
 {
-	global_collision_log_enable = enable;
+	#if defined(HALO_N3DS_STRIP_DIAGNOSTICS)
+    /* BSP switching must not re-enable release-only collision telemetry. */
+    global_collision_log_enable = FALSE;
+#else
+    global_collision_log_enable = enable;
+#endif
 
 	return;
 }

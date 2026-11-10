@@ -48,6 +48,6 @@ if($CoreOnly){
     if($LASTEXITCODE -ne 0){throw 'Windows 7 app compilation failed'}
     & dotnet $compiler @common /target:exe "/out:$Output/Halo3DS-Xbox-Install.exe" "/resource:$GameBuild,HaloSetup.Halo3DS.3dsx" @core "$here/InstallCli.cs"
     if($LASTEXITCODE -ne 0){throw 'Xbox console installer compilation failed'}
-    & dotnet $compiler @common /target:exe "/out:$Output/LegacyTests.exe" /define:LEGACY @core "$here/Tests.cs" "$here/../Tests/PcMapsTests.cs"
+    & dotnet $compiler @common /target:exe "/out:$Output/LegacyTests.exe" /define:LEGACY @core "$here/Tests.cs" "$here/../Tests/PcMapsTests.cs" "$here/../Tests/RevisionTests.cs"
 }
 if($LASTEXITCODE -ne 0){throw 'Compilation failed'}

@@ -1,4 +1,5 @@
 /* New3DS integration additions by Kevin Boggs. */
+#include "engine_render_commands.h"
 #include <3ds.h>
 #include <citro3d.h>
 #include <string.h>
@@ -22,7 +23,8 @@ static int packed_ready,packed_matrix;
 static int effect_state_valid,effect_state_packed,effect_state_blend;
 static unsigned int effect_state_shader,effect_state_geometry,effect_state_reused;
 static C3D_Mtx effect_projection;
-void n3ds_gpu_effect_state_invalidate(void) {effect_state_valid=0;}
+void n3ds_gpu_effect_state_invalidate(void) {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_STATE);effect_state_valid=0;}
 
 static struct native_widget_vertex *stream;
 static unsigned int used,block;
@@ -59,9 +61,11 @@ static void flush_written(unsigned int count)
     else {GSPGPU_FlushDataCache(stream+used,count*sizeof(*stream));++immediate;}
 }
 void n3ds_gpu_widgets_flush(void)
-{ if(dirty && used) {GSPGPU_FlushDataCache(stream,used*sizeof(*stream));++flushes;}dirty=0; }
+{
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_STATE); if(dirty && used) {GSPGPU_FlushDataCache(stream,used*sizeof(*stream));++flushes;}dirty=0; }
 void n3ds_gpu_widgets_dispose(void)
 {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_LIFETIME);
     char message[128];snprintf(message,sizeof(message),"WIDGET TRANSFERS: deferred=%u immediate=%u frame_flushes=%u effect_state_reuses=%u",deferred,immediate,flushes,effect_state_reused);
     n3ds_log(message);deferred=immediate=flushes=0;dirty=0;
     n3ds_gpu_program_park();
@@ -74,6 +78,7 @@ void n3ds_gpu_widgets_dispose(void)
 }
 int n3ds_gpu_widgets_initialize(void)
 {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_STATE);
     if(shader || stream) return 0;
     shader=DVLB_ParseFile((u32 *)engine_widget_shader,sizeof(engine_widget_shader));
     stream=blocks[0]=linearAlloc(WIDGET_VERTICES*sizeof(*stream));
@@ -91,9 +96,11 @@ int n3ds_gpu_widgets_initialize(void)
     return 1;
 fail:n3ds_gpu_widgets_dispose();return 0;
 }
-void n3ds_gpu_widgets_frame_begin(void) {effect_state_valid=0;used=0;dirty=0;block=0;stream=blocks[0];}
+void n3ds_gpu_widgets_frame_begin(void) {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_STATE);effect_state_valid=0;used=0;dirty=0;block=0;stream=blocks[0];}
 void n3ds_gpu_widgets_map_release(void)
 {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_LIFETIME);
     for(unsigned int i=1;i<WIDGET_BLOCKS;++i) {linearFree(blocks[i]);blocks[i]=NULL;}
     used=dirty=block=0;stream=blocks[0];
 }
@@ -112,6 +119,7 @@ static int reserve_vertices(unsigned int count)
 int n3ds_gpu_widget_draw(const struct native_widget_vertex vertices[4],int world,
     float width,float height,float tint,unsigned int flags)
 {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_IMMEDIATE);
     effect_state_valid=0;
     static const unsigned int order[6]={0,1,2,0,2,3};
     C3D_Tex *texture=n3ds_gpu_texture_bound(0);C3D_Mtx projection;
@@ -129,9 +137,9 @@ int n3ds_gpu_widget_draw(const struct native_widget_vertex vertices[4],int world
     float origin[3]={0};
     if(world) {
         if(!effect_relative_projection(&projection,origin)) return 0;
-        n3ds_gpu_fog_sky(0);n3ds_gpu_fog_blend(NATIVE_BLEND_ADD);
+
     } else {
-        n3ds_gpu_fog_overlay();Mtx_OrthoTilt(&projection,0,width,height,0,0,1,true);
+        Mtx_OrthoTilt(&projection,0,width,height,0,0,1,true);
     }
     C3D_BindProgram(&program);
     C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER,matrix_location,&projection);
@@ -184,51 +192,29 @@ int n3ds_gpu_widget_draw(const struct native_widget_vertex vertices[4],int world
     return success;
 }
 
-static int effect_draw(const void *input,unsigned int count,
-    int blend,unsigned int shader_flags,unsigned int sampler_flags,unsigned int geometry_flags,
-    int packed,const float *rows,const unsigned short *indices,unsigned int index_count)
+/* Prepared effects own the immutable frame geometry and all draw parameters.
+ * Preparation performs validation, camera-relative conversion and upload once.
+ * Submission reads no simulation vertices, affine rows or index staging. */
+struct native_effect_command {
+    C3D_Mtx projection;
+    void *texture;
+    const void *vertices;
+    const unsigned short *indices;
+    unsigned int count,index_count,stride,shader_flags,sampler_flags,geometry_flags;
+    int packed,blend;
+};
+
+/* Kevin Boggs: effect_command_execute */
+static int effect_command_execute(const void *payload)
 {
-    const struct native_widget_vertex *vertices=input;
-    const struct native_packed_effect_vertex *raw=input;
-    C3D_Tex *texture=n3ds_gpu_texture_bound(0);C3D_Mtx projection;
-    float origin[3];
-    if(!ready || !texture || !vertices || !count || (indices?(!index_count || index_count%3):count%3) ||
-       blend<0 || blend>=NATIVE_BLEND_COUNT || (shader_flags&~7U) || (sampler_flags&~7U) ||
-       !effect_relative_projection(&projection,origin)) {
-        char message[160];snprintf(message,sizeof(message),"EFFECT REJECT: ready=%d texture=%p count=%u blend=%d shader=%x sampler=%x",ready,(void *)texture,count,blend,shader_flags,sampler_flags);n3ds_log(message);return 0;
-    }
-    /* Optional particles may exceed a fixed console budget. Keep queued draws
-     * intact and leave command space for the HUD; never terminate gameplay. */
-    if(n3ds_gpu_command_usage()>.85f || !reserve_vertices(count)) {
-        if(!(budget_drops++%300)) n3ds_log("EFFECT BUDGET: particle batch omitted; gameplay and queued geometry retained");
-        return 1;
-    }
-    /* Preserve complete original calls for MIN/MAX: overlapping weapon-mask
-     * comparisons were not repeatable even between identical unbatched draws
-     * in Azahar. Other modes have exact batch-vs-separate GPU comparisons. */
-    if(!indices && (blend==NATIVE_BLEND_MIN || blend==NATIVE_BLEND_MAX) && count>6) {
-        for(unsigned int offset=0;offset<count;offset+=6) {
-            unsigned int chunk=count-offset>6?6:count-offset;
-            if(!effect_draw(packed?(const void *)(raw+offset):(const void *)(vertices+offset),chunk,blend,shader_flags,sampler_flags,geometry_flags,packed,rows,NULL,0)) return 0;
-        }
-        return 1;
-    }
-    for(unsigned int i=0;i<index_count;++i) if(!indices || indices[i]>=count) return 0;
-    for(unsigned int i=0;i<count;++i) {
-        const float *p=packed?raw[i].position:vertices[i].position;
-        const float *uv=packed?raw[i].uv:vertices[i].uv;
-        for(unsigned int j=0;j<3;++j) if(!isfinite(p[j])) return 0;
-        for(unsigned int j=0;j<2;++j) if(!isfinite(uv[j])) return 0;
-        if(!packed) for(unsigned int j=0;j<4;++j) if(!isfinite(vertices[i].color[j])) return 0;
-    }
-    if(rows) {
-        C3D_Mtx affine,combined;Mtx_Identity(&affine);
-        for(unsigned int i=0;i<12;++i) if(!isfinite(rows[i])) return 0;
-        /* Local particle vertices stay local. Cancel the world translation on
-         * the CPU before the limited-precision vertex shader sees it. */
-        for(unsigned int r=0;r<3;++r) affine.r[r]=FVec4_New(rows[r*4],rows[r*4+1],rows[r*4+2],rows[r*4+3]-origin[r]);
-        Mtx_Multiply(&combined,&projection,&affine);projection=combined;
-    }
+    const struct native_effect_command *p=payload;
+    C3D_Mtx projection=p->projection;
+    void *texture=p->texture;
+    const void *submitted=p->vertices;
+    const unsigned short *gpu_indices=p->indices;
+    unsigned int count=p->count,index_count=p->index_count,stride=p->stride;
+    unsigned int shader_flags=p->shader_flags,sampler_flags=p->sampler_flags,geometry_flags=p->geometry_flags;
+    int packed=p->packed,blend=p->blend;
     int retained=effect_state_valid && effect_state_packed==packed;
     if(!retained) C3D_BindProgram(packed?&packed_program:&program);
     if(!retained || memcmp(&effect_projection,&projection,sizeof(projection))) C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER,packed?packed_matrix:matrix_location,&projection);
@@ -300,10 +286,71 @@ static int effect_draw(const void *input,unsigned int count,
     } else ++effect_state_reused;
     effect_state_valid=1;effect_state_packed=packed;effect_state_blend=blend;
     effect_state_shader=shader_flags;effect_state_geometry=geometry_flags;
-    u32 sampler=texture->param,border=texture->border;
-    C3D_TexSetFilter(texture,(sampler_flags&1)?GPU_NEAREST:GPU_LINEAR,(sampler_flags&1)?GPU_NEAREST:GPU_LINEAR);
-    C3D_TexSetWrap(texture,(sampler_flags&2)?GPU_CLAMP_TO_EDGE:GPU_REPEAT,(sampler_flags&4)?GPU_CLAMP_TO_EDGE:GPU_REPEAT);
+    /* Bind a copied sampler descriptor. Do not mutate the texture owner. */
+    unsigned int flags=(sampler_flags&1?NATIVE_SAMPLER_MAG_POINT|NATIVE_SAMPLER_MIN_POINT:0)|
+        (sampler_flags&2?NATIVE_SAMPLER_CLAMP_U:0)|(sampler_flags&4?NATIVE_SAMPLER_CLAMP_V:0);
+    if(!n3ds_gpu_texture_bind_sampler(0,texture,flags))return 0;
+    int success=gpu_indices || n3ds_gpu_vertex_buffer_bind(submitted,stride,3,0x210);
+    if(success) {
+        int first_person=(geometry_flags&(1u<<7))!=0;
+        for(int pass=0;pass<(first_person?2:1);++pass) {
+            if(first_person && !pass && (shader_flags&4)) continue;
+            C3D_DepthTest(!(geometry_flags&(1u<<3)) && !pass,GPU_GEQUAL,GPU_WRITE_COLOR&~GPU_WRITE_ALPHA);
+            C3D_StencilTest(true,GPU_EQUAL,first_person&&!pass?1:0,1,0);
+            C3D_StencilOp(GPU_STENCIL_KEEP,GPU_STENCIL_KEEP,GPU_STENCIL_KEEP);
+            if(gpu_indices) {if(!n3ds_gpu_indexed_draw(submitted,gpu_indices,index_count,stride,3,0x210)) return 0;}
+            else C3D_DrawArrays(GPU_TRIANGLES,0,count);
+        }
+    }
     n3ds_gpu_texture_bind(0,texture);
+    return success;
+}
+
+static int effect_draw(const void *input,unsigned int count,
+    int blend,unsigned int shader_flags,unsigned int sampler_flags,unsigned int geometry_flags,
+    int packed,const float *rows,const unsigned short *indices,unsigned int index_count)
+{
+    const struct native_widget_vertex *vertices=input;
+    const struct native_packed_effect_vertex *raw=input;
+    C3D_Tex *texture=n3ds_gpu_texture_bound(0);C3D_Mtx projection;
+    float origin[3];
+    if(!ready || !texture || !vertices || !count || (indices?(!index_count || index_count%3):count%3) ||
+       blend<0 || blend>=NATIVE_BLEND_COUNT || (shader_flags&~7U) || (sampler_flags&~7U) ||
+       !effect_relative_projection(&projection,origin)) {
+        char message[160];snprintf(message,sizeof(message),"EFFECT REJECT: ready=%d texture=%p count=%u blend=%d shader=%x sampler=%x",ready,(void *)texture,count,blend,shader_flags,sampler_flags);n3ds_log(message);return 0;
+    }
+    /* Optional particles may exceed a fixed console budget. Keep queued draws
+     * intact and leave command space for the HUD; never terminate gameplay. */
+    if(n3ds_gpu_command_usage()>.85f || !reserve_vertices(count)) {
+        if(!(budget_drops++%300)) n3ds_log("EFFECT BUDGET: particle batch omitted; gameplay and queued geometry retained");
+        return 1;
+    }
+    /* Preserve complete original calls for MIN/MAX: overlapping weapon-mask
+     * comparisons were not repeatable even between identical unbatched draws
+     * in Azahar. Other modes have exact batch-vs-separate GPU comparisons. */
+    if(!indices && (blend==NATIVE_BLEND_MIN || blend==NATIVE_BLEND_MAX) && count>6) {
+        for(unsigned int offset=0;offset<count;offset+=6) {
+            unsigned int chunk=count-offset>6?6:count-offset;
+            if(!effect_draw(packed?(const void *)(raw+offset):(const void *)(vertices+offset),chunk,blend,shader_flags,sampler_flags,geometry_flags,packed,rows,NULL,0)) return 0;
+        }
+        return 1;
+    }
+    for(unsigned int i=0;i<index_count;++i) if(!indices || indices[i]>=count) return 0;
+    for(unsigned int i=0;i<count;++i) {
+        const float *p=packed?raw[i].position:vertices[i].position;
+        const float *uv=packed?raw[i].uv:vertices[i].uv;
+        for(unsigned int j=0;j<3;++j) if(!isfinite(p[j])) return 0;
+        for(unsigned int j=0;j<2;++j) if(!isfinite(uv[j])) return 0;
+        if(!packed) for(unsigned int j=0;j<4;++j) if(!isfinite(vertices[i].color[j])) return 0;
+    }
+    if(rows) {
+        C3D_Mtx affine,combined;Mtx_Identity(&affine);
+        for(unsigned int i=0;i<12;++i) if(!isfinite(rows[i])) return 0;
+        /* Local particle vertices stay local. Cancel the world translation on
+         * the CPU before the limited-precision vertex shader sees it. */
+        for(unsigned int r=0;r<3;++r) affine.r[r]=FVec4_New(rows[r*4],rows[r*4+1],rows[r*4+2],rows[r*4+3]-origin[r]);
+        Mtx_Multiply(&combined,&projection,&affine);projection=combined;
+    }
     unsigned int stride=packed?sizeof(*raw):sizeof(*vertices);
     void *submitted=stream+used;
     memcpy(submitted,input,count*stride);
@@ -317,31 +364,34 @@ static int effect_draw(const void *input,unsigned int count,
     flush_written(count);
     const unsigned short *gpu_indices=indices?n3ds_gpu_indices_upload(indices,index_count):NULL;
     if(indices && !gpu_indices) return 0;
-    int success=indices || n3ds_gpu_vertex_buffer_bind(submitted,stride,3,0x210);
-    if(success) {
-        int first_person=(geometry_flags&(1u<<7))!=0;
-        for(int pass=0;pass<(first_person?2:1);++pass) {
-            if(first_person && !pass && (shader_flags&4)) continue;
-            C3D_DepthTest(!(geometry_flags&(1u<<3)) && !pass,GPU_GEQUAL,GPU_WRITE_COLOR&~GPU_WRITE_ALPHA);
-            C3D_StencilTest(true,GPU_EQUAL,first_person&&!pass?1:0,1,0);
-            C3D_StencilOp(GPU_STENCIL_KEEP,GPU_STENCIL_KEEP,GPU_STENCIL_KEEP);
-            if(indices) {if(!n3ds_gpu_indexed_draw(submitted,gpu_indices,index_count,stride,3,0x210)) return 0;}
-            else C3D_DrawArrays(GPU_TRIANGLES,0,count);
-        }
-        used+=count;
+    struct native_effect_command prepared={
+        .projection=projection,.texture=texture,.vertices=submitted,.indices=gpu_indices,
+        .count=count,.index_count=index_count,.stride=stride,.shader_flags=shader_flags,
+        .sampler_flags=sampler_flags,.geometry_flags=geometry_flags,.packed=packed,.blend=blend};
+    /* Reserve this range now; later effects must never overwrite queued data.
+     * Widget frame begin and block reuse remain lifetime fences. */
+    used+=count;
+#ifdef HALO_N3DS_RENDER_COMMANDS
+    if(n3ds_render_commands_recording()) {
+        struct native_effect_command *command=n3ds_render_command_allocate(effect_command_execute,sizeof(prepared));
+        if(command) {*command=prepared;return 1;}
     }
-    texture->param=sampler;texture->border=border;n3ds_gpu_texture_bind(0,texture);
-    return success;
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_IMMEDIATE);
+#endif
+    return effect_command_execute(&prepared);
 }
 
 int n3ds_gpu_effect_draw(const struct native_widget_vertex *v,unsigned int n,int blend,
     unsigned int shader,unsigned int sampler,unsigned int geometry)
-{return effect_draw(v,n,blend,shader,sampler,geometry,0,NULL,NULL,0);}
+{
+    return effect_draw(v,n,blend,shader,sampler,geometry,0,NULL,NULL,0);}
 int n3ds_gpu_effect_packed_draw(const struct native_packed_effect_vertex *v,unsigned int n,int blend,
     unsigned int shader,unsigned int sampler,unsigned int geometry,const float *rows)
-{return effect_draw(v,n,blend,shader,sampler,geometry,1,rows,NULL,0);}
+{
+    return effect_draw(v,n,blend,shader,sampler,geometry,1,rows,NULL,0);}
 #include "engine_effect_offload_tests.inl"
 
 int n3ds_gpu_effect_packed_indexed_draw(const struct native_packed_effect_vertex *v,unsigned int n,
     const unsigned short *indices,unsigned int count,int blend,unsigned int shader,unsigned int sampler,unsigned int geometry,const float *rows)
-{return effect_draw(v,n,blend,shader,sampler,geometry,1,rows,indices,count);}
+{
+    return effect_draw(v,n,blend,shader,sampler,geometry,1,rows,indices,count);}

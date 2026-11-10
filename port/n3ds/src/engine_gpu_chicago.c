@@ -1,4 +1,6 @@
+/* New3DS integration additions by Kevin Boggs. */
 #include <3ds.h>
+#include "engine_render_commands.h"
 #include <citro3d.h>
 #include <string.h>
 #include <math.h>
@@ -25,6 +27,13 @@ static int ready,location;
 static struct {DVLB_s *binary;shaderProgram_s program;int ready,projection,bone,uv;} transform_programs[2];
 static struct native_chicago_vertex *stream;
 static unsigned int used;
+#ifdef HALO_N3DS_RENDER_COMMANDS
+/* Optional copies must not consume the original vertex arena's capacity:
+ * later engine allocations still need its full authored-frame budget. */
+static struct native_chicago_vertex *command_vertices;
+static unsigned int command_vertices_used,command_vertices_capacity;
+static int command_vertices_attempted;
+#endif
 #define BAKE_SIZE NATIVE_GENERIC_BAKE_SIZE
 _Static_assert(NATIVE_GENERIC_SAMPLE_SIZE>0 && BAKE_SIZE%NATIVE_GENERIC_SAMPLE_SIZE==0,"Integral generic sample grid");
 #define BAKE_SLOTS 32
@@ -53,6 +62,7 @@ static void bake_report(void)
 }
 void n3ds_gpu_chicago_map_release(void)
 {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_LIFETIME);
     bake_report();
     for(unsigned int i=0;i<baked_count;++i) C3D_TexDelete(&baked[i]);
     memset(baked,0,sizeof(baked));memset(bake_cache,0,sizeof(bake_cache));
@@ -61,6 +71,7 @@ void n3ds_gpu_chicago_map_release(void)
 }
 void n3ds_gpu_chicago_dispose(void)
 {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_LIFETIME);
     n3ds_gpu_program_park();
     if(hologram_ready) shaderProgramFree(&hologram_program);
     if(hologram_binary) DVLB_Free(hologram_binary);
@@ -73,10 +84,15 @@ void n3ds_gpu_chicago_dispose(void)
     if(ready) shaderProgramFree(&program);
     if(shader) DVLB_Free(shader);
     linearFree(stream); stream=NULL; shader=NULL; ready=0; used=0;
+#ifdef HALO_N3DS_RENDER_COMMANDS
+    linearFree(command_vertices);command_vertices=NULL;
+    command_vertices_used=command_vertices_capacity=command_vertices_attempted=0;
+#endif
     n3ds_gpu_chicago_map_release();
 }
 int n3ds_gpu_chicago_initialize(void)
 {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_STATE);
     shader=DVLB_ParseFile((u32 *)engine_chicago_shader,sizeof(engine_chicago_shader));
     stream=linearAlloc(VERTICES*sizeof(*stream));
     if(!shader || !stream) goto fail;
@@ -108,7 +124,11 @@ fail: n3ds_gpu_chicago_dispose(); return 0;
 }
 void n3ds_gpu_chicago_frame_begin(void)
 {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_STATE);
     used=0;++bake_frame;
+#ifdef HALO_N3DS_RENDER_COMMANDS
+    command_vertices_used=0;
+#endif
 #ifdef HALO_N3DS_RENDERER_TESTS
     if(bake_frame%300==0) bake_report();
 #endif
@@ -116,7 +136,13 @@ void n3ds_gpu_chicago_frame_begin(void)
 /* Called before native FrameEnd; FrameBegin waits before this arena is reused.
  * Draw validation restricts vertices to this append-only allocation. */
 void n3ds_gpu_chicago_flush(void)
-{ if(used) GSPGPU_FlushDataCache(stream,used*sizeof(*stream)); }
+{
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_STATE);
+    if(used) GSPGPU_FlushDataCache(stream,used*sizeof(*stream));
+#ifdef HALO_N3DS_RENDER_COMMANDS
+    if(command_vertices_used)GSPGPU_FlushDataCache(command_vertices,command_vertices_used*sizeof(*command_vertices));
+#endif
+}
 static unsigned int tiled_offset(unsigned int x,unsigned int y,unsigned int width)
 {
     static const unsigned int spread[8]={0,1,4,5,16,17,20,21};
@@ -229,13 +255,17 @@ void n3ds_gpu_generic_sample(const struct native_generic_material *m,int map,flo
         m->point[map],m->clamp_u[map],m->clamp_v[map],result);
 }
 void *n3ds_gpu_generic_bake(const struct native_generic_material *m,const float bounds[4])
-{return bake_material(m,bounds,0);}
+{
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_STATE);return bake_material(m,bounds,0);}
 void *n3ds_gpu_meter_bake(const struct native_generic_material *m,const float bounds[4])
-{return bake_material(m,bounds,1);}
+{
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_STATE);return bake_material(m,bounds,1);}
 void *n3ds_gpu_shield_bake(const struct native_generic_material *m,const float bounds[4])
-{return bake_material(m,bounds,2);}
+{
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_STATE);return bake_material(m,bounds,2);}
 void *n3ds_gpu_hologram_stream_bake(const struct native_generic_material *m,const float bounds[4])
-{return bake_material(m,bounds,3);}
+{
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_STATE);return bake_material(m,bounds,3);}
 struct native_chicago_vertex *n3ds_gpu_chicago_allocate(unsigned int count)
 {
     if(!ready || !count || count>VERTICES-used) return NULL;
@@ -268,6 +298,7 @@ static void combine(C3D_TexEnv *env,int mode,int function,GPU_TEVSRC incoming,in
 int n3ds_gpu_effect_layer_draw(struct native_chicago_vertex *vertices,unsigned int count,int blend,
     unsigned int primary_sampler,unsigned int secondary_sampler,unsigned int geometry_flags)
 {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_IMMEDIATE);
     C3D_Mtx projection;
     void *original[2]={n3ds_gpu_texture_bound(0),n3ds_gpu_texture_bound(1)};
     unsigned short indices[384];
@@ -336,15 +367,28 @@ int n3ds_gpu_effect_layer_draw(struct native_chicago_vertex *vertices,unsigned i
     for(int i=0;i<2;++i) n3ds_gpu_texture_bind(i,original[i]);
     return result;
 }
-static int chicago_draw(const struct native_chicago_material *m,
-    struct native_chicago_vertex *vertices,unsigned int vertex_count,
+struct native_chicago_command {
+    struct native_chicago_material material;
+    C3D_Mtx projection;
+    float origin[3];
+    void *textures[3];
+    C3D_Tex sampler[3];
+    C3D_TexCube cube[3];
+    const void *vertices;
+    const unsigned short *indices;
+    unsigned int count,nodes;
+    int skinned; /* -1: pretransformed Chicago stream; 0/1: rigid/skinned. */
+};
+
+/* Kevin Boggs: chicago_command_prepare */
+static int chicago_command_prepare(struct native_chicago_command *p,
+    const struct native_chicago_material *m,struct native_chicago_vertex *vertices,unsigned int vertex_count,
     const unsigned short *indices,unsigned int index_count,const void *gpu_vertices,
     const float *rows,unsigned int nodes,int skinned,const float *uv_rows,int relative)
 {
-    C3D_Mtx projection;
-    void *textures[3]={0};
+    memset(p,0,sizeof(*p));
     if(!ready || !m || m->maps<1 || m->maps>3 || m->blend<0 || m->blend>=NATIVE_BLEND_COUNT ||
-       !(m->fade>=0 && m->fade<=1) || (!vertices && !gpu_vertices) || !indices || !vertex_count ||
+       !(m->fade>=0 && m->fade<=1) || (!vertices && !gpu_vertices) || !indices || !vertex_count || !index_count || index_count%3 ||
        (m->vertex_fade && (m->vertex_fade<1 || m->vertex_fade>2 || (m->vertex_fade==1 && m->maps!=1 && !m->shield_mask))) ||
        (m->meter && (m->maps!=1 || m->fade!=1 || m->vertex_fade)) ||
        (m->vertex_color && (m->maps!=1 || m->vertex_fade || m->meter)) ||
@@ -352,25 +396,37 @@ static int chicago_draw(const struct native_chicago_material *m,
        (m->shield_mask && (m->maps!=2 || m->vertex_color || m->meter || m->generic_lit_lerp)) ||
        (!gpu_vertices && ((uintptr_t)vertices<(uintptr_t)stream || (uintptr_t)vertices>(uintptr_t)(stream+used) ||
        vertex_count>(unsigned int)(stream+used-vertices))) ||
-       !n3ds_gpu_world_projection((float *)&projection)) return 0;
+       !n3ds_gpu_world_projection((float *)&p->projection)) return 0;
     if(gpu_vertices && (!rows || !uv_rows || !nodes || nodes>28 || skinned<0 || skinned>1 ||
         m->vertex_fade || m->meter || m->vertex_color || m->generic_lit_lerp || m->shield_mask)) return 0;
-    if(m->sky && !n3ds_gpu_sky_projection((float *)&projection)) return 0;
-    if(relative && !m->sky) {float origin[3];if(!n3ds_gpu_model_projection((float *)&projection,origin))return 0;}
+    if(m->sky && !n3ds_gpu_sky_projection((float *)&p->projection)) return 0;
+    if((relative || gpu_vertices) && !m->sky && !n3ds_gpu_model_projection((float *)&p->projection,p->origin))return 0;
     for(unsigned int i=0;i<index_count;++i) if(indices[i]>=vertex_count) return 0;
     for(int i=0;i<m->maps-1;++i)
         if(!n3ds_chicago_native_function(m->color_function[i]) || !n3ds_chicago_native_function(m->alpha_function[i])) return 0;
     for(int i=0;i<m->maps;++i) {
-        textures[i]=n3ds_gpu_texture_bound(i); if(!textures[i] && !m->vertex_color) return 0;
+        if(!n3ds_gpu_texture_capture_bound(i,p->textures+i,p->sampler+i,p->cube+i) ||
+            (!p->textures[i] && !m->vertex_color))return 0;
+        if(i && !m->vertex_color && C3D_TexGetType(&p->sampler[i])!=GPU_TEX_2D)return 0;
     }
-    if(!gpu_vertices && !m->vertex_color && !m->generic_lit_lerp && m->vertex_fade!=2) for(unsigned int i=0;i<vertex_count;++i)
-        for(int c=0;c<4;++c) vertices[i].color[c]=m->vertex_fade?vertices[i].uv[2][0]:1.f;
+    p->material=*m;p->vertices=gpu_vertices?gpu_vertices:vertices;p->indices=indices;
+    p->count=index_count;p->nodes=gpu_vertices?nodes:0;p->skinned=gpu_vertices?skinned:-1;
+    return 1;
+}
+
+/* Kevin Boggs: chicago_command_execute_draw */
+static int chicago_command_execute_draw(const struct native_chicago_command *p,const float *rows,const float *uv_rows)
+{
+    const struct native_chicago_material *m=&p->material;
+    const void *gpu_vertices=p->skinned>=0?p->vertices:NULL;
+    const struct native_chicago_vertex *vertices=p->vertices;
+    const unsigned short *indices=p->indices;
+    unsigned int index_count=p->count,nodes=p->nodes;
+    int skinned=p->skinned;
     if(gpu_vertices) {
-        float origin[3]={0};
-        if(!m->sky && !n3ds_gpu_model_projection((float *)&projection,origin))return 0;
         C3D_BindProgram(&transform_programs[skinned].program);
-        C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER,transform_programs[skinned].projection,&projection);
-        for(unsigned int i=0;i<nodes*3;++i) C3D_FVUnifSet(GPU_VERTEX_SHADER,transform_programs[skinned].bone+i,rows[i*4],rows[i*4+1],rows[i*4+2],rows[i*4+3]-origin[i%3]);
+        C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER,transform_programs[skinned].projection,&p->projection);
+        for(unsigned int i=0;i<nodes*3;++i) C3D_FVUnifSet(GPU_VERTEX_SHADER,transform_programs[skinned].bone+i,rows[i*4],rows[i*4+1],rows[i*4+2],rows[i*4+3]-p->origin[i%3]);
         for(int i=0;i<6;++i) {
             const float *v=uv_rows+i*4;
             C3D_FVUnifSet(GPU_VERTEX_SHADER,transform_programs[skinned].uv+i,v[0],v[1],0,v[3]);
@@ -380,7 +436,7 @@ static int chicago_draw(const struct native_chicago_material *m,
         if(skinned) AttrInfo_AddLoader(a,3,GPU_FLOAT,4);
     } else {
     C3D_BindProgram(&program);
-    C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER,location,&projection);
+    C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER,location,&p->projection);
     C3D_AttrInfo *attributes=C3D_GetAttrInfo(); AttrInfo_Init(attributes);
     AttrInfo_AddLoader(attributes,0,GPU_FLOAT,3);
     for(int i=1;i<4;++i) AttrInfo_AddLoader(attributes,i,GPU_FLOAT,2);
@@ -443,7 +499,6 @@ static int chicago_draw(const struct native_chicago_material *m,
     }
     if(m->vertex_fade) {
         /* Compose angular and animation fades once, before blending. */
-        for(unsigned int i=0;i<vertex_count;++i) for(int c=0;c<4;++c) vertices[i].color[c]*=m->fade;
         for(int i=m->maps;i<6;++i) C3D_TexEnvInit(C3D_GetTexEnv(i));
         env=C3D_GetTexEnv(m->maps);
         C3D_TexEnvSrc(env,channel,GPU_PREVIOUS,GPU_PRIMARY_COLOR,GPU_CONSTANT);
@@ -462,7 +517,7 @@ static int chicago_draw(const struct native_chicago_material *m,
     C3D_CullFace(m->two_sided?GPU_CULL_NONE:GPU_CULL_FRONT_CCW);
     C3D_AlphaTest(m->alpha_test,GPU_GREATER,127);
     n3ds_gpu_model_stencil_apply();
-    n3ds_gpu_fog_sky(m->sky);
+
     n3ds_gpu_framebuffer_blend(m->blend);
     if(m->meter) {
         /* Apply brightness in TEV so the blend unit only needs constant RGB.
@@ -481,25 +536,114 @@ static int chicago_draw(const struct native_chicago_material *m,
          * Identical overrides and restores do not dirty the GPU texture cache. */
         unsigned int flags=(m->point[i]?(NATIVE_SAMPLER_MIN_POINT|((m->generic_lit_lerp || m->shield_mask)?NATIVE_SAMPLER_MAG_POINT:0)):0)|
             (m->clamp_u[i]?NATIVE_SAMPLER_CLAMP_U:0)|(m->clamp_v[i]?NATIVE_SAMPLER_CLAMP_V:0);
-        if(!n3ds_gpu_texture_bind_sampler(i,textures[i],flags)) return 0;
+        C3D_Tex sampler=p->sampler[i];
+        C3D_TexSetFilter(&sampler,flags&NATIVE_SAMPLER_MAG_POINT?GPU_NEAREST:GPU_LINEAR,
+            flags&NATIVE_SAMPLER_MIN_POINT?GPU_NEAREST:GPU_LINEAR);
+        C3D_TexSetWrap(&sampler,flags&NATIVE_SAMPLER_CLAMP_U?GPU_CLAMP_TO_EDGE:GPU_REPEAT,
+            flags&NATIVE_SAMPLER_CLAMP_V?GPU_CLAMP_TO_EDGE:GPU_REPEAT);
+        if(!n3ds_gpu_texture_bind_snapshot(i,p->textures[i],&sampler))return 0;
     }
     int result=gpu_vertices?n3ds_gpu_indexed_draw(gpu_vertices,indices,index_count,
         skinned?sizeof(struct native_skin_vertex):sizeof(struct native_render_vertex),skinned?4:3,skinned?0x3210:0x210):
         n3ds_gpu_indexed_draw(vertices,indices,index_count,sizeof(*vertices),5,0x43210);
-    for(int i=0;i<m->maps && !m->vertex_color;++i) n3ds_gpu_texture_bind(i,textures[i]);
+    for(int i=0;i<m->maps && !m->vertex_color;++i) n3ds_gpu_texture_bind_snapshot(i,p->textures[i],p->sampler+i);
     n3ds_gpu_world_state_restore();
     return result;
 }
 
+#ifdef HALO_N3DS_RENDER_COMMANDS
+static unsigned int chicago_command_recorded,chicago_command_fallback,chicago_command_vertex_peak;
+/* Kevin Boggs: chicago_command_execute */
+static int chicago_command_execute(const void *payload)
+{
+    const struct native_chicago_command *p=payload;
+    const float *rows=(const void *)(p+1);
+    return chicago_command_execute_draw(p,rows,rows+p->nodes*12);
+}
+#endif
+
+/* Kevin Boggs: chicago_vertex_colors */
+static void chicago_vertex_colors(const struct native_chicago_material *m,struct native_chicago_vertex *v,unsigned int count)
+{
+    for(unsigned int i=0;i<count;++i)for(int c=0;c<4;++c) {
+        if(!m->vertex_color && !m->generic_lit_lerp && m->vertex_fade!=2)v[i].color[c]=m->vertex_fade?v[i].uv[2][0]:1.f;
+        if(m->vertex_fade)v[i].color[c]*=m->fade;
+    }
+}
+
+static int chicago_draw(const struct native_chicago_material *m,
+    struct native_chicago_vertex *vertices,unsigned int vertex_count,
+    const unsigned short *indices,unsigned int index_count,const void *gpu_vertices,
+    const float *rows,unsigned int nodes,int skinned,const float *uv_rows,int relative)
+{
+    struct native_chicago_command source;
+    if(!chicago_command_prepare(&source,m,vertices,vertex_count,indices,index_count,gpu_vertices,rows,nodes,skinned,uv_rows,relative))return 0;
+#ifdef HALO_N3DS_RENDER_COMMANDS
+    unsigned int stride=skinned?sizeof(struct native_skin_vertex):sizeof(struct native_render_vertex);
+    if(!gpu_vertices && n3ds_render_commands_recording() && !command_vertices_attempted) {
+        extern int n3ds_input_platform_original_model(void);
+        command_vertices_attempted=1;
+        unsigned int capacity=(n3ds_input_platform_original_model()?64u:128u)*1024/sizeof(*command_vertices);
+        command_vertices=linearAlloc(capacity*sizeof(*command_vertices));
+        if(command_vertices)command_vertices_capacity=capacity;
+    }
+    int owned=gpu_vertices?(vertex_count<=~0u/stride && n3ds_gpu_model_geometry_owned(gpu_vertices,vertex_count*stride)):
+        vertex_count<=command_vertices_capacity-command_vertices_used;
+    if(owned && n3ds_render_commands_recording()) {
+        const unsigned short *staged=n3ds_gpu_indices_upload(indices,index_count);
+        if(!staged)return 0;
+        unsigned int floats=gpu_vertices?nodes*12+24:0;
+        struct native_chicago_command *p=n3ds_render_command_allocate(chicago_command_execute,sizeof(*p)+floats*sizeof(float));
+        if(p) {
+            *p=source;p->indices=staged;
+            for(int i=0;i<m->maps && !m->vertex_color;++i) {
+                int type=C3D_TexGetType(&p->sampler[i]);
+                if(type==GPU_TEX_CUBE_MAP || type==GPU_TEX_SHADOW_CUBE)p->sampler[i].cube=p->cube+i;
+            }
+            if(gpu_vertices) {
+                float *pose=(void *)(p+1);
+                memcpy(pose,rows,nodes*12*sizeof(float));memcpy(pose+nodes*12,uv_rows,24*sizeof(float));
+            } else {
+                /* Failure/exhaustion takes the immediate path without taking
+                 * capacity away from later engine-generated vertices. */
+                struct native_chicago_vertex *copy=command_vertices+command_vertices_used;command_vertices_used+=vertex_count;
+                memcpy(copy,vertices,vertex_count*sizeof(*copy));chicago_vertex_colors(m,copy,vertex_count);p->vertices=copy;
+                if(command_vertices_used>chicago_command_vertex_peak)chicago_command_vertex_peak=command_vertices_used;
+            }
+            ++chicago_command_recorded;
+            n3ds_render_commands_kick();
+            return 1;
+        }
+    }
+    if(n3ds_render_commands_recording())++chicago_command_fallback;
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_IMMEDIATE);
+#endif
+    if(!gpu_vertices)chicago_vertex_colors(m,vertices,vertex_count);
+    return chicago_command_execute_draw(&source,rows,uv_rows);
+}
+
+/* Kevin Boggs: n3ds_chicago_commands_report */
+void n3ds_chicago_commands_report(void)
+{
+#ifdef HALO_N3DS_RENDER_COMMANDS
+    char message[160];snprintf(message,sizeof(message),"RESULT: Chicago commands draws=%u immediate=%u copied_vertex_arena_peak=%u capacity=%u",
+        chicago_command_recorded,chicago_command_fallback,chicago_command_vertex_peak,command_vertices_capacity);n3ds_log(message);
+#endif
+}
+
 int n3ds_gpu_chicago_draw(const struct native_chicago_material *m,struct native_chicago_vertex *v,
     unsigned int n,const unsigned short *indices,unsigned int count)
-{return chicago_draw(m,v,n,indices,count,NULL,NULL,0,0,NULL,0);}
+{
+    return chicago_draw(m,v,n,indices,count,NULL,NULL,0,0,NULL,0);}
 int n3ds_gpu_chicago_relative_draw(const struct native_chicago_material *m,struct native_chicago_vertex *v,
     unsigned int n,const unsigned short *indices,unsigned int count)
-{return chicago_draw(m,v,n,indices,count,NULL,NULL,0,0,NULL,1);}
+{
+    return chicago_draw(m,v,n,indices,count,NULL,NULL,0,0,NULL,1);}
 int n3ds_gpu_chicago_transform_draw(const struct native_chicago_material *m,const void *v,
     unsigned int n,const unsigned short *indices,unsigned int count,const float *rows,unsigned int nodes,int skinned,const float *uv)
-{return chicago_draw(m,NULL,n,indices,count,v,rows,nodes,skinned,uv,0);}
+{
+    return chicago_draw(m,NULL,n,indices,count,v,rows,nodes,skinned,uv,0);}
 #include "engine_chicago_offload_tests.inl"
+#include "engine_chicago_command_tests.inl"
 #include "engine_hologram_gpu.inl"
 #include "engine_hologram_tests.inl"

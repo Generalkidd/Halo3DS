@@ -126,3 +126,50 @@ void n3ds_collision_query_report(void)
     snprintf(message, sizeof(message), "COLLISION TRAVERSAL REUSE: hits=%u misses=%u bypassed=%u", native_query_hits, native_query_misses, native_query_bypassed);
     n3ds_log(message); native_query_hits = native_query_misses = native_query_bypassed = 0;
 }
+
+
+/* A surface can be reached through several BSP leaves in one sphere query.
+ * Cache completed visits, including misses, only for that query. Projection
+ * axis/sign and exact projected-center bits are part of the key. A hash
+ * collision evicts an entry; it can never discard a collision feature.
+ * The simulation thread owns this 5 KiB table, like native_feature_hash.
+ * Per-query generations also prevent reuse after breakage, movement or a map
+ * change. Generation rollover explicitly empties the table. */
+static unsigned int native_surface_generation;
+static struct {
+    unsigned int generation;
+    long surface;
+    short axis;
+    boolean sign;
+    unsigned int center_bits[2];
+} native_surface_visits[256];
+
+/* Kevin Boggs: native_surface_begin */
+static unsigned int native_surface_begin(void)
+{
+    if (!++native_surface_generation) {
+        memset(native_surface_visits, 0, sizeof(native_surface_visits));
+        native_surface_generation = 1;
+    }
+    return native_surface_generation;
+}
+
+/* Kevin Boggs: native_surface_repeated */
+static boolean native_surface_repeated(unsigned int generation, long surface,
+    short axis, boolean sign, const real_point2d *center)
+{
+    unsigned int slot = ((unsigned int)surface * 2654435761u) >> 24;
+    unsigned int bits[2];
+    memcpy(bits, center, sizeof(bits));
+    if (native_surface_visits[slot].generation == generation &&
+        native_surface_visits[slot].surface == surface &&
+        native_surface_visits[slot].axis == axis && native_surface_visits[slot].sign == sign &&
+        native_surface_visits[slot].center_bits[0] == bits[0] &&
+        native_surface_visits[slot].center_bits[1] == bits[1]) return TRUE;
+    native_surface_visits[slot].generation = generation;
+    native_surface_visits[slot].surface = surface;
+    native_surface_visits[slot].axis = axis;
+    native_surface_visits[slot].sign = sign;
+    memcpy(native_surface_visits[slot].center_bits, bits, sizeof(bits));
+    return FALSE;
+}

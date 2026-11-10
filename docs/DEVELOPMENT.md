@@ -66,6 +66,25 @@ writes `RESULT: PASS` to the game log. This build exits automatically.
 Also select an Original model in the emulator; neither setting replaces a
 test on actual Original 3DS/2DS hardware.
 
+### Experimental release comparison
+
+Add `--release --output build/n3ds-release` to build without AI debug records,
+profiler sampling, math-validation macros or routine log output. This is an
+opt-in performance experiment; the normal build keeps its diagnostic behavior.
+It removes the 6,650,880-byte actor debug array without changing actor state,
+render quality or the 30 Hz simulation clock. General engine assertions still
+evaluate their expressions because some contain required game actions. Fatal
+and delayed errors, port resource checks and the loading display remain active.
+Timing used by dynamic resolution and frame pacing is also retained.
+
+Use matching builds on both wireless peers. Release mode changes executable
+layout and has a separate checkpoint/build identity; restart a mission rather
+than carrying a raw checkpoint across modes. Keep the matching ELF/map when
+sharing a test build. Routine logs are intentionally sparse in this mode.
+
+The release guard regression test runs with a host compiler:
+`python port/n3ds/tests/test_release.py -- clang -O2`.
+
 ### PC retail multiplayer status
 
 PC retail v7 support is opt-in with `--experimental-pc-runtime`; the default
@@ -123,9 +142,9 @@ timed active camouflage powerup for 60 seconds. His armor uses the original
 teal profile color. ChaoticSPARTAN1 keeps the green profile color and has a
 10% active camouflage chance per spawn.
 
-During a solo PC match, hold SELECT or the lower-right SCORE touch panel to
-display the player scoreboard on the top screen. Three other panels surround
-the motion tracker; they show press feedback but have no action yet. The
+During multiplayer, SELECT displays the original scoreboard. Hold the
+lower-screen SCORE panel for the expanded kills/deaths/medals roster; this
+also works in wireless matches. The
 Controller Settings screen offers a saved X/Y button swap and an optional
 bottom-screen FPS readout. Switch X/Y starts on for new profiles; FPS starts
 off. Saved profiles keep their chosen values. The Decals switch starts on and
@@ -134,8 +153,10 @@ lifetimes. Weapon meters use compact bars below the ammo count to remain
 legible at the 3DS resolution. Magazine weapons read loaded and reserve rounds
 from the live original weapon datum for the lower-screen ammo label.
 After a local multiplayer match ends, the upper part of the bottom screen
-shows Return to Lobby. Tap it or press B to reopen the Local Multiplayer
-selector with the previous map, mode and bot choices.
+shows Return to Lobby. Tap it or press B to reopen shared match settings with
+the successfully launched Xbox/PC map, full gametype, bot difficulty and gear
+choices. Cancelled edits do not replace that snapshot. Wireless matches use
+their existing network lobby flow.
 
 The multiplayer map browser reads the owner's selected Xbox or PC cache for a
 disposable 3D preview. The map page samples broad BSP render surfaces and
@@ -157,7 +178,10 @@ After selection settles, a low-priority worker reads and decodes the preview.
 Scrolling cancels obsolete work; it never joins the worker or reads map data
 inside the draw call. Large BSP and bitmap reads check cancellation every
 16 KiB. The renderer publishes only the current selection, flushing at most
-64 KiB of geometry or uploading one 64-by-64 texture per frame. Low-memory
+64 KiB of geometry or uploading one texture per frame. PC-only top-screen
+thumbnails come from the owner's PC `ui.map`/`bitmaps.map`; their 128-by-128
+texture is uploaded separately before the 64-by-64 mesh textures. Cancellation
+invalidates both the geometry and the thumbnail. Low-memory
 or missing-data failures leave the map selectable without a preview.
 Worker completion and GPU frame completion both precede resource disposal;
 map teardown drains any remaining cancelled worker. The preview camera clears
@@ -286,7 +310,7 @@ tests and self-contained Windows/Linux/macOS packaging. It requires .NET SDK 10
 for development, without the Windows UI workloads. Run both `Tests` and
 `Cli.Tests` after changing shared setup code.
 
-The integration GUI builds (1.18.1) can optionally copy an installed retail Halo PC
+The integration GUI builds (1.20.0) can optionally copy an installed retail Halo PC
 `maps` folder, or a game folder containing `maps`, through `Core/PcMaps.cs`.
 Both Windows interfaces use the same native C# importer; no PowerShell or external
 extractor is needed for this folder path. PC ISO extraction remains available in
@@ -478,10 +502,20 @@ full Linux/Wine runtime test have not been performed.
 
 ## Setup formats and recovery
 
-The accepted Xbox release is English North American retail build
-`01.10.12.2276`. Setup validates exact hashes, including compressed and unchanged
-expanded map versions. Other revisions/regions, modified maps and PC/MCC assets
-are rejected. A complete dump has 24 maps: `ui`, 10 campaign and 13 multiplayer.
+Official setup support covers the USA original, Rev 1 and Rev 2 XISO images
+listed at <https://archive.org/details/halo-combat-evolved-usa-rev-2.xiso>.
+`Data.DiscWarning` identifies those images by size and SHA-1; other images and
+unverified extracted folders receive a compatibility warning. Xbox cache format,
+map identity, decompression limits, tag/relocation bounds and destination read-back
+checks remain mandatory. Recognized maps retain the catalog's SHA-256 checks;
+other version-5 maps are prepared from their own tag data. This allows testing
+other revisions, not a promise that their content will work in the engine.
+The three supported discs have identical headers for all 24 maps and use build
+`01.10.12.2276`, but have different XBEs. HUD text and loading artwork are located
+by content fingerprints rather than fixed executable offsets. No game content is
+bundled. The optional PC section accepts retail PC multiplayer files separately;
+PC/MCC disc images cannot be used as the Xbox base.
+A complete Xbox dump has 24 maps: `ui`, 10 campaign and 13 multiplayer.
 A partial set needs `ui.map` and at least one playable map.
 
 - XISO input accepts a single `.iso` or `.xiso`, including recognized game
@@ -1018,8 +1052,10 @@ preserves dev's Circle Pad Pro value and leaves PC high textures OFF.
 The **Effects** setting defaults to **Balanced**, retaining dev's particle
 budgets and tracer behavior. **Quality** enables the contributor's fuller
 combat particles, longer/more visible rifle trails and optional decals.
-**Performance** is displayed as unavailable and cannot be selected or loaded
-from a settings file yet. Both console generations default to Balanced; this
+**Performance** reduces cosmetic particle budgets (New: 144 to 72; Original:
+32 to 16) and omits model detail/reflection layers while preserving base textures,
+alpha, team colors, lighting and emission. It retains the existing simulation
+and networking rates. Its hardware frame-time benefit remains unmeasured. Both console generations default to Balanced; this
 setting does not replace their separate texture and resolution budgets.
 
 `python port/n3ds/tests/test_integration.py -- clang` runs host regressions for
@@ -1144,3 +1180,533 @@ deferred decisions cumulatively for the process.
 Run `python port/n3ds/tests/test_idle_ai.py -- clang -O2` from a Visual Studio
 developer prompt to check cadence, staggering, wakeups, distance thresholds,
 and protected states using the production scheduler with mocked engine inputs.
+
+### Halo64 physics and culling experiment (November 2026)
+
+The reference is [Halo64 at b629d0a](https://github.com/JackTulli/halo-64/tree/b629d0a),
+including the optimization pass in `32fda59`. Its RSP/tiny3d matrix stack and
+render-state changes cannot be copied directly to PICA200. The 3DS port already
+has object-sphere/frustum tests, material-batch boxes, portal visibility and
+cached visible index buffers; adding another identical culling stage would
+duplicate work. This pass reuses the last rejecting box plane as a per-eye
+ordering hint and computes absolute plane normals once per view. Every box is
+still tested against the current view. No draw-distance or fog changes apply.
+
+The collision collector now shares the object lookup with marking and tests
+the common miss before calling the recursive collector, following Halo64's
+approach. Objects with sibling chains still take the original path. Rejection
+uses the original flags and enclosing sphere; it does not reduce collision
+accuracy. `HALO_N3DS_COLLISION_PREFILTER_VERIFY` checks rejected roots against
+the original collector in a diagnostic fixture.
+
+Build with `--release --experimental-physics-15hz` to try selective 15 Hz
+movement. This is **not** a 15 Hz game clock. Eligible grounded AI bipeds
+run movement/contact physics every other tick, staggered by object
+identity. Their next step covers the skipped tick: acceleration and movement
+distance are scaled, and biped collision sweeps cover the entire distance.
+Vehicles now always use the original 30 Hz integration, including offline
+ground vehicles. Biped penetration/contact retries preserve the step duration.
+
+Players on foot, projectiles, airborne bipeds, landing, jumping, crouching, melee,
+special animations, elevators, flying vehicles and cinematics keep full-rate
+movement. Wireless activity, co-op or any non-local game connection disables
+the reduction on both console families. Input, scripts, weapon timers, AI
+thinking and the network clock remain at 30 Hz. Eligible AI motion is
+coarser; hardware playtesting is required before making this
+the default. Transient movement credit is cleared on map initialization,
+object reuse and checkpoint restore. It is not stored in the save format.
+
+`--release` also strips diagnostic-only biped vector checks and root-pose
+matrix checks, in addition to debug records, profiler sampling and routine
+error/log formatting. Fatal/load-failure handling and required assertion
+side effects remain. Do not use this stripped build to collect a full crash
+report. The physics build option contributes to the build/checkpoint identity.
+
+From a Visual Studio developer prompt, run
+`python port/n3ds/tests/test_physics_schedule.py -- clang -O2 -ffp-contract=off`
+for timestep accounting, identity reuse, rewinds, full-rate fallback and two
+million per-eye culling comparisons. `test_release.py` checks diagnostic
+removal and fatal/delayed error behavior. Encounter measurements must use the
+same map, player route and build settings; emulator frame times are not
+hardware FPS. Keep the pre-fog build and the previous release experiment as
+separate baselines.
+
+### Hardware test loop
+
+With Wi-Fi enabled, open Homebrew Launcher and press Y for netloader. Upload
+the normal playable build with Python (no additional Python packages needed):
+
+```powershell
+python port/n3ds/tools/hardware.py path/to/Halo3DS.3dsx --address CONSOLE_IP
+```
+
+Every upload replaces `sdmc:/3ds/Halo3DS/Halo3DS.3dsx`, regardless of its local
+filename. Do not send separately named test executables with the default
+3dslink destination: hbmenu saves those as additional launcher entries.
+
+For a developer fixture that reports through `link3dsConnectToHost` after
+measurement and then exits normally, add `--results path/to/new-result.txt`.
+The receiver starts before upload, accepts results only from that console,
+checks the final PASS/exit status, and records the executable SHA-256 beside
+the result. Timeout, missing results and FAIL are failures, not measurements.
+The required completion marker defaults to `RESULT: PASS encounter`; use
+`--expect "RESULT: PASS menu idle and diagnostic gate"` for the menu fixture.
+An initialization-only PASS does not count as completing the encounter.
+The normal playable executable does not send this test report.
+
+After a successful test returns to Homebrew Launcher, `--enter-netloader`
+checks hbmenu's UDP discovery reply and, if needed, sends up to two bounded
+Y presses through Rosalina InputRedirection. It releases the buttons and
+requires a reply from the selected console before uploading. Use that option
+only when the console is already in the launcher. Discovery replies go to
+fixed UDP port 17491, not an ephemeral source port. A crash, powered-off
+console or lost Wi-Fi can still require recovery on the device. The last
+upload should always be the normal playable build.
+Keep debugger attachment and screenshot/file/network transfers outside timed
+windows. Verify the route, camera and active actors before accepting encounter
+comparisons. `python port/n3ds/tests/test_hardware.py` checks the transfer and
+result-validation protocol without connecting to a console.
+
+The November hardware pass also keeps collision diagnostics disabled across
+BSP loads, caches validated immutable tag references, and avoids restoring
+world state between HUD quads inside a complete HUD pass. Xbox encoded sound
+samples use one bounded background reader with a separate read-only handle;
+map teardown cancels and joins it before releasing sample memory. PC sound
+reads keep their existing path. Sound obstruction may reuse its result for
+two subsequent ticks only while endpoints remain nearly stationary and the
+clusters/BSP generation match. This does not affect AI sight or bullet tests.
+The unsupported Xbox attract-movie transition is disabled on 3DS so it cannot
+fade the menu music after 73.5 seconds.
+
+Hardware checks on November 3 compared this candidate with the preceding
+stripped, selective-physics test build, not the public release. The repeated
+900-frame beach route measured 50.6 ms/frame versus 54.0 ms. The corrected
+Halo route stays near the lifepod and triggers the Spirit through normal
+mission volumes; its clean 1800-frame comparison measured 36.1 versus
+38.4 ms/frame. Both Halo runs stayed at 200x120 world resolution. These are
+modest gains and do not establish stable 30 FPS in heavy encounters.
+
+The Halo candidate's GPU queue averaged 23.1 ms, with 10.5 ms waiting at
+FrameBegin. Queue duration includes transfers and overlaps simulation;
+do not add it to CPU stage timings or interpret it as utilization. There
+is a CPU/GPU overlap problem to investigate as well as rendering cost.
+Keep the existing fences until command, vertex, index and texture lifetimes
+are explicitly safe for earlier submission or concurrent preparation.
+The lighter route beyond the lifepod and exploratory runs with screenshots
+inside the measurement window are not valid heavy-encounter comparisons.
+
+Campaign Resume uses physical R plus the mapped confirm button at difficulty
+selection. The hint is shown only on that screen. The menu event queue must
+shift older events toward higher indices before inserting at zero; shifting
+the other way discarded the confirm event when R was held. The input suite
+now covers this combination, ordering, held values, suppression and flush.
+An emulator menu test reproduced the no-op before the fix and restored a
+marked Heroic checkpoint after it, including Original-model emulation. Test
+the real menu dispatch as well as the checkpoint loader when changing this
+path; calling the loader directly cannot catch lost button events.
+
+The subsequent November 3 beach crowd pass keeps closest-hit collision
+results for movement, weapons and the initial AI visibility ray. Secondary
+AI visibility rays need only a blocked/clear answer and now stop at the first
+obstruction. Root object misses use the existing sphere predicate before
+entering recursive collision code; sibling chains retain the original path.
+Reference-list traversal uses the same checked datum lookup inline.
+`HALO_N3DS_COLLISION_RAY_VERIFY` compares rejected roots with the old query;
+`HALO_N3DS_COLLISION_ANY_VERIFY` compares each boolean visibility query with
+the closest-hit path. These are correctness checks, not timing modes. Do not
+confuse the ray flag with the older feature-list verification flag, which
+copies large feature lists and makes a full encounter prohibitively slow.
+
+New models reuse the lit skin program for rigid equipment using a fixed
+bone-zero weight. Buffer layout remains separate from the shader-state key,
+so rigid/skinned transitions still update vertex attributes. Original models
+retain separate programs. With `HALO_N3DS_RENDERER_TESTS`, the model batch
+pixel check compares the original programs against the shared program;
+lighting, reflections, sky, decals, view changes and weapon transforms must
+produce identical pixels. No texture quality or simulation-rate reductions
+were added in this pass.
+
+On the real New 3DS, the same 900-frame beach route measured 50.839 ms for
+the baseline, 49.644 ms for collision root rejection/traversal, 50.231 ms for
+the shared program alone, and 49.482 ms for all changes including boolean
+visibility queries. These are individual runs, not statistical confidence
+intervals. The first two candidates matched the baseline's sampled actor
+counts; the combined run diverged at its final sample (17 versus 20 actors),
+so its 2.7% frame-time reduction is indicative rather than an exact isolated
+speedup. Original-model emulation is a compatibility check, not a hardware
+performance claim. The heavy encounter remains around 20 FPS.
+
+Clean baseline stage timing was about 25.1 ms simulation (8.1 ms actors,
+16.2 ms objects) and 20.2 ms render preparation. Detailed sampled profiles
+point to visibility/collision traversal, object poses and model submission;
+base animation decoding was only about 0.6 ms. Nested instrumented scopes
+overlap and include timer overhead: do not sum them or substitute them for
+the clean benchmark. FrameBegin wait near 0.05 ms indicates little blocking
+at that fence in this route, not a GPU-utilization percentage. Live system
+link was not re-tested in this pass; protocol and update rates are unchanged.
+
+
+### Experimental frame ownership work (November 3)
+
+The working hardware baseline remains SHA-256
+`5c2cdbf46c2fab280a4fe962af0809bc3cc625e8c4e459ed621ee649f60a860e`.
+The following paths are research switches, disabled by default. They are **not**
+a completed concurrent simulation/renderer or a recommended performance update.
+
+- `--experimental-render-packets serial`: capture opaque map-owned model draws
+  with owned poses, four change colours and four shader-function values. Reuse
+  one pose per model submission. Replay preserves order inside the same view.
+  Drain before environment, view-space, transparent, effect and nested-widget
+  boundaries. Map teardown requires an empty queue. Arena limits are 192 KiB on
+  New models and 48 KiB on Original models; capacity drains and allocation
+  failure fallbacks preserve draws. Geometry references borrow the map lifetime.
+- `--experimental-render-packets parallel`: also prepare bone rows from those
+  immutable poses through the existing fork/join worker. Original models prepare
+  locally. This does **not** overlap a simulation tick with drawing, and the
+  hardware experiment did not justify enabling it.
+- `--experimental-render-packets batch`: combine repeated opaque skinned mesh
+  parts with independent poses in one PICA palette. Respect the 29-bone limit,
+  require exact materials/lights, retain transparent ordering, and bound optional
+  resident geometry to 384 KiB New / 64 KiB Original. This shares draw submissions,
+  not animation or hitboxes. Skinning remains on PICA. Missing cache space uses
+  the existing draw path.
+- `--experimental-collision-layout`: compile collision skeletons into their
+  contributing node indices and reuse inverse matrices only for byte-identical
+  source transforms. Node order, current permutations and collision results stay
+  unchanged. Clear on map disposal. `HALO_N3DS_COLLISION_LAYOUT_VERIFY` recomputes
+  every cache hit with the original inverse routine; it is not a timing mode.
+
+Single hardware beach runs, using the same 900-frame route:
+
+| Variant | Frame time | Approximate FPS |
+| --- | ---: | ---: |
+| Immediate control | 49.637 ms | 20.15 |
+| Owned packets, serial replay | 49.553 ms | 20.18 |
+| Packet bone preparation on worker | 49.782 ms | 20.09 |
+| Packets plus repeated skinned-mesh batching | 49.386 ms | 20.25 |
+| Packets plus collision layout/inverse reuse | 49.899 ms | 20.04 |
+
+These are not significant gains toward the 33.3 ms target. Actor populations
+vary slightly late in the route; do not present the small differences as reliable
+speedups. Batching saved 34,718 submissions over the whole hardware run including
+intro/warmup, but that did not translate into a substantial frame-time reduction.
+Collision verification passed 167,344 inverse comparisons in the emulator.
+Original-model emulation exercised the smaller packet arena and batch cache;
+it does not establish Original hardware performance. No live networking session
+was run; simulation rates and protocol were not changed.
+
+The full frame handoff remains unfinished. The opaque packet arena is only the
+first ownership boundary: transparent animation arrays, dynamic geometry,
+particle/lens-flare preparation, HUD/menu state, camera/time and texture residency
+must all be captured or fenced before the next simulation tick can overlap GPU
+submission. Citro3D has a shared context; do not call it concurrently from both
+threads. A wholesale move of `n3ds_engine_mission_render` to a worker is unsafe.
+The serial packet path must remain available as the reference for that work.
+
+### Owned backend commands (November 4)
+
+`--experimental-render-commands` adds an independent, serial command stream
+below the model packet layer. It remains off by default. This is preparation
+for a render/simulation handoff, **not an implementation of concurrent frames**.
+
+The backend copies pose rows, UV scale, material values and pointed-to lighting.
+Indices move into the existing frame upload arena before recording. Vertices
+may borrow only the current frame's renderer-owned upload blocks or resident
+model streams protected against same-frame replacement. Unknown vertex owners
+use the immediate path. The latest source covers rigid, skinned, CPU-posed
+world-space and CPU-posed camera-relative models. It preserves command order.
+
+The queue is bounded to 512 KiB on New models and 64 KiB on Original models.
+Capacity exhaustion drains in order; allocation failure uses the immediate
+path. Camera/target changes, unsupported draws, texture operations, geometry
+mutation, presentation and resource disposal explicitly drain pending commands.
+These CPU ownership fences do not replace Citro3D's GPU completion fence.
+Texture-bound queries also drain so their answers reflect preceding draws.
+
+Validation so far:
+
+- Queue tests cover copied inputs, ordering, repeated capacity drains,
+  oversized-command fallback and nested fence calls during replay.
+- Emulator pixel comparisons for both model settings cover all four model
+  paths. Deferred pixels match immediate pixels exactly after the caller's
+  pose, UV, material, lighting and index arrays have been overwritten.
+- The rigid/skinned prototype completed the full beach route in the emulator
+  and on New 3DS hardware. Its hardware run recorded 301,155 commands, with an
+  83,144-byte peak arena and at most 103 consecutive draws before a fence.
+  These totals include the intro/warmup, not just timed gameplay.
+- The latest default configuration compiled and linked all 417 translation
+  units. Attribution, Python build syntax and whitespace checks passed.
+
+Fresh 900-frame hardware comparison, one run per variant:
+
+| Variant | Frame time | Approximate FPS |
+| --- | ---: | ---: |
+| Immediate control | 49.854 ms | 20.06 |
+| Owned backend commands, rigid/skinned serial replay | 50.193 ms | 19.92 |
+
+This is a small added cost, not a speedup. Do not enable this path in releases
+on the strength of these results. The later addition of CPU-posed command
+coverage has exact emulator pixel validation, but no separate hardware timing
+yet. Full render preparation still accesses live engine state; only the
+recorded backend model inputs are currently owned. Moving only this backend
+work cannot recover the entire measured render-preparation time.
+
+Next, capture transparent/effect/HUD passes, view/time state and resource
+lifetimes into a coherent frame, and separate CPU preparation from GPU replay.
+Keep a single Citro3D owner. Only then can the next simulation tick safely
+overlap that work. Other experimental batching and collision paths remain
+disabled. No simulation rate, networking protocol or graphics-quality policy
+was changed for this command-stream test.
+
+Raw results, binary hashes and test captures are retained locally in
+`outputs/Halo3DS-Frame-Overhaul-2026-11-03/`. After hardware testing, the exact
+preserved playable baseline was uploaded to the existing Halo3DS launcher
+entry. Transfer acceptance was verified; there was no live screen confirmation
+of that final restored upload.
+
+### Render worker and prepared effects (November 4, subsequent pass)
+
+`--experimental-render-worker` implies the owned command stream and adds one
+New-model core2 worker. It remains disabled by default. This overlaps GPU command
+generation with later **render preparation**, not with the next simulation tick.
+Original models use the serial implementation and smaller command arena.
+
+The producer and consumer exchange two bounded 512 KiB command arenas. Only
+the consumer calls Citro3D while a job is outstanding. Unsupported GPU state
+operations, view changes, resource mutation/disposal and presentation join it.
+Queue exhaustion drains in order; unavailable threads or spare memory fall back
+to serial execution. There is no spin loop or extra GPU frame in flight.
+
+Effects now separate CPU preparation from GPU submission. The command owns its
+projection and material flags; vertices are copied once into the existing
+append-only frame stream, and indices into the existing index stream. The
+sampler is bound through a copied descriptor instead of temporarily mutating the
+texture owner. Resource fences protect borrowed texture storage. Immutable
+merged scenery vertices are explicitly published and retired before freeing;
+unrecognized geometry owners still take the immediate path.
+
+The first worker experiment submitted at model-batch end. The revised experiment
+publishes spans of 32 commands while later model parts are being prepared. Camera
+values remain read-only between fenced view transitions: material restoration
+no longer rewrites them. Worker draws consume already-published index ranges;
+only the producer appends to the index arena. A worker attempting to allocate
+new indices is rejected. These ownership changes remove unnecessary joins
+without relaxing GPU completion fences or changing animation/physics rates.
+
+One New 3DS beach hardware run per variant (900 timed gameplay frames):
+
+| Variant | Frame time | Approximate FPS | Main-thread mission-render time |
+| --- | ---: | ---: | ---: |
+| Immediate control, prepared effects | 49.489 ms | 20.21 | 19.590 ms |
+| Owned commands, serial | 50.881 ms | 19.65 | 20.674 ms |
+| Worker at model-batch end | 50.277 ms | 19.89 | 20.294 ms |
+| Worker with earlier spans | 48.953 ms | 20.43 | 18.993 ms |
+
+The earlier handoff reduced total joining time from 3,216 to 1,152 ms over the
+whole run, including intro and warmup. Those totals are **not** divided by 900.
+The last run's sampled simulation time was 24.878 ms (actors 7.854 ms, objects
+16.240 ms). Its full frame is still far above the 33.3 ms target. It saves only
+0.536 ms against the immediate control in these individual runs; scene outcomes
+and actor populations vary slightly. This is not enough evidence to enable the
+worker by default or claim a substantial improvement.
+
+Validation:
+
+- All four model paths match immediate pixels exactly on New and Original
+  emulation, with 80 draws per case crossing multiple worker handoffs. Caller
+  pose, UV, lighting, material and index arrays are overwritten before the final
+  drain. Original-model tests report zero worker jobs.
+- Thirty-six fixed effect cases match the previous path's pixel hashes and
+  coverage on both model settings. These cover float/packed/indexed geometry,
+  six blend modes, sampler options and camera-relative affine transforms;
+  MIN/MAX blending is excluded from this particular comparison.
+- Both worker versions complete the 900-frame beach route in emulation and on
+  New 3DS hardware, with an empty pending queue. The earlier-span test records
+  8,921 worker jobs over the full hardware run. Hardware timing builds do not
+  capture screenshots during the measured interval.
+- The final default configuration compiles/links all 417 translation units.
+  Attribution, Python syntax and whitespace checks pass. The final defensive
+  worker-index-allocation rejection is covered by pixel tests; the hardware
+  timing binary predates that guard, whose successful execution path is unchanged.
+
+The complete frame handoff is still unfinished. The next dependency to remove
+is environment/material submission: capture its geometry and sampler state so
+it can run while characters are prepared. Transparent Chicago passes, HUD/text,
+view transitions and all borrowed resource lifetimes also need owned commands
+before simulation can advance independently. High-level object visibility,
+lighting and cached render-state preparation still access mutable engine data;
+moving the whole mission-render function to a thread remains unsafe. No new
+live system-link test or Original-model hardware timing was performed here.
+
+### Environment command ownership and hardware breakdown (November 4)
+
+The experimental backend queue now captures plain/detail, emission, plasma and
+bump environment draws. Map-owned vertices and per-eye index ranges retain their
+existing GPU-frame lifetime. Commands copy animated material values. Prepared
+sampler commands own their texture descriptor and cube-face descriptor; resource
+creation, replacement and destruction remain fenced. Generic texture binds stay
+immediate because text and HUD callers still draw directly. This distinction is
+necessary to preserve draw order. No shader quality or simulation rates changed.
+
+Sixteen environment cases compare queued versus immediate pixels exactly on
+New and Original model emulation. Tests cross multiple 32-command handoffs,
+overwrite caller emission values, and separately overwrite caller sampler and
+cube descriptors before replay. Original-model tests submit zero worker jobs.
+The pixel test is retained in `port/n3ds/tests/include/engine_environment_command_tests.inl`.
+The complete beach route also passes in emulation and on New 3DS hardware.
+
+| Backend variant | Frame time | Approximate FPS |
+| --- | ---: | ---: |
+| Environment commands, serial | 51.299 ms | 19.49 |
+| Environment commands, worker | 49.052 ms | 20.39 |
+| Worker with additional stage counters | 49.555 ms | 20.18 |
+
+These are single 900-frame hardware runs with slightly different combat outcomes.
+The worker recovers command-recording overhead, but is still essentially level
+with the earlier 49.489 ms immediate control and 48.953 ms model-worker run.
+This is **not** a meaningful improvement toward 30 FPS. Worker replay and join
+totals include intro and warmup and must not be divided by 900.
+
+The additional-counter run measured 24.858 ms of sampled simulation time,
+including 7.762 ms in actors and 16.306 ms in objects. Main-thread render stages
+averaged 10.942 ms objects, 0.319 ms BSP, 3.912 ms effects, 2.079 ms HUD,
+0.499 ms presentation and 1.472 ms preparation. Within object rendering,
+world draws took 6.198 ms and first-person draws 2.101 ms. The transparent queue
+accounted for 3.144 ms of effects. These are nested CPU intervals, not additive
+GPU timings; worker overlap and waits can be included. GPU saturation was not
+established by these measurements.
+
+All experiments remain off by default. The next larger dependency is high-level
+model/transparent preparation: immutable poses alone do not isolate camera/time,
+material evaluation, render caches and texture residency from the engine. Full
+simulation/render overlap remains unfinished. Do not move mission rendering to
+a thread until those ownership boundaries are complete. There was no new live
+network test or Original-model hardware timing in this pass. Measured binaries,
+hashes, results and the untimed emulator image are recorded under
+`outputs/Halo3DS-Frame-Overhaul-2026-11-03` in the local workspace.
+
+### Explicit model view inputs (November 4)
+
+Model material preparation now receives a value snapshot containing camera
+position/direction, animation time, fog parameters, projection, cinematic state
+and material-quality policy. Opaque packets own this snapshot alongside their
+poses and animation arrays. Chicago, generic/hologram, plasma, water-model and
+glass-model paths consume explicit view inputs instead of sampling the live
+engine camera and clock. The unrelated BSP-water path remains in the ordered
+environment stage. Model fog snapshots omit the unused screen-fog resource
+pointer. This changes ownership, not shaders or quality policy.
+
+The serial model packet replay installs and restores its captured view together
+with the pose. At this stage, transparent packets still borrowed animation
+arrays and captured their view when consumed; the following pass fixes those
+dependencies. Renderer cache ownership, dynamic geometry and other remaining
+frame inputs still prevent advancing simulation concurrently. Same-view
+rendering remains ordered.
+
+Validation includes overwriting captured pose/view inputs, alternating two
+independent views through generic lighting/reflection and hologram fog/projection,
+and completing the 900-frame beach encounter. New 3DS hardware passed at
+49.443 ms (20.23 FPS); Original-model emulation passed with zero worker jobs and
+49,128 bytes peak packet storage, within its 48 KiB limit. These figures do not
+establish a speedup. The final normal release compiles all 417 translation units;
+experimental packet and worker options remain disabled by default. No new live
+network test or Original-model hardware timing was performed.
+
+A separate hardware diagnostic sampled one in sixteen draws within each shader
+class. Extrapolated CPU time per frame was about 4.60 ms for ordinary model parts,
+1.78 ms for generic parts, 1.19 ms for Chicago parts and 0.95 ms for first-person
+parts. Ordinary parts included approximately 0.96 ms geometry preparation,
+0.73 ms material evaluation, 0.41 ms bone setup, 0.19 ms texture lookup and
+2.14 ms submission. These sampled intervals can include waits and cache misses;
+they are not GPU timings or independent additions to the earlier render-stage
+totals. The result argues against treating texture lookup alone as the large
+remaining bottleneck. Detailed logs and artifact hashes remain with the local
+overhaul measurements.
+
+### Owned transparent materials and ordered state transitions (November 4)
+
+Transparent model submissions now own their bones, base and modifier animation
+arrays, and the view at submission. A side table indexed by the physical group
+slot preserves the original transparent-group ABI and sorted draw order. View
+reset and pool disposal fence command consumption before recycling those
+values. Material/bone caches reset when replay switches object inputs. The
+900-frame New 3DS beach test passed at 49.793 ms per frame, with 22,404 bytes peak
+transparent pose storage and no rejected poses. This is not a speedup.
+
+The Chicago GPU path now separates validated preparation from submission.
+Commands own material parameters, projection/origin, bone/UV rows, index copies
+and sampler descriptors (including cube faces). Immutable uploaded model data
+retains its existing frame/map lifetime, with complete byte-range validation.
+Pretransformed vertices use an optional bounded copy pool (128 KiB New,
+64 KiB Original), reset after the next frame's GPU wait. Allocation failure or
+exhaustion uses the immediate path, leaving the original vertex arena's full
+capacity available to engine allocations. Preparation tracks queued bindings separately
+from the backend's executed bindings, so reading a pending sampler does not
+join the worker. Backend binds cannot overwrite that producer state.
+
+The engine's material transition can also queue its state restoration in order.
+Immediate GPU callers retain the synchronous `n3ds_gpu_model_batch_flush`
+contract. No transparent draw reordering, shader reduction, simulation-rate
+change or extra render pass is introduced. Map changes and unsupported direct
+GPU operations still fence. This remains backend submission overlap with
+render preparation, **not overlap with the next simulation tick**.
+
+Validation covers 36 exact pixel comparisons after overwriting caller inputs,
+including CPU/world/relative/rigid/skinned paths, shields, meters and fades.
+The final suite also interleaves an opaque model and 80 transparent submissions
+across worker handoffs. Existing independent Chicago arithmetic and transform
+tests run alongside it. The intermediate path passed both model settings and
+the full beach encounter; Original emulation used zero worker jobs and stayed
+within its 48 KiB model-packet and 64 KiB command limits. Its peak transparent
+pose allocation was 12,020 bytes. These emulator timings are not hardware FPS.
+
+The first queued-material hardware run took 50.211 ms per frame; the final
+ordered-transition/bounded-pool run took 50.084 ms (19.97 FPS), with 24.865 ms
+sampled simulation time. Its Wi-Fi result transfer was incomplete; the complete
+saved SD log was recovered, matched the received prefix and contained the
+900-frame encounter PASS marker. The original process exit code was not saved
+in that file. The final Original-model encounter and both model settings'
+pixel/copy-pool-exhaustion tests passed. No substantial gain has been established. Current experiments
+remain disabled by default; the normal 417-translation-unit configuration
+still builds. High-level model preparation, remaining dynamic/HUD/effect frame
+ownership and actual simulation/render concurrency are still unfinished.
+
+
+## Combined experimental test build (2026-11-04)
+
+The cumulative test enables collision layout caching, owned model packets,
+parallel pose-row preparation, repeated-character batching and the New-model
+render command worker together. Reproduce with `--release
+--experimental-physics-15hz --experimental-render-packets combined
+--experimental-collision-layout --experimental-render-worker
+--experimental-pc-runtime --unified-ui` plus the normal toolchain paths.
+Vehicles, player movement and network simulation retain their existing 30 Hz
+policy; the selective offline AI-biped schedule is unchanged. Fog is disabled.
+Original models use smaller queues and serial execution. This is still same-view
+render preparation/submission overlap, not concurrent next-tick simulation.
+The preserved pre-overhaul binary remains the comparison baseline.
+
+The bottom screen is blank at the main menu. Campaign profile/level selection
+shows the selected profile's validated checkpoint and a touch Resume button.
+The query is cached during menu browsing and refreshed on entry/profile change;
+resuming uses the saved mission and difficulty. Difficulty selection still starts
+a fresh mission by default, with the existing R + confirm shortcut retained.
+Campaign co-op cannot load an offline checkpoint through this button.
+
+The combined hardware beach fixture completed 900 measured gameplay frames at
+50.516 ms/frame (19.80 FPS), versus 49.489 ms/frame (20.21 FPS) in the earlier
+immediate-render comparison. This is not a meaningful cumulative improvement.
+Encounter outcomes can vary; these are individual runs, not a statistically
+controlled speedup estimate. Original-model emulation and a real campaign
+checkpoint touch-resume test passed. The combined flags remain opt-in.
+
+## Wireless bot integration
+
+The System Link host can choose zero to three bots and their difficulty before
+countdown, using the bottom-screen lobby controls. Bots occupy the host's unused
+controller slots, leaving controller zero for each human console. Bot decisions
+run only on the host; actions travel through the normal player input stream.
+Local-only shortcuts that directly alter damage, pickups or camouflage are
+disabled in wireless matches. Co-op removes bots and blocks campaign extras.
+Local single-console matches still support up to fifteen bots. Physical mixed-model
+synchronization, combat and match-end testing remain required.

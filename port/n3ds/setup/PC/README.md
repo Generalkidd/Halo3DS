@@ -1,6 +1,10 @@
 # Halo3DS PC retail installer
 
-This installer is for a **PC retail v7 runtime build**. It requires your own Halo: Combat Evolved **PC ISO** and 7-Zip. It rejects Xbox disc images and never runs the disc's setup program. The package contains no ISO, maps, Xbox files, or other game assets.
+This is the separate experimental **PC retail v7 runtime build** installer.
+For the current combined Xbox/PC launcher, use the optional PC section in the
+[main setup tool](../../../../README.md#setup).
+
+This separate installer It requires your own Halo: Combat Evolved **PC ISO** and 7-Zip. It rejects Xbox disc images and never runs the disc's setup program. The package contains no ISO, maps, Xbox files, or other game assets.
 
 An existing complete PC retail `maps` folder is also accepted through `-PcMapsFolder` in place of `-PcIso`; this path does not need 7-Zip. Exactly one PC source must be selected. Both paths validate v7 map headers and destination hashes before writing to the SD card.
 

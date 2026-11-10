@@ -77,7 +77,12 @@ int main(void){
  }
  struct native_control_settings decoded;
  input_file[3]^=1;assert(!read_settings("corrupt",&decoded));
- settings=defaults;settings.quality=NATIVE_QUALITY_PERFORMANCE;assert(!valid(&settings));
+ initialized=1;settings=defaults;settings.quality=NATIVE_QUALITY_PERFORMANCE;
+ assert(valid(&settings) && n3ds_controls_performance() && !n3ds_controls_quality() && !n3ds_controls_decals());
+ struct settings_file performance={0x3343544c,6,settings,0};performance.checksum=checksum(&performance);
+ assert(decode_settings((const unsigned int*)&performance,sizeof(performance),&decoded));
+ assert(decoded.quality==NATIVE_QUALITY_PERFORMANCE);
+ settings.quality=3;assert(!valid(&settings));
  settings=defaults;assert(!n3ds_combat_fx_name("weapons\\plasma rifle\\impact"));
  assert(!n3ds_controls_decals());
  settings.quality=NATIVE_QUALITY_QUALITY;assert(n3ds_combat_fx_name("weapons\\plasma rifle\\impact"));
@@ -99,7 +104,7 @@ int main(void){
  for(coop_menu=0;coop_menu<2;++coop_menu)for(coop_selected=0;coop_selected<2;++coop_selected)
   for(connection=0;connection<3;++connection)assert(!!n3ds_campaign_network_blocked()==!!(coop_menu || coop_selected || connection));
  puts("PASS: v1-v6 migration, layout preservation, CPP/texture slots, settings roundtrips and corruption");
- puts("PASS: Balanced/Quality policy, disabled Performance, model/PC settings rows, 19 qualified maps, co-op blocking");
+ puts("PASS: three quality presets and persistence, model/PC settings rows, 19 qualified maps, co-op blocking");
  return 0;
 }
 '''

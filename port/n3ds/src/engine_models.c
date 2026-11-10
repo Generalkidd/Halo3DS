@@ -1,5 +1,6 @@
 /* New3DS integration additions by Kevin Boggs. */
 #include "engine_parallel.h"
+#include "engine_render_commands.h"
 /* Original model packets -> bounded native vertex/index streams. Opaque base
  * materials only; effect, decal, local-node and viewspace paths remain explicit
  * unsupported states until their semantics are implemented. */
@@ -20,15 +21,25 @@
 #include "rasterizer/rasterizer_debug_options.h"
 #include "rasterizer/rasterizer_frame_statistics.h"
 #include "math/periodic_functions.h"
+#include "cutscene/cinematics.h"
 
 static int models_active, model_active, first_person_active;
 static int model_scope_depth, batch_allowed_stack[4];
 static int scenery_batch_allowed;
+static unsigned int model_packet_sequence;
+static void model_packets_release(void);
 static void scenery_batch_flush(void),scenery_batch_release(void);
+static void character_batch_flush(void),character_batch_release(void);
 void n3ds_scenery_report(void);
 static struct native_model_counters counters;
 long long n3ds_engine_ticks(void);
 long long n3ds_engine_tick_frequency(void);
+/* These timestamps only feed the material profiler, never game time. */
+#ifdef HALO_N3DS_STRIP_DIAGNOSTICS
+#define MODEL_PROFILE_TICKS() 0LL
+#else
+#define MODEL_PROFILE_TICKS() n3ds_engine_ticks()
+#endif
 static long long model_profile[3];
 #ifdef HALO_N3DS_RENDERER_TESTS
 static long long material_profile[2][6];
@@ -42,6 +53,9 @@ void n3ds_model_profile_read(long long out[3]) {memcpy(out,model_profile,sizeof(
 }
 void n3ds_engine_model_counters(struct native_model_counters *result) { assert(result); *result=counters; }
 static struct rasterizer_model_begin_parameters parameters;
+/* Owned view inputs for material evaluation. A captured pose must not sample
+ * a later simulation time or a different eye's camera when it is replayed. */
+static struct native_model_view model_view;
 static struct native_model_lighting native_lighting;
 static float lighting_channel(float value) {return isfinite(value)?PIN(value,0.f,1.f):0;}
 static void model_lighting_prepare(void)
@@ -49,16 +63,16 @@ static void model_lighting_prepare(void)
     static struct render_lighting previous;
     static float previous_debug;
     static int valid;
-    float debug=rasterizer_debug_options.model_lighting_ambient;
+    float debug=model_view.ambient_override;
     /* Compare values: deferred packets and reused packet storage are safe. */
     if(valid && previous_debug==debug && !memcmp(&previous,&parameters.lighting,sizeof(previous))) return;
     previous=parameters.lighting;previous_debug=debug;valid=1;
     memset(&native_lighting,0,sizeof(native_lighting));
     for(int c=0;c<3;++c) native_lighting.ambient[c]=lighting_channel(parameters.lighting.ambient_color.n[c]);
     native_lighting.count=PIN(parameters.lighting.distant_light_count,0,2);
-    if(rasterizer_debug_options.model_lighting_ambient>0) {
+    if(debug>0) {
         native_lighting.count=0;
-        for(int c=0;c<3;++c) native_lighting.ambient[c]=lighting_channel(rasterizer_debug_options.model_lighting_ambient);
+        for(int c=0;c<3;++c) native_lighting.ambient[c]=lighting_channel(debug);
     }
     for(unsigned int i=0;i<native_lighting.count;++i) for(int c=0;c<3;++c) {
         native_lighting.distant[i].color[c]=lighting_channel(parameters.lighting.distant_lights[i].color.n[c]);
@@ -74,6 +88,7 @@ static real_matrix4x3 matrices[64];
 static float prepared_bone_rows[64][12];
 static byte prepared_bone_valid[64];
 static const real_matrix4x3 *prepared_bone_source;
+static const float (*packet_prepared_rows)[12];
 static void prepare_bone_source(void)
 {
     if(prepared_bone_source!=parameters.skinning.node_matrices) {
@@ -84,6 +99,7 @@ static void prepare_bone_source(void)
 static const float *prepare_bone_rows(unsigned int node)
 {
     assert(node<64);
+    if(packet_prepared_rows)return packet_prepared_rows[node];
     if(!prepared_bone_valid[node]) {
         const real_matrix4x3 *m=parameters.skinning.node_matrices+node;float *rows=prepared_bone_rows[node];
         for(int axis=0;axis<3;++axis) {
@@ -99,8 +115,27 @@ static const float *prepare_bone_rows(unsigned int node)
 }
 
 static struct rasterizer_model_begin_parameters *queued_parameters;
+static struct model_packet_pose *queued_transparent_pose;
 extern struct rasterizer_window_begin_parameters global_window_parameters;
 extern struct rasterizer_frame_begin_parameters global_frame_parameters;
+/* Kevin Boggs: model_view_capture */
+static struct native_model_view model_view_capture(void)
+{
+    extern int n3ds_input_platform_original_model(void),n3ds_controls_performance(void);
+    struct native_model_view result={
+        .game_time=global_frame_parameters.game_time_sec,
+        .ambient_override=rasterizer_debug_options.model_lighting_ambient,
+        .camera_position=global_window_parameters.camera.position,
+        .camera_forward=global_window_parameters.camera.forward,
+        .fog=global_window_parameters.fog,
+        .world_to_view=global_window_parameters.frustum.world_to_view,
+        .reduced_materials=(n3ds_input_platform_original_model() && n3ds_gpu_world_pressure()) || n3ds_controls_performance(),
+        .cinematic=cinematic_in_progress()
+    };
+    result.fog.screen=NULL;
+    memcpy(result.projection,global_window_parameters.frustum.projection_matrix,sizeof(result.projection));
+    return result;
+}
 extern boolean rasterizer_model_cortana_hack;
 void n3ds_log(const char *message);
 static unsigned short index_scratch[65535*3];
@@ -143,8 +178,7 @@ static struct native_model_material model_material(const struct native_model_def
     /* Original gameplay trades decorative reflections/detail for fewer texture
      * fetches and simpler vertex programs. Preserve base, cutout, team color,
      * self illumination and native lighting; menus and New models keep both. */
-    extern int n3ds_input_platform_original_model(void);
-    if(n3ds_input_platform_original_model() && n3ds_gpu_world_pressure())allow_reflection=0;
+    if(model_view.reduced_materials)allow_reflection=0;
     for(unsigned int i=0;i<packet_material_count;++i)
         if(packet_materials[i].shader==s && packet_materials[i].permutation==permutation && packet_materials[i].reflection==allow_reflection)
             return packet_materials[i].material;
@@ -155,7 +189,7 @@ static struct native_model_material model_material(const struct native_model_def
         if(!(s->illumination_flags&1)) phase=real_seed_random(&seed);
         if(isfinite(s->illumination_period) && s->illumination_period!=0 &&
            s->illumination_function>=0 && s->illumination_function<12) /* original periodic_functions.c enum */
-            fraction=periodic_function_evaluate(s->illumination_function,global_frame_parameters.game_time_sec/s->illumination_period+phase);
+            fraction=periodic_function_evaluate(s->illumination_function,model_view.game_time/s->illumination_period+phase);
         for(int i=0;i<3;++i) emission.n[i]+=(s->illumination_upper.n[i]-emission.n[i])*fraction;
     }
     if(parameters.animation.colors) {
@@ -167,7 +201,7 @@ static struct native_model_material model_material(const struct native_model_def
     if(allow_reflection && s->reflection_map.index!=NONE) {
         real fraction=1;
         if(s->reflection_cutoff!=0) {
-            real distance=0;for(int c=0;c<3;++c) distance+=(parameters.centroid.n[c]-global_window_parameters.camera.position.n[c])*global_window_parameters.camera.forward.n[c];
+            real distance=0;for(int c=0;c<3;++c) distance+=(parameters.centroid.n[c]-model_view.camera_position.n[c])*model_view.camera_forward.n[c];
             real range=s->reflection_falloff-s->reflection_cutoff;
             fraction=isfinite(range) && range!=0?lighting_channel((distance-s->reflection_cutoff)/range):0;
         }
@@ -206,7 +240,7 @@ static struct native_model_material model_material(const struct native_model_def
 }
 void n3ds_chicago_model_draw(const struct shader *shader,short permutation,
     const struct rasterizer_model_begin_parameters *parameters,const void *data,
-    unsigned int count,short type,const unsigned short *indices,unsigned int index_count);
+    unsigned int count,short type,const unsigned short *indices,unsigned int index_count,const struct native_model_view *);
 
 int n3ds_engine_models_active(void) { return models_active; }
 /* Exact original script setter. Reflection shading is a separate renderer path
@@ -229,6 +263,7 @@ void _rasterizer_models_begin(boolean skip_obscurer_test)
      * flush its queued scenery before the dynamic geometry is submitted. */
     if(models_active) {
         assert(model_scope_depth>0 && model_scope_depth<4);
+        n3ds_model_packets_flush();
         scenery_batch_flush();n3ds_gpu_model_batch_flush();
         batch_allowed_stack[model_scope_depth]=scenery_batch_allowed;
         scenery_batch_allowed=0;++model_scope_depth;
@@ -243,6 +278,7 @@ void _rasterizer_models_begin(boolean skip_obscurer_test)
 void _rasterizer_models_end(void)
 {
     assert(models_active && !model_active && model_scope_depth>0);
+    n3ds_model_packets_flush();
     if(model_scope_depth>1) {
         n3ds_gpu_model_batch_flush();
         --model_scope_depth;
@@ -255,6 +291,8 @@ void _rasterizer_models_end(void)
 void _rasterizer_model_begin(const struct rasterizer_model_begin_parameters *input, boolean preserve_z)
 {
     assert(models_active && !model_active && input);
+    ++model_packet_sequence;
+    if(input->geometry_flags&((1u<<3)|(1u<<4)|(1u<<7)))n3ds_model_packets_flush();
     if((input->effect.type!=0 && input->effect.type!=1 && (input->effect.type!=2 || input->effect.modifier_shader)) || (input->geometry_flags & ((1u<<5)|(1u<<8)))) {
         char message[128];
         snprintf(message,sizeof(message),"NATIVE MODEL UNSUPPORTED: effect=%d geometry=%08lx nodes=%d",input->effect.type,input->geometry_flags,input->skinning.node_matrix_count);
@@ -264,7 +302,7 @@ void _rasterizer_model_begin(const struct rasterizer_model_begin_parameters *inp
     /* Original immediate sky packets set both sky and no-Z, never one alone. */
     assert(!!(input->geometry_flags&(1u<<3))==!!(input->geometry_flags&(1u<<4)));
     assert(input->skinning.node_matrix_count>0 && input->skinning.node_matrix_count<=64 && input->skinning.node_matrices);
-    parameters=*input;model_lighting_prepare();
+    parameters=*input;model_view=model_view_capture();model_lighting_prepare();
     first_person_active=(input->geometry_flags&(1u<<7)) && !preserve_z;
     if(first_person_active) {
         assert(n3ds_gpu_first_person_begin(rasterizer_globals.first_person_weapon_near_clip_distance,rasterizer_globals.first_person_weapon_far_clip_distance));
@@ -276,7 +314,7 @@ void _rasterizer_model_begin(const struct rasterizer_model_begin_parameters *inp
     memcpy(matrices,input->skinning.node_matrices,input->skinning.node_matrix_count*sizeof(*matrices));
     parameters.skinning.node_matrices=matrices;
     memset(prepared_bone_valid,0,sizeof(prepared_bone_valid));packet_material_count=0;
-    queued_parameters=NULL;
+    queued_parameters=NULL;queued_transparent_pose=NULL;
     model_active=1;
 }
 void _rasterizer_model_end(void) {
@@ -368,6 +406,7 @@ int n3ds_animation_map_owned(const void *p,unsigned int bytes)
 {const struct n3ds_cache_view *v=n3ds_engine_cache_view(0);return p && v && n3ds_cache_resolve(v,p,bytes)==p;}
 void n3ds_model_decode_cache_flush(void)
 {
+    model_packets_release();
     extern void n3ds_animation_cache_reset(void);n3ds_animation_cache_reset();
     index_cache_flush();
     if(upload_hits || upload_misses) {
@@ -511,9 +550,9 @@ static const struct model_vertex_uncompressed *uncompressed_stream(const void *d
 }
 const struct model_vertex_uncompressed *n3ds_model_decode_stream(const void *data,unsigned int count)
 {
-    long long start=n3ds_engine_ticks();
+    long long start=MODEL_PROFILE_TICKS();
     const struct model_vertex_uncompressed *result=decode_stream(data,count,0);
-    model_profile[0]+=n3ds_engine_ticks()-start;return result;
+    model_profile[0]+=MODEL_PROFILE_TICKS()-start;return result;
 }
 int n3ds_model_decode_cache_tests(void)
 {
@@ -653,9 +692,9 @@ static const struct native_render_vertex *skin_stream(const struct model_vertex_
 const struct native_render_vertex *n3ds_model_skin_stream(const struct model_vertex_uncompressed *v,
     unsigned int count,const struct rasterizer_model_skinning *skin,const real_vector2d *scale,unsigned int owner)
 {
-    long long start=n3ds_engine_ticks();
+    long long start=MODEL_PROFILE_TICKS();
     const struct native_render_vertex *result=skin_stream(v,count,skin,scale,owner);
-    model_profile[1]+=n3ds_engine_ticks()-start;return result;
+    model_profile[1]+=MODEL_PROFILE_TICKS()-start;return result;
 }
 static int multipose_tests(void)
 {
@@ -746,7 +785,7 @@ int n3ds_model_skin_cache_tests(void)
     n3ds_model_decode_cache_flush();return multipose_tests();
 }
 void n3ds_glass_model_draw(const struct shader *,short,const struct rasterizer_model_begin_parameters *,
-    const void *,unsigned int,short,const unsigned short *,unsigned int);
+    const void *,unsigned int,short,const unsigned short *,unsigned int,const struct native_model_view *);
 void n3ds_meter_model_draw(const struct shader *,short,const struct rasterizer_model_begin_parameters *,
     const void *,unsigned int,short,const unsigned short *,unsigned int);
 
@@ -771,9 +810,9 @@ static long triangle_list(short type, const unsigned short *source,
 long n3ds_model_triangle_list(short type,const unsigned short *source,unsigned int triangles,
     unsigned int vertices,unsigned short *output,unsigned int capacity)
 {
-    long long start=n3ds_engine_ticks();
+    long long start=MODEL_PROFILE_TICKS();
     long result=triangle_list(type,source,triangles,vertices,output,capacity);
-    model_profile[2]+=n3ds_engine_ticks()-start;return result;
+    model_profile[2]+=MODEL_PROFILE_TICKS()-start;return result;
 }
 static int depth_only;
 /* Only map-owned static strips use identity keys. The loader relocates these
@@ -1016,7 +1055,9 @@ void _rasterizer_model_draw(struct shader *shader, short permutation,
 #include "engine_model_merge.inl"
 #include "engine_scenery_mesh.inl"
 #include "engine_scenery_batch.inl"
-void _rasterizer_model_draw(struct shader *shader, short permutation,
+#include "engine_character_batch.inl"
+/* Kevin Boggs: model_draw_immediate */
+static void model_draw_immediate(struct shader *shader, short permutation,
     const struct triangle_buffer *triangles, long dynamic_triangles, long triangle_count,
     const struct vertex_buffer *vertices, long dynamic_vertices)
 {
@@ -1082,14 +1123,14 @@ void _rasterizer_model_draw(struct shader *shader, short permutation,
     if(dynamic_vertices==NONE && type==5) {
         /* Explicitly publish a checked map-owned immutable vertex buffer.
          * Dynamic staging and standalone tests keep full byte comparisons. */
-        long long start=n3ds_engine_ticks();known_decoded=decode_stream(data,count,1);model_profile[0]+=n3ds_engine_ticks()-start;
+        long long start=MODEL_PROFILE_TICKS();known_decoded=decode_stream(data,count,1);model_profile[0]+=MODEL_PROFILE_TICKS()-start;
     } else if(dynamic_vertices==NONE && !active_merged && type==4 &&
               n3ds_cache_resolve(tags,data,count*sizeof(struct model_vertex_uncompressed))==data) {
-        long long start=n3ds_engine_ticks();known_decoded=uncompressed_stream(data,count);model_profile[0]+=n3ds_engine_ticks()-start;
+        long long start=MODEL_PROFILE_TICKS();known_decoded=uncompressed_stream(data,count);model_profile[0]+=MODEL_PROFILE_TICKS()-start;
     }
     assert(shader && n3ds_cache_resolve(tags,shader,sizeof(*shader))==shader);
     if(depth_only || (shader->base.type!=3 && shader->base.type!=4) || parameters.effect.type==1)
-        n3ds_gpu_model_batch_flush();
+        n3ds_gpu_model_prepare_boundary();
     if(depth_only) {
         const real_vector2d unit_scale={1,1};
         const struct model_vertex_uncompressed *cached=known_decoded?known_decoded:type==5?n3ds_model_decode_stream(data,count):NULL;
@@ -1113,15 +1154,15 @@ void _rasterizer_model_draw(struct shader *shader, short permutation,
         assert(n3ds_gpu_model_depth_relative_draw(gpu,draw_indices,index_count));return;
     }
     if(shader->base.type==10) {
-        n3ds_plasma_model_draw(shader,permutation,&parameters,data,count,type,draw_indices,index_count);
+        n3ds_plasma_model_draw(shader,permutation,&parameters,data,count,type,draw_indices,index_count,&model_view);
         ++counters.parts;counters.triangles+=(unsigned int)index_count/3;return;
     }
     if(shader->base.type==7) {
-        n3ds_water_model_draw(shader,permutation,&parameters,data,count,type,draw_indices,index_count);
+        n3ds_water_model_draw(shader,permutation,&parameters,data,count,type,draw_indices,index_count,&model_view);
         ++counters.parts;counters.triangles+=(unsigned int)index_count/3;return;
     }
     if(shader->base.type==8) {
-        n3ds_glass_model_draw(shader,permutation,&parameters,data,count,type,draw_indices,index_count);
+        n3ds_glass_model_draw(shader,permutation,&parameters,data,count,type,draw_indices,index_count,&model_view);
         ++counters.parts;counters.triangles+=(unsigned int)index_count/3;return;
     }
     if(shader->base.type==9) {
@@ -1129,7 +1170,7 @@ void _rasterizer_model_draw(struct shader *shader, short permutation,
         ++counters.parts;counters.triangles+=(unsigned int)index_count/3;return;
     }
     if(shader->base.type==5 || shader->base.type==6) {
-        n3ds_chicago_model_draw(shader,permutation,&parameters,data,count,type,draw_indices,index_count);
+        n3ds_chicago_model_draw(shader,permutation,&parameters,data,count,type,draw_indices,index_count,&model_view);
         ++counters.parts; counters.triangles+=(unsigned int)index_count/3;
         return;
     }
@@ -1181,7 +1222,7 @@ void _rasterizer_model_draw(struct shader *shader, short permutation,
 #ifdef HALO_N3DS_RENDERER_TESTS
     static unsigned int material_sequence;
     int sampled=rigid && !(++material_sequence&31);
-    long long material_stamps[5];if(sampled) material_stamps[0]=n3ds_engine_ticks();
+    long long material_stamps[5];if(sampled) material_stamps[0]=MODEL_PROFILE_TICKS();
 #endif
     if(model_definition) native_material=model_material(model_definition,permutation,rigid && !(parameters.geometry_flags&(1u<<4)));
     if(rigid && !(parameters.geometry_flags&(1u<<4))) {
@@ -1189,7 +1230,7 @@ void _rasterizer_model_draw(struct shader *shader, short permutation,
     }
     if(rigid) {
 #ifdef HALO_N3DS_RENDERER_TESTS
-        if(sampled) material_stamps[1]=n3ds_engine_ticks();
+        if(sampled) material_stamps[1]=MODEL_PROFILE_TICKS();
 #endif
         unsigned int nodes=rigid->rigid_node>=0?1:rigid->gpu_nodes;
         float compact_rows[NATIVE_GPU_MODEL_BONES*12];
@@ -1198,7 +1239,7 @@ void _rasterizer_model_draw(struct shader *shader, short permutation,
         if(rigid->rigid_node>=0) rows=prepare_bone_rows(rigid->rigid_node);
         else if(rigid->identity_palette) {
             for(unsigned int n=0;n<nodes;++n) prepare_bone_rows(n);
-            rows=&prepared_bone_rows[0][0];
+            rows=packet_prepared_rows?&packet_prepared_rows[0][0]:&prepared_bone_rows[0][0];
         } else {
             for(unsigned int n=0;n<nodes;++n)
                 memcpy(compact_rows+n*12,prepare_bone_rows(rigid->palette[n]),12*sizeof(float));
@@ -1206,7 +1247,7 @@ void _rasterizer_model_draw(struct shader *shader, short permutation,
         }
         gpu=NULL;
 #ifdef HALO_N3DS_RENDERER_TESTS
-        if(sampled) material_stamps[2]=n3ds_engine_ticks();
+        if(sampled) material_stamps[2]=MODEL_PROFILE_TICKS();
 #endif
         if(native_material.lighting) native_material.base=n3ds_engine_bitmap_resource(bitmap,permutation);
         else if(rasterizer_set_texture_direct(0,bitmap,permutation)) native_material.base=n3ds_gpu_texture_bound(0);
@@ -1216,10 +1257,16 @@ void _rasterizer_model_draw(struct shader *shader, short permutation,
         if(!bound) native_material.alpha_test=0;
         int sky=!!(parameters.geometry_flags&(1u<<4)),decal=!!(material_flags&(1u<<3)),two_sided=!!(material_flags&((1u<<1)|(1u<<5)));
 #ifdef HALO_N3DS_RENDERER_TESTS
-        if(sampled) material_stamps[3]=n3ds_engine_ticks();
+        if(sampled) material_stamps[3]=MODEL_PROFILE_TICKS();
 #endif
         if((parameters.geometry_flags&(1u<<16)) && dynamic_vertices==NONE && dynamic_triangles==NONE && rigid->immutable && rigid->rigid_node>=0 && scenery_index_key && !sky && !decal && !parameters.effect.type &&
            scenery_batch_add(data,scenery_index_key,(const void *)rigid->local,count,draw_indices,index_count,rows,uv_scale.n,two_sided,&native_material)) {
+            ++counters.parts;counters.triangles+=index_count/3;return;
+        }
+        if(rigid->rigid_node<0 && rigid->immutable && dynamic_vertices==NONE && dynamic_triangles==NONE &&
+           !sky && !decal && !first_person_active && !parameters.effect.type &&
+           character_batch_add(data,scenery_index_key,(const void *)rigid->local,count,
+               draw_indices,index_count,nodes,rows,uv_scale.n,two_sided,&native_material)) {
             ++counters.parts;counters.triangles+=index_count/3;return;
         }
         /* Opaque depth-writing packets can pass queued scenery. Preserve
@@ -1232,13 +1279,13 @@ void _rasterizer_model_draw(struct shader *shader, short permutation,
         unsigned int reflective=native_material.reflection && native_material.multipurpose;
         ++material_profile[reflective][0];
         if(sampled) {
-            material_stamps[4]=n3ds_engine_ticks();++material_profile[reflective][1];
+            material_stamps[4]=MODEL_PROFILE_TICKS();++material_profile[reflective][1];
             for(int k=0;k<4;++k) material_profile[reflective][k+2]+=material_stamps[k+1]-material_stamps[k];
         }
 #endif
         ++counters.parts;counters.triangles+=(unsigned int)index_count/3;return;
     }
-    n3ds_gpu_model_batch_flush();
+    n3ds_gpu_model_prepare_boundary();
     gpu=n3ds_gpu_model_vertices_allocate(count); assert(gpu);
 #ifdef HALO_N3DS_RENDERER_TESTS
     static int first_person_cpu_reported;
@@ -1285,6 +1332,77 @@ void _rasterizer_model_draw(struct shader *shader, short permutation,
     ++counters.parts; counters.triangles+=(unsigned int)index_count/3;
 }
 
+#include "engine_model_packets.inl"
+
+/* Preserve the original 0xa0-byte group ABI. The side table follows physical
+ * group slots, independent of the sorted traversal order, and is reset before
+ * the view's pose pool is recycled. */
+static const struct model_packet_pose *transparent_model_poses[RASTERIZER_MAXIMUM_TRANSPARENT_GEOMETRY_GROUPS];
+static unsigned int transparent_pose_bytes,transparent_pose_peak,transparent_pose_count,transparent_pose_rejected;
+
+/* Kevin Boggs: n3ds_model_transparent_reset */
+void n3ds_model_transparent_reset(void)
+{
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_LIFETIME);
+    transparent_pose_peak=MAX(transparent_pose_peak,transparent_pose_bytes);transparent_pose_bytes=0;
+    memset(transparent_model_poses,0,sizeof(transparent_model_poses));
+    queued_parameters=NULL;queued_transparent_pose=NULL;
+}
+
+/* Kevin Boggs: model_transparent_pose */
+static const struct model_packet_pose *model_transparent_pose(const struct transparent_geometry_group *group)
+{
+    short index=rasterizer_transparent_geometry_get_group_presorted_index(group);
+    if(index<0 || index>=RASTERIZER_MAXIMUM_TRANSPARENT_GEOMETRY_GROUPS)return NULL;
+    const struct model_packet_pose *pose=transparent_model_poses[index];
+    return pose && group->lighting==&pose->parameters.lighting &&
+        group->animation==&pose->parameters.animation?pose:NULL;
+}
+
+/* Kevin Boggs: n3ds_model_transparent_tests */
+int n3ds_model_transparent_tests(void)
+{
+    /* Called only in an empty test view. Exercise the actual group allocator,
+     * physical-slot lookup, source overwrite and invalidation before reuse. */
+    real_matrix4x3 node={.scale=1,.forward={1,0,0},.left={0,1,0},.up={0,0,1}};
+    real_rgb_color colors[4]={{.25f,.5f,.75f}};real values[4]={1,2,3,4};
+    struct rasterizer_model_begin_parameters input={0};
+    input.skinning.node_matrices=&node;input.skinning.node_matrix_count=1;
+    input.animation.colors=colors;input.animation.values=values;
+    input.effect.modifier_animation=input.animation;
+    struct native_model_view view={.game_time=17,.camera_position={3,4,5}};
+    struct transparent_geometry_group *group[2];
+    const struct model_packet_pose *pose[2];
+    for(int i=0;i<2;++i) {
+        void *memory=rasterizer_memory_alloc(NULL,sizeof(struct model_packet_pose)+sizeof(node));
+        if(!memory || !(group[i]=rasterizer_transparent_geometry_new_group()))return 0;
+        view.game_time=17+i;pose[i]=model_packet_copy_pose(memory,&input,&view);
+        short index=rasterizer_transparent_geometry_get_group_presorted_index(group[i]);
+        if(index<0 || index>=RASTERIZER_MAXIMUM_TRANSPARENT_GEOMETRY_GROUPS)return 0;
+        transparent_model_poses[index]=pose[i];
+        group[i]->lighting=&pose[i]->parameters.lighting;
+        group[i]->animation=&pose[i]->parameters.animation;
+        group[i]->sorted_index=1-i;
+    }
+    memset(&node,0,sizeof(node));memset(colors,0,sizeof(colors));memset(values,0,sizeof(values));memset(&view,0,sizeof(view));
+    for(int i=1;i>=0;--i) {
+        const struct model_packet_pose *saved=model_transparent_pose(group[i]);
+        if(saved!=pose[i] || saved->nodes[0].scale!=1 || saved->view.game_time!=17+i ||
+           saved->parameters.animation.values[3]!=4 || saved->parameters.animation.colors[0].green!=.5f ||
+           saved->parameters.effect.modifier_animation.values[1]!=2)return 0;
+    }
+    n3ds_model_transparent_reset();
+    if(model_transparent_pose(group[0]) || model_transparent_pose(group[1]))return 0;
+    n3ds_log("RESULT: PASS transparent pose ownership, independent views, sorted-slot lookup and reset");return 1;
+}
+
+/* Kevin Boggs: n3ds_model_transparent_report */
+void n3ds_model_transparent_report(void)
+{
+    char message[160];snprintf(message,sizeof(message),"RESULT: transparent poses count=%u peak_bytes=%u rejected=%u",
+        transparent_pose_count,MAX(transparent_pose_peak,transparent_pose_bytes),transparent_pose_rejected);n3ds_log(message);
+}
+
 struct transparent_geometry_group *_rasterizer_model_transparent_geometry_submit(
     struct shader *shader, short permutation, const struct triangle_buffer *triangles,
     long dynamic_triangles, long count, const struct vertex_buffer *vertices,
@@ -1309,16 +1427,19 @@ struct transparent_geometry_group *_rasterizer_model_transparent_geometry_submit
     if(no_queue) { group=&immediate; packet=&parameters; }
     else {
         if(!queued_parameters) {
-            unsigned long bytes=sizeof(parameters)+parameters.skinning.node_matrix_count*sizeof(*matrices);
-            queued_parameters=rasterizer_memory_alloc(NULL,bytes);
-            if(!queued_parameters) { n3ds_log("Native transparent pose pool exhausted; model submission rejected"); return NULL; }
-            *queued_parameters=parameters;
-            queued_parameters->skinning.node_matrices=(const real_matrix4x3 *)(queued_parameters+1);
-            memcpy(queued_parameters+1,matrices,bytes-sizeof(parameters));
+            unsigned long bytes=sizeof(struct model_packet_pose)+parameters.skinning.node_matrix_count*sizeof(*matrices);
+            void *memory=rasterizer_memory_alloc(NULL,bytes);
+            if(!memory) { ++transparent_pose_rejected;n3ds_log("Native transparent pose pool exhausted; model submission rejected"); return NULL; }
+            transparent_pose_bytes+=bytes;++transparent_pose_count;
+            queued_transparent_pose=model_packet_copy_pose(memory,&parameters,&model_view);
+            queued_parameters=&queued_transparent_pose->parameters;
         }
         packet=queued_parameters;
         group=rasterizer_transparent_geometry_new_group();
         if(!group) { n3ds_log("Native transparent group budget exhausted; model submission rejected"); return NULL; }
+        short index=rasterizer_transparent_geometry_get_group_presorted_index(group);
+        assert(index>=0 && index<RASTERIZER_MAXIMUM_TRANSPARENT_GEOMETRY_GROUPS);
+        transparent_model_poses[index]=queued_transparent_pose;
     }
     /* Allocation's sorted_index survives zero-initialization of all reserved
      * fields. This also prevents a previous view's pending data leaking in. */
@@ -1332,8 +1453,9 @@ struct transparent_geometry_group *_rasterizer_model_transparent_geometry_submit
     group->model_base_map_scale=packet->base_map_scale;
     group->node_matrices=packet->skinning.node_matrices; group->node_matrix_count=packet->skinning.node_matrix_count;
     group->lighting=&packet->lighting; group->animation=&packet->animation;
-    vector_from_points3d(&global_window_parameters.camera.position,&group->centroid,&relative);
-    group->z_sort=-dot_product3d(&global_window_parameters.camera.forward,&relative);
+    const struct native_model_view *view=no_queue?&model_view:&queued_transparent_pose->view;
+    vector_from_points3d(&view->camera_position,&group->centroid,&relative);
+    group->z_sort=-dot_product3d(&view->camera_forward,&relative);
     group->previous_group_presorted_index=group->next_group_presorted_index=NONE;
     group->cortana_hack=rasterizer_model_cortana_hack;
     if(!no_queue && sort) {
@@ -1358,9 +1480,13 @@ struct transparent_geometry_group *_rasterizer_model_transparent_geometry_submit
 
 void n3ds_model_draw_group(const struct transparent_geometry_group *group)
 {
+    n3ds_model_packets_flush();
     scenery_batch_flush();
     int saved_batch=scenery_batch_allowed;scenery_batch_allowed=0;
     struct rasterizer_model_begin_parameters saved=parameters;
+    struct native_model_view saved_view=model_view;
+    const struct model_packet_pose *pose=model_transparent_pose(group);
+    model_view=pose?pose->view:model_view_capture();
     int saved_models=models_active, saved_model=model_active, own_first_person=0;
     assert(n3ds_engine_window_active() && group && group->shader);
     assert((group->effect.type==0 || group->effect.type==1 || (group->effect.type==2 && !group->effect.modifier_shader)) && !group->first_triangle_index);
@@ -1390,6 +1516,8 @@ void n3ds_model_draw_group(const struct transparent_geometry_group *group)
     parameters.lighting=*group->lighting; parameters.animation=*group->animation;model_lighting_prepare();
     parameters.effect=group->effect;
     parameters.centroid=group->centroid;
+    prepared_bone_source=NULL;packet_material_count=0;
+    memset(prepared_bone_valid,0,sizeof(prepared_bone_valid));
     if((group->geometry_flags&(1u<<7)) && !first_person_active) {
         assert(n3ds_gpu_first_person_begin(rasterizer_globals.first_person_weapon_near_clip_distance,rasterizer_globals.first_person_weapon_far_clip_distance));
         own_first_person=1;
@@ -1398,7 +1526,9 @@ void n3ds_model_draw_group(const struct transparent_geometry_group *group)
     _rasterizer_model_draw(group->shader,group->shader_permutation_index,group->triangle_buffer,
         group->dynamic_triangle_buffer_index,group->triangle_count,group->vertex_buffer,group->dynamic_vertex_buffer_index);
     if(own_first_person) n3ds_gpu_first_person_end();
-    parameters=saved;model_lighting_prepare(); models_active=saved_models; model_active=saved_model;scenery_batch_allowed=saved_batch;
+    parameters=saved;model_view=saved_view;model_lighting_prepare(); models_active=saved_models; model_active=saved_model;scenery_batch_allowed=saved_batch;
+    prepared_bone_source=NULL;packet_material_count=0;
+    memset(prepared_bone_valid,0,sizeof(prepared_bone_valid));
 }
 void n3ds_model_depth_group(const struct transparent_geometry_group *group)
 {

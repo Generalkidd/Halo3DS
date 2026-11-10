@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /*
 COLLISIONS.H
 
@@ -141,6 +142,12 @@ boolean collision_test_vector(
 	real_vector3d const *vector,
 	long ignore_object_index,
 	struct collision_result *collision);
+/* Boolean obstruction query; does not expose a nearest-hit result. */
+boolean n3ds_collision_test_line_any(
+    unsigned long flags,
+    const real_point3d *point0,
+    const real_point3d *point1,
+    long ignore_object_index);
 boolean collision_fix_pill(
 	unsigned long flags,
 	real_point3d const *old_position,

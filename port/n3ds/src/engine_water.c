@@ -27,13 +27,12 @@ _Static_assert(offsetof(struct water_shader,base_map)==0x4c,"Water base ABI");
 _Static_assert(offsetof(struct water_shader,perpendicular)==0x6c,"Water tint ABI");
 _Static_assert(offsetof(struct water_shader,reflection_map)==0x9c,"Water cube ABI");
 _Static_assert(offsetof(struct water_shader,ripples)==0x124,"Water ripple ABI");
-extern struct rasterizer_window_begin_parameters global_window_parameters;
 extern struct rasterizer_frame_begin_parameters global_frame_parameters;
 boolean rasterizer_set_texture_direct(short,long,short);
 void n3ds_log(const char *);
 static int water_native(const struct water_shader *w,short permutation,
     const struct rasterizer_model_begin_parameters *p,const void *data,unsigned int count,
-    short type,const unsigned short *indices,unsigned int index_count)
+    short type,const unsigned short *indices,unsigned int index_count,const struct native_model_view *frame_view)
 {
     struct native_water_material m={.flags=w->flags,.sky=!!(p->geometry_flags&(1<<4))};
     /* Vertex-color clamping precedes texture modulation on PICA. Preserve
@@ -49,7 +48,7 @@ static int water_native(const struct water_shader *w,short permutation,
     const real_vector2d unit={1,1};
     const struct native_render_vertex *pose=n3ds_model_skin_stream(cached,count,&p->skinning,&unit,p->unique_identifier);
     struct native_render_vertex *out=n3ds_gpu_model_vertices_allocate(count);assert(out);
-    float t=global_frame_parameters.game_time_sec*w->velocity;
+    float t=frame_view->game_time*w->velocity;
     float offset_u=t*cosf(w->angle),offset_v=t*sinf(w->angle);
     for(unsigned int i=0;i<count;++i) {
         struct model_vertex_uncompressed decoded;struct native_render_vertex temporary;
@@ -85,13 +84,13 @@ static int water_native(const struct water_shader *w,short permutation,
 
 void n3ds_water_model_draw(const struct shader *shader,short permutation,
     const struct rasterizer_model_begin_parameters *p,const void *data,
-    unsigned int count,short type,const unsigned short *indices,unsigned int index_count)
+    unsigned int count,short type,const unsigned short *indices,unsigned int index_count,const struct native_model_view *frame_view)
 {
     const struct n3ds_cache_view *view=n3ds_engine_cache_view(0);
     const struct water_shader *w=(const void *)shader;
     assert(n3ds_cache_resolve(view,w,sizeof(*w))==w && w->type==0 && !(w->flags&~15));
     assert(isfinite(w->scale) && isfinite(w->angle) && isfinite(w->velocity));
-    if(water_native(w,permutation,p,data,count,type,indices,index_count)) return;
+    if(water_native(w,permutation,p,data,count,type,indices,index_count,frame_view)) return;
     const byte *cube=w->reflection_map.index!=NONE?n3ds_cube_load(w->reflection_map.index,permutation):NULL;
     struct native_generic_material sample={.maps=1};
     sample.transform[0][0][0]=sample.transform[0][1][1]=1;
@@ -103,7 +102,7 @@ void n3ds_water_model_draw(const struct shader *shader,short permutation,
     const struct model_vertex_uncompressed *cached=type==5?n3ds_model_decode_stream(data,count):NULL;
     const real_vector2d unit={1,1};
     const struct native_render_vertex *pose=n3ds_model_skin_stream(cached,count,&p->skinning,&unit,p->unique_identifier);
-    float t=global_frame_parameters.game_time_sec*w->velocity;
+    float t=frame_view->game_time*w->velocity;
     for(int pass=(w->flags&2)?0:1;pass<2;++pass) {
         struct native_chicago_material material={.maps=1,.blend=pass?0:1,.two_sided=1,.fade=1,.vertex_color=1};
         material.sky=!!(p->geometry_flags&(1<<4));
@@ -134,9 +133,9 @@ void n3ds_water_model_draw(const struct shader *shader,short permutation,
             n2=dot_product3d(&normal,&normal);
             for(int c=0;c<3;++c) {
                 normal.n[c]/=sqrtf(n2);
-                eye[c]=global_window_parameters.camera.position.n[c]-posed->position[c];e2+=eye[c]*eye[c];
+                eye[c]=frame_view->camera_position.n[c]-posed->position[c];e2+=eye[c]*eye[c];
             }
-            if(e2<1e-12f) for(int c=0;c<3;++c) eye[c]=-global_window_parameters.camera.forward.n[c];
+            if(e2<1e-12f) for(int c=0;c<3;++c) eye[c]=-frame_view->camera_forward.n[c];
             else for(int c=0;c<3;++c) eye[c]/=sqrtf(e2);
             for(int c=0;c<3;++c) dot+=normal.n[c]*eye[c];
             for(int c=0;c<3;++c) reflection[c]=2*dot*normal.n[c]-eye[c];

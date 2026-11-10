@@ -40,4 +40,5 @@ int n3ds_gpu_hud_meter(const struct native_hud_meter *,const struct native_text_
 void n3ds_gpu_sensor_begin(void);
 int n3ds_gpu_sensor_blip(void *,float,float,float,const float [3]);
 int n3ds_gpu_sensor_end(void *,void *,float,float,float,float,float,float);
+void n3ds_hud_restore_after_quad(void);
 #endif

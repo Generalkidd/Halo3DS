@@ -1,9 +1,11 @@
 #include <3ds.h>
+#include "engine_render_commands.h"
 #include <citro3d.h>
 #include "engine_renderer.h"
 
 int n3ds_gpu_framebuffer_blend(int mode)
 {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_STATE);
     GPU_BLENDEQUATION operation=GPU_BLEND_ADD;
     GPU_BLENDFACTOR source_color=GPU_ONE,destination_color=GPU_ONE;
     GPU_BLENDFACTOR source_alpha=GPU_ONE,destination_alpha=GPU_ONE;
@@ -29,6 +31,6 @@ int n3ds_gpu_framebuffer_blend(int mode)
     default: return 0; /* Invalid requests must not change the previous state. */
     }
     C3D_AlphaBlend(operation,operation,source_color,destination_color,source_alpha,destination_alpha);
-    n3ds_gpu_fog_blend(mode);
+
     return 1;
 }

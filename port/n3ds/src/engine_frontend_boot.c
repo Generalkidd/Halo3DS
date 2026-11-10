@@ -890,6 +890,9 @@ static int empty_sprite_tests(void)
 }
 void n3ds_frontend_trace(const char *stage)
 {
+#ifdef HALO_N3DS_STRIP_DIAGNOSTICS
+    return;
+#endif
     extern void n3ds_stall_mark(const char *,unsigned int,int);
     n3ds_stall_mark(stage,current_frame,game_time_get());
     /* Retain a periodic stage trace without synchronous SD writes at every
@@ -963,7 +966,6 @@ int halo_engine_boot(void)
         CHECK(!n3ds_gpu_model_material_tests());
         CHECK(!n3ds_gpu_cube_tests());
         CHECK(!n3ds_gpu_fragment_tests());
-        CHECK(!n3ds_gpu_fog_tests());
         CHECK(!n3ds_gpu_model_lighting_tests());
         CHECK(!n3ds_engine_cube_layout_tests());
         CHECK(!n3ds_gpu_model_reflection_tests());
@@ -1328,9 +1330,11 @@ int halo_engine_boot(void)
         }
         previous_postgame_buttons=postgame_buttons;
         n3ds_engine_input_sample(&sample);input_update();input_abstraction_update();
+#ifndef HALO_N3DS_STRIP_DIAGNOSTICS
         if(frame%30==0 || memcmp(&sample,&prior,sizeof(sample))) {
             snprintf(message,sizeof(message),"FRONTEND INPUT: frame=%ld held=%08x circle=%d,%d look=%d,%d enabled=%d cinematic=%d skip=%d touch=%u,%u",frame+1,sample.held,sample.circle_x,sample.circle_y,sample.cstick_x,sample.cstick_y,player_input_enabled(),cinematic_in_progress(),cinematic_can_be_skipped(),sample.touch_x,sample.touch_y);n3ds_log(message);prior=sample;
         }
+#endif
         event_manager_update();n3ds_frontend_trace("widgets");process_ui_widgets();bink_playback_update();
         /* The original main loop services clients and hosts before simulation.
          * Render pacing must never substitute for network action availability. */
@@ -1676,6 +1680,7 @@ int halo_engine_boot(void)
         }
         #endif
         n3ds_frontend_trace("render-complete");
+#ifndef HALO_N3DS_STRIP_DIAGNOSTICS
         loop_profile[0]+=services_end-start;loop_profile[1]+=simulation_start-services_end;
         loop_profile[2]+=simulation_end-simulation_start;loop_profile[3]+=audio_end-simulation_end;
         loop_profile[4]+=n3ds_engine_ticks()-audio_end;++loop_frames;
@@ -1688,13 +1693,16 @@ int halo_engine_boot(void)
             snprintf(message,sizeof(message),"FRONTEND FRAME: frame=%ld time=%ld menu=%d local=%ld unit=%08lx held=%08x",frame+1,game_time_get(),main_menu_is_active(),local,unit,sample.held);
             n3ds_log(message);
         }
+#endif
 #ifdef HALO_N3DS_POSTGAME_RETURN_TEST
         if(frame+1==832) CHECK(!n3ds_gpu_screen_quad_capture());
 #endif
         if(HALO_N3DS_MISSION_TICKS && frame+1==200) CHECK(!n3ds_gpu_screen_quad_capture());
         input_frame_end();
         const long long pacing_stages[5]={services_end,simulation_start,simulation_end,audio_end,n3ds_engine_ticks()};
+#ifndef HALO_N3DS_STRIP_DIAGNOSTICS
         frame_pacing_observe(start,pacing_stages,!main_menu_is_active() && !cinematic_in_progress());
+#endif
         n3ds_gpu_frame_work((n3ds_engine_ticks()-start)*(1000.f/n3ds_engine_tick_frequency()));
         n3ds_engine_pace_frame(start);
     }

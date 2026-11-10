@@ -1,4 +1,5 @@
 #define HALO_N3DS_INLINE_DATUM 1
+/* New3DS integration additions by Kevin Boggs. */
 /*
 BIPEDS.C
 
@@ -516,6 +517,31 @@ static void biped_update_physics(
 static void biped_snap_facing(
 	long biped_index);
 
+/* New3DS integration additions by Kevin Boggs.
+ * Selective two-tick movement follows JackTulli/halo-64 b629d0a's biped
+ * sweep/acceleration scheme. Players, networking, cinema and special motion
+ * retain full-rate physics. This is an opt-in experiment, not a game tick change. */
+#ifdef HALO_N3DS_PHYSICS_15HZ
+#include "engine_physics_schedule.h"
+#include "cutscene/cinematics.h"
+static real n3ds_biped_step = 1.f;
+static struct {
+    struct n3ds_physics_schedule clock;
+    struct unit_animation_update_data animation;
+} n3ds_biped_movement[256];
+extern int n3ds_wireless_active(void);
+extern int n3ds_network_coop_active(void);
+/* Kevin Boggs: n3ds_biped_physics_reset */
+void n3ds_biped_physics_reset(void)
+{
+    csmemset(n3ds_biped_movement, 0, sizeof(n3ds_biped_movement));
+    n3ds_biped_step = 1.f;
+}
+#define BIPED_STEP n3ds_biped_step
+#else
+#define BIPED_STEP 1.f
+#endif
+
 /* ---------- globals */
 
 boolean debug_biped_physics = FALSE;
@@ -582,6 +608,9 @@ void bipeds_initialize(
 void bipeds_initialize_for_new_map(
 	void)
 {
+#ifdef HALO_N3DS_PHYSICS_15HZ
+    n3ds_biped_physics_reset();
+#endif
 	return;
 }
 
@@ -612,12 +641,18 @@ void biped_place(
 void biped_delete(
 	long biped_index)
 {
+#ifdef HALO_N3DS_PHYSICS_15HZ
+    n3ds_biped_movement[(unsigned)biped_index & 255u].clock.valid = 0;
+#endif
 	return;
 }
 
 void biped_reset(
 	long biped_index)
 {
+#ifdef HALO_N3DS_PHYSICS_15HZ
+    n3ds_biped_movement[(unsigned)biped_index & 255u].clock.valid = 0;
+#endif
 	struct biped_datum *biped = biped_get(biped_index);
 	csmemset(&biped->biped, 0, sizeof(biped->biped));
 	biped->biped.ground_plane = depths_of_hell;
@@ -1582,6 +1617,7 @@ static void biped_verify_object_vectors(
 	long biped_index,
 	char const *state)
 {
+#ifndef HALO_N3DS_STRIP_DIAGNOSTICS
 	struct biped_datum *biped = biped_get(biped_index);
 
 	if (!valid_real_vector3d_axes2(&biped->object.forward, &biped->object.up))
@@ -1607,6 +1643,7 @@ static void biped_verify_object_vectors(
 				biped->object.up.i, biped->object.up.j, biped->object.up.k));
 	}
 
+#endif
 	return;
 }
 
@@ -2418,7 +2455,7 @@ static void biped_update_physics(
 			velocity_change = acceleration;
 		physics->new_velocity.i = velocity_change.i + physics->velocity.i;
 		physics->new_velocity.j = velocity_change.j + physics->velocity.j;
-		physics->new_velocity.k = physics->velocity.k - global_gravity;
+		physics->new_velocity.k = physics->velocity.k - global_gravity * BIPED_STEP;
 		physics->out_flags = TEST_FLAG(in_flags, _biped_physics_in_slipping_bit) ?
 			FLAG(_biped_physics_out_slipping_bit) : 0;
 	}
@@ -2554,7 +2591,7 @@ static void biped_update_physics(
 			physics->out_flags = slipping ? FLAG(_biped_physics_out_slipping_bit) : 0;
 			add_vectors3d(&velocity_change, &physics->velocity, &physics->new_velocity);
 			if (TEST_FLAG(physics->out_flags, _biped_physics_out_slipping_bit))
-				physics->new_velocity.k -= global_gravity;
+				physics->new_velocity.k -= global_gravity * BIPED_STEP;
 		}
 	}
 
@@ -2596,6 +2633,9 @@ static void biped_update_physics(
 	}
 	else
 	{
+#ifdef HALO_N3DS_PHYSICS_15HZ
+        if(BIPED_STEP != 1.f) scale_vector3d(&velocity, BIPED_STEP, &velocity);
+#endif
 		collision_count = collision_move_pill(
 			collision_flags,
 			&position,
@@ -2607,6 +2647,12 @@ static void biped_update_physics(
 			&clipped_velocity,
 			16,
 			collisions);
+#ifdef HALO_N3DS_PHYSICS_15HZ
+        if(BIPED_STEP != 1.f) {
+            scale_vector3d(&velocity, 1.f / BIPED_STEP, &velocity);
+            scale_vector3d(&clipped_velocity, 1.f / BIPED_STEP, &clipped_velocity);
+        }
+#endif
 	}
 
 	if (debug_biped_physics &&
@@ -3922,6 +3968,12 @@ static void biped_update_moving(
 	}
 	physics.in_flags = in_flags;
 
+#ifdef HALO_N3DS_PHYSICS_15HZ
+    if(BIPED_STEP != 1.f) {
+        if(physics.acceleration_maximum < REAL_MAX / 4.f) physics.acceleration_maximum *= BIPED_STEP;
+        if(physics.airborne_acceleration_maximum < REAL_MAX / 4.f) physics.airborne_acceleration_maximum *= BIPED_STEP;
+    }
+#endif
 	biped_update_physics(&physics);
 
 	if (physics.elevator_object_index == NONE)
@@ -4095,6 +4147,9 @@ static void biped_update_moving(
 boolean biped_new(
 	long biped_index)
 {
+#ifdef HALO_N3DS_PHYSICS_15HZ
+    n3ds_biped_movement[(unsigned)biped_index & 255u].clock.valid = 0;
+#endif
 	struct biped_datum *biped = biped_get(biped_index);
 	struct biped_definition *definition = biped_definition_get(biped->definition_index);
 
@@ -4267,7 +4322,42 @@ boolean biped_update(
 		}
 
 		CHARACTER_STAGE(1);
+#ifdef HALO_N3DS_PHYSICS_15HZ
+        {
+            unsigned slot = (unsigned)biped_index & 255u;
+            int reduced = game_connection() == _game_connection_local &&
+                !n3ds_wireless_active() && !n3ds_network_coop_active() && !cinematic_in_progress() &&
+                biped->unit.player_index == NONE && biped->unit.actor_index != NONE &&
+                !TEST_FLAG(biped->object.damage_flags, _object_dead_bit) &&
+                !TEST_FLAG(biped->object.flags, _object_no_collisions_bit) &&
+                !TEST_FLAG(biped->object.flags, _object_movie_star_bit) &&
+                !TEST_FLAG(biped->unit.flags, _unit_suspended_bit) &&
+                !(definition->biped.flags & (FLAG(_biped_flying_bit) | FLAG(_biped_climbs_anything_bit))) &&
+                !(biped->biped.flags & (FLAG(_biped_airborne_bit) | FLAG(_biped_slipping_bit))) &&
+                biped->biped.landing == NONE && biped->biped.elevator_object_index == NONE &&
+                biped->biped.elevator_ticks <= 0 && biped->biped.jump_recovery_timer == CHAR_MAX &&
+                !animation.crouching && biped->biped.crouch == 0.f &&
+                biped->unit.animation.base_seat_index != _unit_base_seat_crouch &&
+                biped->unit.melee_attack_state == _unit_melee_attack_none &&
+                !TEST_FLAG(biped->unit.control_flags, _unit_control_jump_bit) &&
+                biped->unit.animation.state <= _unit_state_move_right;
+            int step = n3ds_physics_schedule_step(&n3ds_biped_movement[slot].clock,
+                                                 biped_index, game_time_get(), reduced);
+#ifdef HALO_N3DS_PHYSICS_PROFILE
+            extern void n3ds_physics_profile_step(int kind,int step);
+            n3ds_physics_profile_step(0,step);
+#endif
+            if(!step) animation = n3ds_biped_movement[slot].animation;
+            else {
+                n3ds_biped_step = (real)step;
+                biped_update_moving(biped_index, &animation);
+                n3ds_biped_step = 1.f;
+                n3ds_biped_movement[slot].animation = animation;
+            }
+        }
+#else
 		biped_update_moving(biped_index, &animation);
+#endif
 		CHARACTER_STAGE(2);
 		biped_verify_object_vectors(biped_index, "post-moving");
 

@@ -1,3 +1,7 @@
+/* New3DS integration additions by Kevin Boggs. */
+#ifdef HALO_N3DS
+#include "engine_bots.h"
+#endif
 /*
 NETWORK_GAME_MANAGER.C
 
@@ -417,10 +421,17 @@ boolean network_game_spawn_player(
 		network_player_is_valid(player));
 
 	controller_index = network_game_player_is_local(player) ? player->controller_index : NONE;
+#ifdef HALO_N3DS
+    /* One physical player per console; extra controller slots are host bots. */
+    if(player->controller_index>0)controller_index=NONE;
+#endif
 	player_index = player_new(player->machine_index, NONE, controller_index, player);
 	if (player_index != NONE)
 	{
 		player->player_list_index = (char)player_index;
+#ifdef HALO_N3DS
+        if(player->controller_index>0)n3ds_bots_register_network(player_index);
+#endif
 		return TRUE;
 	}
 
@@ -692,6 +703,9 @@ boolean network_game_create_game_objects(
 	{
 		game->local_data.game_objects_loaded = TRUE;
 		game_initialize_for_new_map();
+#ifdef HALO_N3DS
+        n3ds_bots_reset();
+#endif
 
 		qsort(
 			game->players,

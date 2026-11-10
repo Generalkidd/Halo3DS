@@ -1740,10 +1740,10 @@ static void actor_input_update(
 			}
 		}
 
-		if (actor->meta.encounter_index != NONE)
+		if (AI_DIAGNOSTICS_ENABLED && actor->meta.encounter_index != NONE)
 		{
 			struct actor_debug_info *actor_debug_info =
-				&actor_debug_array[DATUM_INDEX_TO_ABSOLUTE_INDEX(actor_index)];
+				AI_DEBUG_RECORD(DATUM_INDEX_TO_ABSOLUTE_INDEX(actor_index));
 			struct encounter_definition *encounter_definition =
 				TAG_BLOCK_GET_ELEMENT(
 					&global_scenario_get()->ai_encounters,
@@ -1767,7 +1767,7 @@ static void actor_input_update(
 			{
 				if (actor_debug_info->firing_position_type_mismatch_ticks < 150)
 				{
-					actor_debug_info->firing_position_type_mismatch_ticks++;
+					AI_DEBUG_ONLY(actor_debug_info->firing_position_type_mismatch_ticks++);
 					if (actor_debug_info->firing_position_type_mismatch_ticks == 150)
 					{
 						if (actor->state.flying)
@@ -1791,7 +1791,7 @@ static void actor_input_update(
 			}
 			else
 			{
-				actor_debug_info->firing_position_type_mismatch_ticks = 0;
+				AI_DEBUG_ONLY(actor_debug_info->firing_position_type_mismatch_ticks = 0);
 			}
 		}
 
@@ -2364,18 +2364,18 @@ long actor_new(
 				actor->firing_positions.pursuit_prop_index = NONE;
 
 				actor_debug_info =
-					&actor_debug_array[DATUM_INDEX_TO_ABSOLUTE_INDEX(actor_index)];
-				csmemset(actor_debug_info, 0, sizeof(*actor_debug_info));
-				actor_debug_info->last_path_refresh = NONE;
-				actor_debug_info->last_projectile_aiming_time = NONE;
-				actor_debug_info->last_vehicle_avoidance_time = NONE;
-				actor_debug_info->last_melee_time = NONE;
-				actor_debug_info->grenade_eval_time = NONE;
-				actor_debug_info->danger_avoidance_time = NONE;
-				actor_debug_info->charge_last_time = NONE;
-				actor_debug_info->field_19C = NONE;
-				actor_debug_info->vision_last_time = NONE;
-				actor_debug_info->num_debug_evaluations = NONE;
+					AI_DEBUG_RECORD(DATUM_INDEX_TO_ABSOLUTE_INDEX(actor_index));
+				AI_DEBUG_ONLY(csmemset(actor_debug_info, 0, sizeof(*actor_debug_info)));
+				AI_DEBUG_ONLY(actor_debug_info->last_path_refresh = NONE);
+				AI_DEBUG_ONLY(actor_debug_info->last_projectile_aiming_time = NONE);
+				AI_DEBUG_ONLY(actor_debug_info->last_vehicle_avoidance_time = NONE);
+				AI_DEBUG_ONLY(actor_debug_info->last_melee_time = NONE);
+				AI_DEBUG_ONLY(actor_debug_info->grenade_eval_time = NONE);
+				AI_DEBUG_ONLY(actor_debug_info->danger_avoidance_time = NONE);
+				AI_DEBUG_ONLY(actor_debug_info->charge_last_time = NONE);
+				AI_DEBUG_ONLY(actor_debug_info->field_19C = NONE);
+				AI_DEBUG_ONLY(actor_debug_info->vision_last_time = NONE);
+				AI_DEBUG_ONLY(actor_debug_info->num_debug_evaluations = NONE);
 
 				actor_type_initialize(actor_index);
 			}
@@ -3895,26 +3895,26 @@ static boolean actor_general_update(
 	struct actor_datum *actor = actor_get(actor_index);
 	boolean result = TRUE;
 
-	ai_profile.meters[_ai_meter_actors_updated].accumulator++;
+	AI_PROFILE_ONLY(ai_profile.meters[_ai_meter_actors_updated].accumulator++);
 	if (!actor->meta.dormant)
 	{
-		ai_profile.meters[_ai_meter_actors_active].accumulator++;
+		AI_PROFILE_ONLY(ai_profile.meters[_ai_meter_actors_active].accumulator++);
 	}
 
 	if (actor->meta.swarm)
 	{
-		ai_profile.meters[_ai_meter_units_updated].accumulator += actor->meta.swarm_unit_count;
+		AI_PROFILE_ONLY(ai_profile.meters[_ai_meter_units_updated].accumulator += actor->meta.swarm_unit_count);
 		if (!actor->meta.dormant)
 		{
-			ai_profile.meters[_ai_meter_units_active].accumulator += actor->meta.swarm_unit_count;
+			AI_PROFILE_ONLY(ai_profile.meters[_ai_meter_units_active].accumulator += actor->meta.swarm_unit_count);
 		}
 	}
 	else
 	{
-		ai_profile.meters[_ai_meter_units_updated].accumulator++;
+		AI_PROFILE_ONLY(ai_profile.meters[_ai_meter_units_updated].accumulator++);
 		if (!actor->meta.dormant)
 		{
-			ai_profile.meters[_ai_meter_units_active].accumulator++;
+			AI_PROFILE_ONLY(ai_profile.meters[_ai_meter_units_active].accumulator++);
 		}
 	}
 
@@ -4202,8 +4202,8 @@ static long long native_actor_cost[7];
 #endif
 #ifdef HALO_N3DS
 static unsigned int native_decisions_deferred;
-static unsigned int native_idle_decisions_deferred;
-
+/* The post-baseline idle policy is retained for attribution, but is not used
+ * by the pre-fog scheduler below. */
 /* Kevin Boggs: native_idle_decision_interval
  * Only decision selection is budgeted. Perception, action timers, movement,
  * danger and combat still run every tick. Never use visibility/fog as an AI
@@ -4233,31 +4233,22 @@ static unsigned int native_idle_decision_interval(const struct actor_datum *a,
 /* Kevin Boggs: native_decision_due */
 static boolean native_decision_due(long index,const struct actor_datum *a)
 {
- extern int n3ds_network_coop_active(void),n3ds_input_platform_original_model(void);
- extern boolean cinematic_in_progress(void);
+ extern int n3ds_network_coop_active(void);
+ if(n3ds_network_coop_active())return TRUE;
  static const struct actor_stimulus_data no_stimuli={0};
- /* Keep network simulation independent of model-specific local budgets. */
- if(n3ds_network_coop_active() || game_connection() || cinematic_in_progress() ||
+ extern boolean cinematic_in_progress(void);
+ if(!((game_time_get()+DATUM_INDEX_TO_ABSOLUTE_INDEX(index))&1) || cinematic_in_progress() ||
   a->meta.swarm || a->meta.dormant || a->state.command_list_index!=NONE || a->state.action_changed ||
   a->target.target_prop_index!=NONE || a->situation.known_enemies || a->danger_zone.danger_type ||
   a->input.vehicle_index!=NONE || a->input.in_midair || a->input.recent_body_damage>0 || a->input.recent_shield_damage>0 ||
   a->input.burning_to_death || a->external_orders.conversation_index!=NONE || memcmp(&a->stimuli,&no_stimuli,sizeof(no_stimuli)))return TRUE;
- boolean found=FALSE,hostile=TRUE;
- real nearest=REAL_MAX;
+ boolean found=FALSE;
  for(short local=local_player_get_next(NONE);local!=NONE;local=local_player_get_next(local)) {
   struct player_datum *p=player_get(local_player_get_player_index(local));if(p->unit_index==NONE)continue;
   struct unit_datum *u=unit_get(p->unit_index);found=TRUE;
-  real distance=distance_squared3d(&u->object.position,&a->input.position.body_position);
-  if(!(distance>=24.f*24.f))return TRUE;
-  if(distance<nearest)nearest=distance;
-  if(!game_team_is_enemy(a->meta.team_index,u->object.owner_team_index))hostile=FALSE;
+  if(distance_squared3d(&u->object.position,&a->input.position.body_position)<24.f*24.f)return TRUE;
  }
- if(!found)return TRUE;
- unsigned int interval=native_idle_decision_interval(a,nearest,hostile,n3ds_input_platform_original_model());
- unsigned int phase=(unsigned int)game_time_get()+DATUM_INDEX_TO_ABSOLUTE_INDEX(index);
- boolean due=phase%interval==0;
- if(!due && interval>2)++native_idle_decisions_deferred;
- return due;
+ return !found;
 }
 #endif
 static void actor_update(
@@ -4323,15 +4314,6 @@ static void actor_update(
 void actors_update(
 	void)
 {
-#ifdef HALO_N3DS
-    /* Sparse diagnostics; no per-actor SD writes or new saved-state data. */
-    if(game_time_get()%300==0 && native_idle_decisions_deferred) {
-        extern void n3ds_log(const char *);
-        char message[128];
-        snprintf(message,sizeof(message),"IDLE AI: distant_decisions_deferred=%u all_decisions_deferred=%u",native_idle_decisions_deferred,native_decisions_deferred);
-        n3ds_log(message);
-    }
-#endif
 	#ifdef HALO_N3DS_CROWD_PROFILE
     native_actor_sample=game_time_get()%30==0;
     native_actor_count=0;memset(native_actor_cost,0,sizeof(native_actor_cost));

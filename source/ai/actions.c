@@ -2047,7 +2047,7 @@ boolean actor_action_handle_active_cover_seeking(
 {
 	struct actor_datum *actor = actor_get(actor_index);
 	struct actor_debug_info *debug_info =
-		&actor_debug_array[DATUM_INDEX_TO_ABSOLUTE_INDEX(actor_index)];
+		AI_DEBUG_RECORD(DATUM_INDEX_TO_ABSOLUTE_INDEX(actor_index));
 	struct actor_definition *definition =
 		actor_definition_get(actor->meta.definition_index);
 	boolean result = FALSE;
@@ -2056,8 +2056,8 @@ boolean actor_action_handle_active_cover_seeking(
 	{
 		long target_hidden_ticks;
 
-		debug_info->field_B8 = TRUE;
-		debug_info->field_BA = 4;
+		AI_DEBUG_ONLY(debug_info->field_B8 = TRUE);
+		AI_DEBUG_ONLY(debug_info->field_BA = 4);
 
 		if (actor->target.target_last_visible_time == NONE)
 			target_hidden_ticks = 1000;
@@ -2065,40 +2065,40 @@ boolean actor_action_handle_active_cover_seeking(
 			target_hidden_ticks =
 				game_time_get() - actor->target.target_last_visible_time;
 
-		debug_info->field_BC = (short)target_hidden_ticks;
-		debug_info->field_C0 = actor->input.shield_vitality;
+		AI_DEBUG_ONLY(debug_info->field_BC = (short)target_hidden_ticks);
+		AI_DEBUG_ONLY(debug_info->field_C0 = actor->input.shield_vitality);
 
 		if (actor->input.shield_vitality <=
 			definition->defensive.shield_fraction_hide)
 		{
 			short action_class = actor_action_class(actor_index);
 
-			debug_info->field_BA = 0;
+			AI_DEBUG_ONLY(debug_info->field_BA = 0);
 			if (!actor->emotions.berserk &&
 				(action_class == 4 || action_class == 3))
 			{
-				debug_info->field_BA = 1;
+				AI_DEBUG_ONLY(debug_info->field_BA = 1);
 				if (actor->state.combat_status >= 2)
 				{
 					long current_time = game_time_get();
 
-					debug_info->field_BA = 2;
+					AI_DEBUG_ONLY(debug_info->field_BA = 2);
 					if (actor->emotions.last_active_cover_seeking_time == NONE ||
 						current_time >=
 							actor->emotions.last_active_cover_seeking_time + 30)
 					{
-						debug_info->field_BA = 3;
+						AI_DEBUG_ONLY(debug_info->field_BA = 3);
 						actor->emotions.last_active_cover_seeking_time = current_time;
 
 						if (actor_action_allow_cover_seeking(actor_index, FALSE))
 						{
-							debug_info->field_BA = 5;
+							AI_DEBUG_ONLY(debug_info->field_BA = 5);
 							if (actor_action_try_to_seek_cover(
 								actor_index,
 								TRUE,
 								FALSE))
 							{
-								debug_info->field_BA = 6;
+								AI_DEBUG_ONLY(debug_info->field_BA = 6);
 								result = TRUE;
 								goto done;
 							}
@@ -2110,7 +2110,7 @@ boolean actor_action_handle_active_cover_seeking(
 									actor->target.target_prop_index,
 									force_flee_transition))
 							{
-								debug_info->field_BA = 7;
+								AI_DEBUG_ONLY(debug_info->field_BA = 7);
 								result = TRUE;
 							}
 						}
@@ -2277,7 +2277,7 @@ void actor_action_change(
 	void (*handler)(
 		long actor_index);
 
-	ai_profile.meters[_ai_meter_action_change].accumulator++;
+	AI_PROFILE_ONLY(ai_profile.meters[_ai_meter_action_change].accumulator++);
 
 	match_assert(
 		"c:\\halo\\SOURCE\\ai\\actions.c",
@@ -2337,13 +2337,13 @@ boolean actor_action_test_grenade(
 		actor_variant_definition_get(actor->meta.variant_definition_index);
 	long current_time = game_time_get();
 	struct actor_debug_info *debug_info =
-		&actor_debug_array[DATUM_INDEX_TO_ABSOLUTE_INDEX(actor_index)];
+		AI_DEBUG_RECORD(DATUM_INDEX_TO_ABSOLUTE_INDEX(actor_index));
 
-	debug_info->grenade_eval_time = current_time;
+	AI_DEBUG_ONLY(debug_info->grenade_eval_time = current_time);
 
 	if (actor->input.vehicle_index != NONE)
 	{
-		debug_info->grenade_decision = 0;
+		AI_DEBUG_ONLY(debug_info->grenade_decision = 0);
 		return FALSE;
 	}
 
@@ -2366,10 +2366,10 @@ boolean actor_action_test_grenade(
 			(short)throw_delay_ticks + encounter->last_grenade_throw_time >
 				current_time)
 		{
-			debug_info->grenade_decision = 5;
-			debug_info->grenade_encounter_timeout_ticks =
+			AI_DEBUG_ONLY(debug_info->grenade_decision = 5);
+			AI_DEBUG_ONLY(debug_info->grenade_encounter_timeout_ticks =
 				(short)((short)(throw_delay_ticks - current_time) +
-					(short)encounter->last_grenade_throw_time);
+					(short)encounter->last_grenade_throw_time));
 			return FALSE;
 		}
 	}
@@ -2404,28 +2404,28 @@ boolean actor_action_test_grenade(
 						grenade_target_prop_index,
 						grenade_ignore_object_index))
 					{
-						debug_info->grenade_decision = 10;
+						AI_DEBUG_ONLY(debug_info->grenade_decision = 10);
 						return TRUE;
 					}
 
-					debug_info->grenade_decision = 9;
+					AI_DEBUG_ONLY(debug_info->grenade_decision = 9);
 				}
 				else
 				{
-					debug_info->grenade_enemy_count = enemy_count;
-					debug_info->grenade_decision = 7;
-					debug_info->grenade_required_enemy_count =
-						variant_definition->grenade_combat.minimum_enemy_count;
+					AI_DEBUG_ONLY(debug_info->grenade_enemy_count = enemy_count);
+					AI_DEBUG_ONLY(debug_info->grenade_decision = 7);
+					AI_DEBUG_ONLY(debug_info->grenade_required_enemy_count =
+						variant_definition->grenade_combat.minimum_enemy_count);
 				}
 			}
 			else
 			{
-				debug_info->grenade_decision = 8;
+				AI_DEBUG_ONLY(debug_info->grenade_decision = 8);
 			}
 		}
 		else
 		{
-			debug_info->grenade_decision = 6;
+			AI_DEBUG_ONLY(debug_info->grenade_decision = 6);
 		}
 	}
 	}
@@ -3767,7 +3767,7 @@ boolean actor_action_try_to_dive(
 {
 	struct actor_datum *actor = actor_get(actor_index);
 	struct actor_debug_info *debug_info =
-		&actor_debug_array[DATUM_INDEX_TO_ABSOLUTE_INDEX(actor_index)];
+		AI_DEBUG_RECORD(DATUM_INDEX_TO_ABSOLUTE_INDEX(actor_index));
 	boolean dive_off_ledge = FALSE;
 	struct path_collision_result collision_result;
 	real_vector2d evade_vector;
@@ -3779,7 +3779,7 @@ boolean actor_action_try_to_dive(
 	struct actor_dive_animation const *possibility;
 	boolean result;
 
-	debug_info->dive_decision_time = game_time_get();
+	AI_DEBUG_ONLY(debug_info->dive_decision_time = game_time_get());
 
 	if (actor->input.vehicle_index == NONE &&
 		actor_move_try_evasion_direction(
@@ -3873,7 +3873,7 @@ boolean actor_action_try_to_dive(
 
 		if (best_animation == NONE)
 		{
-			debug_info->dive_decision = _dive_no_animation;
+			AI_DEBUG_ONLY(debug_info->dive_decision = _dive_no_animation);
 			result = FALSE;
 		}
 		else
@@ -3933,18 +3933,18 @@ boolean actor_action_try_to_dive(
 					NONE,
 					NONE,
 					NULL);
-				debug_info->dive_decision = _dive_success;
+				AI_DEBUG_ONLY(debug_info->dive_decision = _dive_success);
 			}
 			else
 			{
-				debug_info->dive_decision = _dive_animation_failure;
+				AI_DEBUG_ONLY(debug_info->dive_decision = _dive_animation_failure);
 			}
 		}
 
 	}
 	else
 	{
-		debug_info->dive_decision = _dive_cannot_move;
+		AI_DEBUG_ONLY(debug_info->dive_decision = _dive_cannot_move);
 		result = FALSE;
 	}
 
@@ -4701,7 +4701,7 @@ boolean actor_action_handle_danger_avoidance(
 {
 	struct actor_datum *actor = actor_get(actor_index);
 	struct actor_debug_info *debug_info =
-		&actor_debug_array[DATUM_INDEX_TO_ABSOLUTE_INDEX(actor_index)];
+		AI_DEBUG_RECORD(DATUM_INDEX_TO_ABSOLUTE_INDEX(actor_index));
 	boolean result = FALSE;
 	boolean within_escape_radius = FALSE;
 	boolean path_re_enters_danger = FALSE;
@@ -4710,26 +4710,26 @@ boolean actor_action_handle_danger_avoidance(
 	real escape_distance;
 	real_vector3d danger_line_delta;
 
-	debug_info->danger_avoidance_time = game_time_get();
-	debug_info->danger_decision = _danger_avoidance_none;
-	debug_info->dive_decision = _dive_not_attempted;
-	debug_info->danger_abandoned_path = FALSE;
+	AI_DEBUG_ONLY(debug_info->danger_avoidance_time = game_time_get());
+	AI_DEBUG_ONLY(debug_info->danger_decision = _danger_avoidance_none);
+	AI_DEBUG_ONLY(debug_info->dive_decision = _dive_not_attempted);
+	AI_DEBUG_ONLY(debug_info->danger_abandoned_path = FALSE);
 
 	if (!actor->danger_zone.danger_type)
 	{
-		debug_info->danger_decision = _danger_avoidance_none;
+		AI_DEBUG_ONLY(debug_info->danger_decision = _danger_avoidance_none);
 		goto try_avoid_action;
 	}
 
 	if (!actor->danger_zone.noticed_danger)
 	{
-		debug_info->danger_decision = _danger_avoidance_unnoticed;
+		AI_DEBUG_ONLY(debug_info->danger_decision = _danger_avoidance_unnoticed);
 		goto try_avoid_action;
 	}
 
 	if (actor->danger_zone.attached_to_us)
 	{
-		debug_info->danger_decision = _danger_avoidance_attached_to_us;
+		AI_DEBUG_ONLY(debug_info->danger_decision = _danger_avoidance_attached_to_us);
 		goto try_avoid_action;
 	}
 
@@ -4753,25 +4753,25 @@ boolean actor_action_handle_danger_avoidance(
 			(reference_z * reference_z + reference_x * reference_x) >
 			reference_radius * reference_radius)
 		{
-			debug_info->danger_decision = _danger_avoidance_far_away;
-			debug_info->danger_far_dist = distance3d(
+			AI_DEBUG_ONLY(debug_info->danger_decision = _danger_avoidance_far_away);
+			AI_DEBUG_ONLY(debug_info->danger_far_dist = distance3d(
 				body_position,
-				danger_reference);
-			debug_info->danger_far_radius =
-				actor->danger_zone.bounding_sphere_radius + 3.0f;
+				danger_reference));
+			AI_DEBUG_ONLY(debug_info->danger_far_radius =
+				actor->danger_zone.bounding_sphere_radius + 3.0f);
 			goto try_avoid_action;
 		}
 	}
 
 	if (actor_move_animation_busy(actor_index))
 	{
-		debug_info->danger_decision = _danger_avoidance_animation_busy;
+		AI_DEBUG_ONLY(debug_info->danger_decision = _danger_avoidance_animation_busy);
 		goto try_avoid_action;
 	}
 
 	if (actor->input.vehicle_passenger)
 	{
-		debug_info->danger_decision = _danger_avoidance_vehicle;
+		AI_DEBUG_ONLY(debug_info->danger_decision = _danger_avoidance_vehicle);
 		goto try_avoid_action;
 	}
 
@@ -4852,7 +4852,7 @@ boolean actor_action_handle_danger_avoidance(
 					actor_index,
 					firing_position_index,
 					TRUE);
-				debug_info->danger_abandoned_path = TRUE;
+				AI_DEBUG_ONLY(debug_info->danger_abandoned_path = TRUE);
 			}
 		}
 
@@ -4942,8 +4942,8 @@ boolean actor_action_handle_danger_avoidance(
 
 				if (escape_direction == NONE)
 				{
-					debug_info->danger_decision =
-						_danger_avoidance_no_safe_direction;
+					AI_DEBUG_ONLY(debug_info->danger_decision =
+						_danger_avoidance_no_safe_direction);
 					goto try_avoid_action;
 				}
 
@@ -4957,14 +4957,14 @@ boolean actor_action_handle_danger_avoidance(
 					case _actor_danger_zone_suicide:
 						if ((escape_found || escape_is_ledge) && urgency == 0.0f)
 						{
-							debug_info->danger_decision =
-								_danger_avoidance_can_avoid;
+							AI_DEBUG_ONLY(debug_info->danger_decision =
+								_danger_avoidance_can_avoid);
 							should_dive = TRUE;
 						}
 						else if (reaction_is_urgent)
 						{
-							debug_info->danger_decision =
-								_danger_avoidance_imminent_explosion;
+							AI_DEBUG_ONLY(debug_info->danger_decision =
+								_danger_avoidance_imminent_explosion);
 							should_dive = TRUE;
 						}
 						break;
@@ -4972,14 +4972,14 @@ boolean actor_action_handle_danger_avoidance(
 					case _actor_danger_zone_projectile:
 						if ((escape_found || escape_is_ledge) && urgency < 7.0f)
 						{
-							debug_info->danger_decision =
-								_danger_avoidance_can_avoid;
+							AI_DEBUG_ONLY(debug_info->danger_decision =
+								_danger_avoidance_can_avoid);
 							should_dive = TRUE;
 						}
 						else if (reaction_is_urgent)
 						{
-							debug_info->danger_decision =
-								_danger_avoidance_imminent_explosion;
+							AI_DEBUG_ONLY(debug_info->danger_decision =
+								_danger_avoidance_imminent_explosion);
 							should_dive = TRUE;
 						}
 						break;
@@ -4987,8 +4987,8 @@ boolean actor_action_handle_danger_avoidance(
 					case _actor_danger_zone_vehicle:
 						if (reaction_is_urgent)
 						{
-							debug_info->danger_decision =
-								_danger_avoidance_imminent_impact;
+							AI_DEBUG_ONLY(debug_info->danger_decision =
+								_danger_avoidance_imminent_impact);
 							should_dive = TRUE;
 						}
 						break;
@@ -5013,22 +5013,22 @@ boolean actor_action_handle_danger_avoidance(
 					}
 					else
 					{
-						debug_info->danger_decision = _danger_avoidance_no_desire;
-						debug_info->danger_intersect_time = urgency;
+						AI_DEBUG_ONLY(debug_info->danger_decision = _danger_avoidance_no_desire);
+						AI_DEBUG_ONLY(debug_info->danger_intersect_time = urgency);
 					}
 				}
 				else
 				{
-					debug_info->danger_decision = _danger_avoidance_evasion_disallowed;
+					AI_DEBUG_ONLY(debug_info->danger_decision = _danger_avoidance_evasion_disallowed);
 				}
 			}
 		}
 		else
 		{
-			debug_info->danger_decision = _danger_avoidance_outside_zone;
-			debug_info->danger_zone_dist =
-				square_root(body_line_distance_squared);
-			debug_info->danger_zone_radius = actor->danger_zone.danger_radius;
+			AI_DEBUG_ONLY(debug_info->danger_decision = _danger_avoidance_outside_zone);
+			AI_DEBUG_ONLY(debug_info->danger_zone_dist =
+				square_root(body_line_distance_squared));
+			AI_DEBUG_ONLY(debug_info->danger_zone_radius = actor->danger_zone.danger_radius);
 		}
 	}
 

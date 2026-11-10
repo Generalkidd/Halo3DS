@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /*
 TAG_GROUPS.C
 */
@@ -9,6 +10,18 @@ TAG_GROUPS.C
 #include "byte_swapping.h"
 #include "tag_groups.h"
 
+#ifdef HALO_N3DS
+#include "engine_cache.h"
+/* Cached validation only: retain the original lookup on first use, on a
+ * reference change, and after each map generation. Tag names are immutable. */
+static struct {
+    const struct tag_reference *reference;
+    const char *name;
+    unsigned long generation,group;
+    long index;
+} reference_cache[128];
+#endif
+
 /* ---------- public code */
 
 long verify_tag_reference(
@@ -17,7 +30,26 @@ long verify_tag_reference(
 	long index;
 
 	match_assert("c:\\halo\\SOURCE\\tag_files\\tag_groups.c", 3055, reference);
-	index = tag_loaded(reference->group_tag, reference->name);
+	#ifdef HALO_N3DS
+    unsigned int slot=((unsigned long)reference>>3)&127u;
+    unsigned long generation=n3ds_engine_tag_generation();
+    if(reference_cache[slot].reference==reference &&
+       reference_cache[slot].generation==generation &&
+       reference_cache[slot].name==reference->name &&
+       reference_cache[slot].group==reference->group_tag &&
+       reference_cache[slot].index==reference->index)
+        return reference->index;
+#endif
+    index = tag_loaded(reference->group_tag, reference->name);
+#ifdef HALO_N3DS
+    if(index==reference->index) {
+        reference_cache[slot].reference=reference;
+        reference_cache[slot].name=reference->name;
+        reference_cache[slot].generation=generation;
+        reference_cache[slot].group=reference->group_tag;
+        reference_cache[slot].index=index;
+    }
+#endif
 	
 	match_vassert(
 		"c:\\halo\\SOURCE\\tag_files\\tag_groups.c", 3061, reference->index==index,

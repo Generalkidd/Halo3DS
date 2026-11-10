@@ -1,14 +1,35 @@
+/* New3DS integration additions by Kevin Boggs. */
 #ifndef HALO_N3DS_ENGINE_MODELS_H
 #define HALO_N3DS_ENGINE_MODELS_H
 #include "rasterizer/rasterizer_model_types.h"
 #include "engine_renderer.h"
+#include "render/render_cameras.h"
+/* Value-only material inputs. fog.screen is deliberately NULL: none of the
+ * model paths samples the separate screen-fog overlay resource. */
+struct native_model_view {
+    real game_time,ambient_override;
+    real_point3d camera_position;
+    real_vector3d camera_forward;
+    struct render_fog fog;
+    real_matrix4x3 world_to_view;
+    real projection[4][4];
+    int reduced_materials,cinematic;
+};
 struct native_model_counters { unsigned int models,parts,triangles,max_nodes; };
 struct transparent_geometry_group;
 struct shader;
-void n3ds_plasma_model_draw(const struct shader *,short,const struct rasterizer_model_begin_parameters *,const void *,unsigned int,short,const unsigned short *,unsigned int);
-void n3ds_water_model_draw(const struct shader *,short,const struct rasterizer_model_begin_parameters *,const void *,unsigned int,short,const unsigned short *,unsigned int);
+void n3ds_plasma_model_draw(const struct shader *,short,const struct rasterizer_model_begin_parameters *,const void *,unsigned int,short,const unsigned short *,unsigned int,const struct native_model_view *);
+void n3ds_water_model_draw(const struct shader *,short,const struct rasterizer_model_begin_parameters *,const void *,unsigned int,short,const unsigned short *,unsigned int,const struct native_model_view *);
 void n3ds_model_depth_group(const struct transparent_geometry_group *);
 void n3ds_engine_model_counters(struct native_model_counters *result);
+/* Same-view immutable object packets. Drain before ordered draws and teardown. */
+void n3ds_model_packets_flush(void);
+void n3ds_model_packets_report(void);
+int n3ds_model_packets_tests(void);
+int n3ds_model_view_tests(void);
+void n3ds_model_transparent_reset(void);
+int n3ds_model_transparent_tests(void);
+void n3ds_model_transparent_report(void);
 int n3ds_model_decode_vertex(const struct model_vertex_compressed *input, struct model_vertex_uncompressed *output);
 const struct model_vertex_uncompressed *n3ds_model_decode_stream(const void *data,unsigned int count);
 void n3ds_model_decode_cache_flush(void);

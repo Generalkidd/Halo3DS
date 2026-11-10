@@ -49,6 +49,7 @@ static int flashlight_initialize(void)
 }
 void n3ds_gpu_flashlight_set(float power,const float origin[3],const float forward[3])
 {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_STATE);
     if(!flashlight_ready) return;
     power=isfinite(power)?fminf(1,fmaxf(0,power)):0;
     if(!origin || !forward) power=0;

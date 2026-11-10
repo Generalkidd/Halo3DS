@@ -44,6 +44,13 @@ if (profile_global_enable && section.active)	\
 	profile_exit_private(&section);						\
 }														\
 
+#ifdef HALO_N3DS_STRIP_DIAGNOSTICS
+#undef profile_enter
+#undef profile_exit
+#define profile_enter(section) ((void)0);
+#define profile_exit(section) ((void)0);
+#endif
+
 /* ---------- structures */
 
 union point2d;
@@ -198,5 +205,23 @@ extern boolean profile_display;
 extern boolean profile_graph;
 
 /* ---------- public code */
+
+#if defined(HALO_N3DS_STRIP_DIAGNOSTICS) && !defined(HALO_PROFILE_IMPLEMENTATION)
+#define profile_tick_start(...) ((void)0)
+#define profile_tick_end(...) ((void)0)
+#define profile_render_window_start(...) ((void)0)
+#define profile_render_window_end(...) ((void)0)
+#define profile_render_start(...) ((void)0)
+#define profile_render_end(...) ((void)0)
+#define profile_frame_start(...) ((void)0)
+#define profile_frame_end(...) ((void)0)
+#define profile_idle_start(...) ((void)0)
+#define profile_idle_end(...) ((void)0)
+#define profile_lapsed_frames(...) ((void)0)
+#define profile_lapsed_msec(...) ((void)0)
+#define profile_seconds_elapsed(...) ((void)0)
+#define profile_texture_start(...) ((void)0)
+#define profile_texture_end(...) ((void)0)
+#endif
 
 #endif // __PROFILE_H

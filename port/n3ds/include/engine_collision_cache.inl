@@ -9,6 +9,7 @@ static struct world_feature_cache {
 static unsigned int world_feature_bytes,world_feature_hits,world_feature_misses,world_feature_verified,world_feature_stamp;
 void n3ds_collision_cache_clear(void)
 {
+ extern void n3ds_collision_layout_clear(void);n3ds_collision_layout_clear();
  extern void n3ds_collision_query_clear(void);n3ds_collision_query_clear();
  extern void n3ds_stationary_pose_clear(void);n3ds_stationary_pose_clear();
  for(unsigned int i=0;i<COLLISION_CACHE_SLOTS;++i)free(world_feature_cache[i].data);

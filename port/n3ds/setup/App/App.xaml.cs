@@ -61,13 +61,13 @@ public sealed class SetupWindow : Window
         card.Children.Add(source);
         card.Children.Add(Row(Button("Choose XISO…", async () => await PickFile(source, ".iso", ".xiso")),
             Button("Choose maps folder…", async () => await PickFolder(source))));
-        card.Children.Add(Text("Requires Halo: Combat Evolved for the original Xbox — English North American retail release. No prototype or debug version needed."));
+        card.Children.Add(Text("Use your Halo: Combat Evolved Xbox disc dump. USA original, Rev 1 and Rev 2 are supported; other discs are untested."));
         layout.Children.Add(card);
         var pc = new StackPanel { Spacing = 10 };
         pc.Children.Add(pcSource);
         pc.Children.Add(Row(Button("Choose PC folder...", async () => await PickFolder(pcSource)), Button("Clear PC folder", () => pcSource.Text = "")));
         pc.Children.Add(Text("Optional: add retail Halo PC multiplayer maps. Custom Edition and MCC are not supported. To add PC maps to an existing installation, leave the Xbox source empty."));
-        layout.Children.Add(pc);
+        layout.Children.Add(new Expander { Header = "PC options (optional)", Content = pc, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch });
         var target = new StackPanel { Spacing = 10 };
         target.Children.Add(destination); target.Children.Add(Button("Choose destination…", async () => await PickFolder(destination)));
         target.Children.Add(Text("Installs the game and checks its files. Existing saves and other apps are kept. No formatting."));
@@ -144,9 +144,9 @@ public sealed class SetupWindow : Window
                 var result = await Task.Run(() => Installer.Run(options, reports, cancellation.Token));
                 File.AppendAllText(log, System.Text.Json.JsonSerializer.Serialize(result) + "\nPASS\n");
                 message.Title = "Your files are ready";
-                message.Severity = result.DspPresent ? InfoBarSeverity.Success : InfoBarSeverity.Warning;
+                message.Severity = result.DspPresent && result.CompatibilityWarning.Length == 0 ? InfoBarSeverity.Success : InfoBarSeverity.Warning;
                 string done = options.LauncherOnly ? "Launcher updated. " : $"{result.Maps} maps ready ({result.AlreadyCorrect} already correct). ";
-                message.Message = done + (result.PcFiles > 0 ? $"{result.PcFiles} PC files ready. " : "") + "Safely eject the SD card, insert it in your Nintendo 3DS or 2DS, then open Halo3DS in the Homebrew Launcher." +
+                message.Message = (result.CompatibilityWarning.Length > 0 ? result.CompatibilityWarning + "\n\n" : "") + done + (result.PcFiles > 0 ? $"{result.PcFiles} PC files ready. " : "") + "Safely eject the SD card, insert it in your Nintendo 3DS or 2DS, then open Halo3DS in the Homebrew Launcher." +
                     (result.DspPresent ? "" : "\n\nAudio needs one console step: open Rosalina with L + D-pad Down + SELECT → Miscellaneous options → Dump DSP firmware. Setup does not include Nintendo firmware.");
                 message.IsOpen = true;
             }

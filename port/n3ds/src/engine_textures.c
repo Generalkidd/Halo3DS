@@ -1023,5 +1023,5 @@ int n3ds_engine_bitmap_bind_plasma(unsigned int stage,const struct bitmap_data *
     unsigned int total=texture_total_budget();
     if(texture_bytes>total) return 0;
     void *variant=n3ds_gpu_texture_plasma(source,total-texture_bytes);
-    return variant && n3ds_gpu_texture_bind_sampler(stage,variant,flags);
+    return variant && n3ds_gpu_texture_prepare_bind(stage,variant,flags);
 }

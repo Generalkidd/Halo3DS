@@ -35,6 +35,8 @@
 #include "game/game.h"
 #include "items/weapons.h"
 #include "physics/collisions.h"
+#include "engine_input.h"
+#include "engine_fog_policy.inl"
 void set_window_camera_values(struct render_window *window,const struct observer_result *observer);
 void n3ds_log(const char *message);
 void texture_cache_flush(void);
@@ -67,6 +69,7 @@ void n3ds_object_profile(unsigned int stage,long long ticks)
 struct mission_batch {
     struct structure_material *material; const struct shader *shader;short lightmap_index;
     real_point3d center;real_vector3d extent;
+    unsigned char reject_plane[2];
     struct triangle_buffer water_triangles;
     unsigned long clusters[MAXIMUM_CLUSTERS_PER_STRUCTURE/32];int clusters_valid;
 };
@@ -326,14 +329,26 @@ static void flame_stream_draw(void)
 /* A box is outside only when its nearest point is beyond one side plane.
  * The per-eye rasterizer frustum already includes the stereo projection shift.
  * Large boxes spanning the frustum are retained; no centroid-only rejection. */
-static int batch_outside_plane(const struct mission_batch *batch,const struct render_frustum *frustum)
+/* Kevin Boggs: batch_plane_rejects */
+static int batch_plane_rejects(const struct mission_batch *batch,const real_plane3d *p,const real_vector3d *absolute_normal)
 {
-    for(int plane=0;plane<6;++plane) {
-        if(plane==4)continue; /* Keep near-plane intersections; reject fully distant batches. */
-        const real_plane3d *p=frustum->world_planes+plane;
-        real distance=dot_product3d(&p->n,(const real_vector3d *)&batch->center)-p->d;
-        real radius=fabsf(p->n.i)*batch->extent.i+fabsf(p->n.j)*batch->extent.j+fabsf(p->n.k)*batch->extent.k;
-        if(distance-radius>.01f) return plane;
+    real distance=dot_product3d(&p->n,(const real_vector3d *)&batch->center)-p->d;
+    real radius=absolute_normal->i*batch->extent.i+absolute_normal->j*batch->extent.j+absolute_normal->k*batch->extent.k;
+    return distance-radius>.01f;
+}
+static int batch_outside_plane(struct mission_batch *batch,const struct render_frustum *frustum,
+                               const real_vector3d absolute_normals[6],unsigned int eye)
+{
+    /* The previous rejection is only an ordering hint. Retest against this
+     * eye's current frustum, including after teleport, BSP change or camera cut. */
+    unsigned int hint=batch->reject_plane[eye];
+    if(hint<6 && hint!=4 && batch_plane_rejects(batch,frustum->world_planes+hint,absolute_normals+hint))return hint;
+    for(unsigned int plane=0;plane<6;++plane) {
+        if(plane==4 || plane==hint)continue;
+        if(batch_plane_rejects(batch,frustum->world_planes+plane,absolute_normals+plane)) {
+            batch->reject_plane[eye]=(unsigned char)plane;
+            return plane;
+        }
     }
     return NONE;
 }
@@ -367,12 +382,19 @@ static long long mission_environment_ticks;
 static void draw_mission_environment(const void *context)
 {
     const struct rasterizer_window_begin_parameters *window=context;
+    real_vector3d absolute_normals[6];
+    unsigned int eye=n3ds_gpu_stereo_view();
+    for(unsigned int plane=0;plane<6;++plane) {
+        absolute_normals[plane].i=fabsf(window->frustum.world_planes[plane].n.i);
+        absolute_normals[plane].j=fabsf(window->frustum.world_planes[plane].n.j);
+        absolute_normals[plane].k=fabsf(window->frustum.world_planes[plane].n.k);
+    }
     long long start=n3ds_engine_ticks();
     rasterizer_environment_diffuse_textures_begin();
     for(long b=0;b<count;++b) {
         struct structure_material *m=batches[b].material;
         if(!batch_cluster_visible(batches+b)) {++batch_culled;continue;}
-        int outside=batch_outside_plane(batches+b,&window->frustum);
+        int outside=batch_outside_plane(batches+b,&window->frustum,absolute_normals,eye);
         if(outside!=NONE) {
             ++batch_culled;
             if(native_visibility_verify && render.frame_index%300==0) {
@@ -440,6 +462,7 @@ static int prepare(void)
             CHECK(count<batch_capacity && m->surface_count>0 && m->first_surface_index>=0);
             CHECK(m->surface_count<=bsp->surfaces.count && m->first_surface_index<=bsp->surfaces.count-m->surface_count);
             struct mission_batch *batch=batches+count++;
+            batch->reject_plane[0]=batch->reject_plane[1]=0;
             batch->material=m;batch->shader=tag_get(group,m->shader.index);batch->lightmap_index=lightmap->bitmap_index;
             memset(&batch->water_triangles,0,sizeof(batch->water_triangles));
             if(group=='swat') {
@@ -593,14 +616,6 @@ int n3ds_engine_mission_render(long unit_index,long time)
         long long prep_visibility_start=n3ds_engine_ticks();
 #endif
         structure_visibility_find_camera(&render.camera);
-        struct render_fog distance_fog={0};
-        const struct sky *fog_sky=scenario_get_sky((short)render.visible_sky_index);
-        if(fog_sky) {
-            distance_fog.atmospheric_color=fog_sky->outdoor_fog.color;
-            distance_fog.atmospheric_maximum_density=fog_sky->outdoor_fog.maximum_density;
-            distance_fog.atmospheric_maximum_distance=fog_sky->outdoor_fog.opaque_distance;
-        }
-        n3ds_engine_fog_prepare(&render.camera,&window.camera,&distance_fog,render.visible_sky_index!=NONE);
         /* Original visibility/projection must agree with the off-axis GPU view. */
         real_rectangle2d bounds;
         bounds.y0=-1;bounds.y1=1;
@@ -635,7 +650,7 @@ int n3ds_engine_mission_render(long unit_index,long time)
      * glow movement. The second eye reuses the first eye's updated state. */
     render.time_delta_since_tick_sec=eye==(stereo?1:0)?frame.dt:0.f;
     render_sky();
-    n3ds_gpu_fog_backdrop();
+
     n3ds_object_profile(0,n3ds_engine_ticks()-object_stamp);object_stamp=n3ds_engine_ticks();
     if(eye==(stereo?1:0)) {
         struct render_camera eye_camera=render.camera;
@@ -682,6 +697,7 @@ int n3ds_engine_mission_render(long unit_index,long time)
     stamp[6]=n3ds_engine_ticks();
     } /* eye views */
     render.time_delta_since_tick_sec=frame.dt;
+#ifndef HALO_N3DS_STRIP_DIAGNOSTICS
     profile[1]+=view_cost[0];profile[2]+=view_cost[1];profile[3]+=view_cost[2];
     profile[4]+=stamp[5]-stamp[4];profile[5]+=stamp[6]-stamp[5];
     profile[0]+=stamp[4]-stamp[0]-view_cost[0]-view_cost[1]-view_cost[2];
@@ -750,5 +766,6 @@ int n3ds_engine_mission_render(long unit_index,long time)
             window.camera.up.i,window.camera.up.j,window.camera.up.k,window.camera.vertical_field_of_view);
         n3ds_log(message);
     }
+#endif
     return 0;
 }

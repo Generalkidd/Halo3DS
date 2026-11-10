@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /*
 NETWORK_SERVER_MANAGER.C
 
@@ -454,6 +455,7 @@ symbols in this file:
 #ifdef HALO_N3DS
 #include "engine_cache.h"
 #include "engine_network.h"
+#include "engine_bots.h"
 #endif
 #include "bungie_net/common/message_header.h"
 #include "bungie_net/network/transport.h"
@@ -767,6 +769,10 @@ static void network_game_server_dump(
 struct network_game_server network_game_server_memory_do_not_use_directly;
 boolean network_game_server_memory_do_not_use_directly_in_use = FALSE;
 
+#ifdef HALO_N3DS
+static int wireless_bot_count,wireless_bot_difficulty=1;
+#endif
+
 /* ---------- public code */
 
 struct network_game_server *network_game_server_create(
@@ -780,6 +786,9 @@ struct network_game_server *network_game_server_create(
 		0xE0,
 		!network_game_server_memory_do_not_use_directly_in_use);
 	network_game_server_memory_do_not_use_directly_in_use = TRUE;
+#ifdef HALO_N3DS
+    wireless_bot_count=0;wireless_bot_difficulty=1;
+#endif
 
 	csmemset(server, 0, sizeof(*server));
 
@@ -1225,6 +1234,53 @@ void network_game_server_close_game(
 	return;
 }
 
+#ifdef HALO_N3DS
+static void network_bots_prepare(struct network_game_server *server);
+/* Kevin Boggs: n3ds_network_bot_options - host-only pregame choices, never active co-op. */
+int n3ds_network_bot_options(int count_delta,int difficulty_delta,int *count,int *difficulty)
+{
+    struct network_game_server *server=global_network_game_server_get();
+    if(!server || server->state!=_network_game_server_state_pregame ||
+       server->sent_start_game_message ||
+       n3ds_network_campaign_level(server->game.map.name)>=0)return 0;
+    wireless_bot_count=(wireless_bot_count+4+count_delta)%4;
+    wireless_bot_difficulty=(wireless_bot_difficulty+3+difficulty_delta)%3;
+    if(count)*count=wireless_bot_count;if(difficulty)*difficulty=wireless_bot_difficulty;
+    if(count_delta || difficulty_delta){
+        /* Stop auto-start while the host edits the roster. A starts it again. */
+        network_game_server_pause_countdown(server,TRUE);
+        network_bots_prepare(server);
+        network_game_server_send_game_data_pregame(server);
+    }
+    return 1;
+}
+/* Kevin Boggs: network_bots_prepare - publish host-owned spare-controller profiles in normal settings. */
+static void network_bots_prepare(struct network_game_server *server)
+{
+    int host=network_game_client_get_local_machine_index();
+    if(host<0 || host>=4)return;
+    /* Remove the previous round's bots, including when returning to Co-op. */
+    for(int i=0;i<16;++i)if(network_player_is_valid(&server->game.players[i]) &&
+        server->game.players[i].machine_index==host && server->game.players[i].controller_index>0){
+        network_game_invalidate_player(&server->game.players[i]);--server->game.player_count;
+    }
+    if(n3ds_network_campaign_level(server->game.map.name)>=0)return;
+    int teams[2]={0};
+    for(int i=0;i<16;++i)if(network_player_is_valid(&server->game.players[i]) &&
+        server->game.players[i].team_index>=0 && server->game.players[i].team_index<2)
+        ++teams[(int)server->game.players[i].team_index];
+    for(int i=0;i<wireless_bot_count;++i){
+        struct network_player player={0};
+        player.name[0]='B';player.name[1]='o';player.name[2]='t';player.name[3]=' ';player.name[4]='1'+i;
+        player.primary_color_index=(short)(i+2);player.machine_index=(char)host;
+        player.controller_index=(char)(i+1);player.player_list_index=NONE;
+        player.team_index=teams[0]<=teams[1]?0:1;++teams[(int)player.team_index];
+        if(!network_game_add_player(&server->game,&player))break;
+    }
+    n3ds_bots_set_menu_difficulty((short)wireless_bot_difficulty);
+}
+#endif
+
 boolean network_game_server_start_network_game(
 	struct network_game_server *server)
 {
@@ -1238,6 +1294,9 @@ boolean network_game_server_start_network_game(
 		struct message_server_begin_game begin_game = { 0 };
 		void *message;
 
+#ifdef HALO_N3DS
+        network_bots_prepare(server);
+#endif
 		csmemcpy(&game_settings, &server->game, sizeof(game_settings));
 		if (((message = create_network_game_message(
 			_message_server_game_settings_update,
@@ -1669,6 +1728,10 @@ boolean network_game_server_add_player_to_game(
 	match_assert(NETWORK_SERVER_MANAGER_FILE, 0x46D, machine);
 	match_assert(NETWORK_SERVER_MANAGER_FILE, 0x46E, player);
 
+	#ifdef HALO_N3DS
+    /* One human controller per console; spare host slots belong to bots. */
+    if(player->controller_index!=0)return FALSE;
+#endif
 	if (machine->machine_index == player->machine_index)
 	{
 		player->team_index = (char)network_game_server_next_team_index;
@@ -2268,6 +2331,7 @@ void network_game_server_change_map_name(
 	  server->game.maximum_players=campaign?2:MAXIMUM_NETWORK_PLAYER_COUNT;
 	  server->game.maximum_teams=campaign?1:NUMBER_OF_MULTIPLAYER_TEAMS;
 	}
+    network_bots_prepare(server);
 #endif
 
 	if (!network_game_server_send_game_data_pregame(server))
@@ -2288,6 +2352,9 @@ void network_game_server_change_game_variant(
 		server->state == _network_game_server_state_pregame);
 
 	csmemcpy(&server->game.variant, variant, sizeof(server->game.variant));
+#ifdef HALO_N3DS
+    network_bots_prepare(server);
+#endif
 
 	if (!network_game_server_send_game_data_pregame(server))
 	{
@@ -3430,6 +3497,9 @@ boolean network_game_server_reset_to_pregame(
 			network_game_reset_for_next_round(&server->game, FALSE);
 			if (network_game_server_setup_game_from_playlist(server))
 			{
+#ifdef HALO_N3DS
+                network_bots_prepare(server);
+#endif
 				struct network_game game_settings;
 
 				csmemcpy(&game_settings, &server->game, sizeof(server->game));

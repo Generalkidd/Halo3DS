@@ -10,6 +10,10 @@
 #define MAX(a,b) ((a)>(b)?(a):(b))
 #define MAXIMUM_BSP3D_DEPTH 128
 typedef float real;
+typedef unsigned char boolean;
+#define TRUE 1
+#define FALSE 0
+typedef struct {float x,y;} real_point2d;
 typedef struct { float x,y,z; } real_point3d;
 typedef struct { struct { float i,j,k; } n; float d; } real_plane3d;
 struct block { void *address; };
@@ -108,6 +112,28 @@ int main(void)
         assert(!memcmp(ca,cb,sizeof(ca)) && !memcmp(a,b,sizeof(a)));
         if(trial==24)native_feature_stamp=0xffff0000u;
     }
+    /* Exact keys, interleaved queries, hash collisions and rollover. A new
+     * generation must not inherit visits even at the same map/vertex address. */
+    real_point2d center={1.f,2.f};
+    unsigned int generation=native_surface_begin();
+    assert(!native_surface_repeated(generation,42,0,0,&center));
+    assert(native_surface_repeated(generation,42,0,0,&center));
+    assert(!native_surface_repeated(generation,42,1,0,&center));
+    assert(!native_surface_repeated(generation,42,1,1,&center));
+    center.x=3.f;assert(!native_surface_repeated(generation,42,1,1,&center));
+    unsigned int next=native_surface_begin();
+    assert(!native_surface_repeated(next,42,1,1,&center));
+    assert(!native_surface_repeated(generation,42,1,1,&center));
+    long collision=43;
+    while((((unsigned int)collision*2654435761u)>>24)!=((42u*2654435761u)>>24))++collision;
+    assert(!native_surface_repeated(generation,collision,1,1,&center));
+    assert(!native_surface_repeated(generation,42,1,1,&center));
+    native_surface_generation=~0u;generation=native_surface_begin();assert(generation==1);
+    assert(!native_surface_repeated(generation,42,1,1,&center));
+    center.x=0.f;assert(!native_surface_repeated(generation,42,1,1,&center));
+    center.x=-0.f;assert(!native_surface_repeated(generation,42,1,1,&center));
+    assert(native_surface_repeated(generation,42,1,1,&center));
+    puts("PASS: query-local surface reuse, projection/center changes, nested generation, hash collision and rollover");
     n3ds_collision_query_clear();assert(!native_query_trees[0].bsp);
     printf("PASS: 100000 exact ordered traversals, %u cache hits, feature saturation/rollover\n",hits);
     return 0;

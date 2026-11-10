@@ -7,17 +7,10 @@ This project also aims to support most of the 3DS's native features including 3D
 ## Playing
 
 You will need a modded 3DS/2DS console, a FAT32 SD card with at least 4 GB of free space and your own game files.
-The default upstream release supports the original Xbox Halo CE ISO. PC/MCC
-maps are not supported by that release.
-
-The `local-integration` branch also has an **experimental unified New 3DS**
-launcher for Xbox campaign and PC retail v7 local multiplayer. Its
-[two-ISO installer](port/n3ds/setup/Unified/README.md) places one launcher on
-the SD card. The campaign difficulty screen can enable extra PC weapons and a
-Rocket Warthog while preserving the original Xbox map files. A New 3DS XL
-test completed a six-bot Timberland match on an earlier build; the current
-launcher and campaign progression still need device checks. The default
-upstream release remains Xbox-only.
+The current `dev` test build supports Xbox campaign and multiplayer, optional
+retail PC multiplayer maps, and local wireless multiplayer/co-op. PC maps are
+optional and do not replace the Xbox game data. Custom Edition and MCC maps
+are not supported.
 
 ## Setup
 
@@ -35,13 +28,13 @@ setup instructions follow.
 4. Safely eject the card, put it back in your console, and launch **Halo3DS**
    from the Homebrew Launcher. The first load may take a while.
 
-Use the English North American retail Xbox release. If you're using a maps
+USA original, Rev 1 and Rev 2 Xbox discs are supported. Other recognizable
+Xbox releases can be tried with a compatibility warning. If you're using a maps
 folder, keep its matching `default.xbe` in the parent folder. If setup can't
 find it, select it under **Additional options > HUD compatibility file**.
 No debug executable is needed.
 
-The updated integration setup tools also have an optional **PC multiplayer maps**
-folder field. Choose the `maps` folder from your installed retail Halo PC game
+Open **PC options (optional)** to add retail PC multiplayer maps. Choose the `maps` folder from your installed retail Halo PC game
 (not Custom Edition or MCC). To add it to an existing SD installation, leave
 the Xbox source empty. PC files are optional; Xbox-only setup still works.
 

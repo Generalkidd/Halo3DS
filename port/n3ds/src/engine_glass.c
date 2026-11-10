@@ -27,7 +27,6 @@ struct glass_shader {
 };
 _Static_assert(offsetof(struct glass_shader,reflection_type)==138,"Glass ABI");
 _Static_assert(offsetof(struct glass_shader,detail_map)==364,"Glass detail ABI");
-extern struct rasterizer_window_begin_parameters global_window_parameters;
 boolean rasterizer_set_texture_direct(short,long,short);
 void n3ds_log(const char *);
 #define CUBE_SIZE 32
@@ -188,7 +187,7 @@ static int glass_native(const struct glass_shader *g,short permutation,
 
 void n3ds_glass_model_draw(const struct shader *shader,short permutation,
     const struct rasterizer_model_begin_parameters *p,const void *data,unsigned int count,
-    short type,const unsigned short *indices,unsigned int index_count)
+    short type,const unsigned short *indices,unsigned int index_count,const struct native_model_view *frame_view)
 {
     const struct n3ds_cache_view *view=n3ds_engine_cache_view(0);
     const struct glass_shader *g=(const void *)shader;
@@ -240,7 +239,7 @@ void n3ds_glass_model_draw(const struct shader *shader,short permutation,
                     for(int c=0;c<3;++c) normal.n[c]+=n.n[c]*vertex->node_weights[k];
                 }
                 for(int c=0;c<3;++c) {
-                    eye.n[c]=global_window_parameters.camera.position.n[c]-v[i].position[c];
+                    eye.n[c]=frame_view->camera_position.n[c]-v[i].position[c];
                     n2+=normal.n[c]*normal.n[c];e2+=eye.n[c]*eye.n[c];
                 }
                 assert(n2>1e-12f && e2>1e-12f);

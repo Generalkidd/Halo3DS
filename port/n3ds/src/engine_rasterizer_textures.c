@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /* Native owners of the original rasterizer's bitmap binding entrypoints.
  * Nonblocking APIs preserve Halo's TRUE-means-pending convention. */
 #include "cseries.h"
@@ -44,7 +45,7 @@ boolean rasterizer_set_texture_bitmap_data(short stage, const struct bitmap_data
     /* The tag data remains mutable; const describes callers' image metadata.
      * Cache bookkeeping is owned by the native map's bitmap resource cache. */
     resource = texture_cache_bitmap_load((struct bitmap_data *)bitmap);
-    return resource && n3ds_gpu_texture_bind(stage, resource);
+    return resource && n3ds_gpu_texture_prepare_bind(stage, resource,~0u);
 }
 void *n3ds_engine_bitmap_resource(int group_index,int index)
 {
@@ -60,7 +61,7 @@ int n3ds_engine_bitmap_bind_sampler(unsigned int stage,const struct bitmap_data 
 {
     if(!bitmap || stage>=3 || (flags&~31u) || (stage && (flags&NATIVE_SAMPLER_PROJECTIVE))) return 0;
     void *resource=texture_cache_bitmap_load((struct bitmap_data *)bitmap);
-    return resource && n3ds_gpu_texture_bind_sampler(stage,resource,flags);
+    return resource && n3ds_gpu_texture_prepare_bind(stage,resource,flags);
 }
 int n3ds_engine_bitmap_dimensions(int group_index,int index,int size[2])
 {

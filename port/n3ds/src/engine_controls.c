@@ -3,6 +3,7 @@
 #include "engine_controls.h"
 #include "engine_map_format.h"
 #include "engine_wireless.h"
+#include "engine_network.h"
 #include "engine_files.h"
 #include "interface/ui_widget.h"
 #include "main/main.h"
@@ -17,6 +18,7 @@ int n3ds_pc_map_available(const char *);
 
 void n3ds_log(const char *message);
 void n3ds_ui_controls_back(void);
+static void local_match_remember(const char *,const struct game_variant *,int,int,int);
 static const struct native_control_settings defaults={100,100,0,0,0,0,0,1,0,0,NATIVE_QUALITY_BALANCED};
 static struct native_control_settings settings={100,100,0,0,0,0,0,1,0,0,NATIVE_QUALITY_BALANCED},opened_settings;
 static int initialized,modal,main_route,selected,save_error,repeat_ticks,swallow;
@@ -27,7 +29,7 @@ static const char backup[]="t:\\controller-settings.bak";
 struct settings_file {unsigned int magic,version;struct native_control_settings settings;unsigned int checksum;};
 
 static int valid(const struct native_control_settings *s)
-{return s->cstick>=25 && s->cstick<=300 && s->touch>=25 && s->touch<=300 && s->xbox_buttons<=1 && s->swap_shoulders<=1 && s->high_textures<=1 && s->swap_xy<=1 && s->show_fps<=1 && s->decals<=1 && s->swap_ab<=1 && s->circle_pad_pro<=1 && s->quality<=NATIVE_QUALITY_QUALITY;}
+{return s->cstick>=25 && s->cstick<=300 && s->touch>=25 && s->touch<=300 && s->xbox_buttons<=1 && s->swap_shoulders<=1 && s->high_textures<=1 && s->swap_xy<=1 && s->show_fps<=1 && s->decals<=1 && s->swap_ab<=1 && s->circle_pad_pro<=1 && s->quality<=NATIVE_QUALITY_PERFORMANCE;}
 /* Kevin Boggs: checksum_bytes - New3DS integration. */
 static unsigned int checksum_bytes(const void *data,unsigned int size)
 {
@@ -103,6 +105,8 @@ int n3ds_controls_decals(void){n3ds_controls_initialize();return settings.decals
 int n3ds_controls_circle_pad_pro(void){return settings.circle_pad_pro!=0;}
 /* Kevin Boggs: n3ds_controls_quality - cosmetic policy, never simulation authority. */
 int n3ds_controls_quality(void){return settings.quality==NATIVE_QUALITY_QUALITY;}
+/* Kevin Boggs: n3ds_controls_performance - explicit cosmetic reductions on either model. */
+int n3ds_controls_performance(void){return settings.quality==NATIVE_QUALITY_PERFORMANCE;}
 static unsigned int exchange(unsigned int held,unsigned int a,unsigned int b)
 {unsigned int result=held&~(a|b);if(held&a)result|=b;if(held&b)result|=a;return result;}
 unsigned int n3ds_controls_buttons(unsigned int held,int original,int gameplay)
@@ -159,12 +163,19 @@ static void adjust(int delta)
  else if(field==7)settings.show_fps^=1;
  else if(field==8)settings.decals^=1;
  else if(field==9)settings.circle_pad_pro^=1;
- else if(field==10)settings.quality=delta>0?NATIVE_QUALITY_QUALITY:NATIVE_QUALITY_BALANCED;
+ else if(field==10)settings.quality=(settings.quality+3+delta)%3;
  save_error=0;
 }
 void n3ds_controls_filter(struct native_input_sample *s)
 {
  unsigned int held=s->held,fresh=held&~previous_keys;previous_keys=held;
+ if(!modal && !swallow && n3ds_ui_wireless_lobby_active() &&
+    n3ds_network_bot_options(0,0,NULL,NULL) && (fresh&NATIVE_KEY_TOUCH) &&
+    s->touch_x>=16 && s->touch_x<304 && s->touch_y>=80 && s->touch_y<152){
+  int direction=s->touch_x<160?-1:1;
+  n3ds_network_bot_options(s->touch_y<116?direction:0,s->touch_y>=116?direction:0,NULL,NULL);
+  swallow=1;memset(s,0,sizeof(*s));return;
+ }
  int pause=n3ds_ui_pause_menu_active();
  if(!modal && !swallow && pause && ((fresh&NATIVE_KEY_SELECT) ||
     ((fresh&NATIVE_KEY_TOUCH) && s->touch_x>=24 && s->touch_x<296 && s->touch_y>=202 && s->touch_y<232)))n3ds_controls_open(0);
@@ -194,6 +205,10 @@ void n3ds_controls_draw(void)
 {
  if(modal)n3ds_gpu_controls_draw(&settings,selected,n3ds_input_platform_original_model(),save_error);
  else if(n3ds_ui_pause_menu_active())n3ds_gpu_controls_entry();
+ else if(n3ds_ui_wireless_lobby_active()){
+  int bots,difficulty;
+  if(n3ds_network_bot_options(0,0,&bots,&difficulty))n3ds_gpu_wireless_bots(bots,difficulty);
+ }
 }
 #ifdef HALO_N3DS_PC_LOCAL_MENU
 static int pc_menu_open,pc_menu_page,pc_menu_field,pc_menu_map,pc_menu_mode,pc_menu_bots,pc_menu_difficulty=1;
@@ -318,6 +333,7 @@ void n3ds_pc_local_menu_filter(struct native_input_sample *sample)
    n3ds_bots_set_menu_count((short)pc_menu_bots);
    n3ds_bots_set_menu_difficulty((short)pc_menu_difficulty);
    pc_match_weapon_override=pc_menu_weapon_set==11?1:pc_menu_weapon_set==12?2:0;
+   local_match_remember(map,&variant,pc_menu_bots,pc_menu_difficulty,pc_menu_weapon_set);
    snprintf(message,sizeof(message),"PC LOCAL MENU: queued %s mode=%s bots=%d difficulty=%d weapons=%d vehicles=%d",map,pc_menu_modes[pc_menu_mode],pc_menu_bots,pc_menu_difficulty,pc_menu_weapon_set,variant.universal_variant.vehicle_set);
    n3ds_log(message);pc_menu_open=0;n3ds_pc_preview_close();pc_menu_swallow=1;
   }
@@ -373,6 +389,26 @@ static int local_match_open,local_match_swallow,local_match_row,local_match_erro
 static int local_match_bots,local_match_difficulty;
 static int local_match_gear,local_match_preview_map,local_match_pc,local_match_weapons;
 static unsigned int local_match_previous;
+static struct {
+ struct game_variant variant;
+ char map[96];
+ int valid,pending,bots,difficulty,weapons;
+} last_local_match;
+/* Kevin Boggs: local_match_remember - commit the successful launch, not cancelled edits. */
+static void local_match_remember(const char *map,const struct game_variant *variant,int bots,int difficulty,int weapons)
+{
+ last_local_match.variant=*variant;
+ snprintf(last_local_match.map,sizeof(last_local_match.map),"%s",map);
+ last_local_match.bots=bots;last_local_match.difficulty=difficulty;
+ last_local_match.weapons=weapons;last_local_match.valid=1;last_local_match.pending=0;
+}
+/* Kevin Boggs: n3ds_local_match_menu_queue_reopen - restore only a successfully launched match. */
+int n3ds_local_match_menu_queue_reopen(void)
+{
+ if(!last_local_match.valid || n3ds_wireless_active())return 0;
+ last_local_match.pending=1;
+ return 1;
+}
 /* Kevin Boggs: n3ds_local_match_menu_active - native match options modal. */
 int n3ds_local_match_menu_active(void) { return local_match_open; }
 /* Kevin Boggs: n3ds_local_match_menu_open - keep the selected Xbox or PC map and playlist. */
@@ -414,6 +450,14 @@ static void local_match_adjust(int delta)
 void n3ds_local_match_menu_filter(struct native_input_sample *sample)
 {
  unsigned int held=sample->held,fresh=held&~local_match_previous;local_match_previous=held;
+ if(last_local_match.pending && n3ds_wireless_active())last_local_match.pending=0;
+ if(last_local_match.pending && main_menu_is_active() && ui_widgets_active() &&
+    n3ds_local_match_menu_open(last_local_match.map,&last_local_match.variant,0)){
+  last_local_match.pending=0;
+  local_match_bots=last_local_match.bots;local_match_difficulty=last_local_match.difficulty;
+  local_match_weapons=last_local_match.weapons;
+  memset(sample,0,sizeof(*sample));return;
+ }
  if(local_match_swallow){if(!held)local_match_swallow=0;memset(sample,0,sizeof(*sample));return;}
  if(!local_match_open)return;
  if(!main_menu_is_active() || !ui_widgets_active() || n3ds_wireless_active()){
@@ -459,6 +503,7 @@ void n3ds_local_match_menu_filter(struct native_input_sample *sample)
   if(!n3ds_main_queue_solo_multiplayer(local_match_map,&launch,0)){
    local_match_error=1;n3ds_log("LOCAL MATCH: map unavailable or match could not be queued");
   }else{
+   local_match_remember(local_match_map,&local_match_variant,local_match_bots,local_match_difficulty,local_match_weapons);
    n3ds_bots_set_menu_count((short)local_match_bots);
    n3ds_bots_set_menu_difficulty((short)local_match_difficulty);
 #ifdef HALO_N3DS_PC_LOCAL_MENU
@@ -506,7 +551,8 @@ int n3ds_controls_tests(void)
  settings=defaults;if(!settings.decals || n3ds_controls_decals() || settings.swap_xy || settings.swap_ab ||
                       n3ds_controls_buttons(NATIVE_KEY_X|NATIVE_KEY_A,0,1)!=(NATIVE_KEY_X|NATIVE_KEY_A))ok=0;
  settings.quality=NATIVE_QUALITY_QUALITY;if(!n3ds_controls_decals())ok=0;
- settings.quality=NATIVE_QUALITY_PERFORMANCE;if(valid(&settings))ok=0;
+ settings.quality=NATIVE_QUALITY_PERFORMANCE;if(!valid(&settings) || !n3ds_controls_performance() || n3ds_controls_quality() || n3ds_controls_decals())ok=0;
+ settings.quality=3;if(valid(&settings))ok=0;
  settings.quality=NATIVE_QUALITY_BALANCED;
  settings.decals=0;if(n3ds_controls_decals() || !valid(&settings))ok=0;
  settings.decals=2;if(valid(&settings))ok=0;

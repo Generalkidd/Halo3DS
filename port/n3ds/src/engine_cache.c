@@ -544,6 +544,15 @@ void n3ds_engine_tags_unload(void)
     }
 }
 
+/* Kevin Boggs: n3ds_engine_sound_read_path */
+const char *n3ds_engine_sound_read_path(void)
+{
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_UI
+    if(n3ds_pc_tags_active() || n3ds_pc_tags_loaded()) return NULL;
+#endif
+    return native_tags.tags && native_map[0] ? native_map : NULL;
+}
+
 boolean n3ds_engine_cache_read(unsigned long offset, unsigned long bytes, void *destination)
 {
     boolean result=FALSE;

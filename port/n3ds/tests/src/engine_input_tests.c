@@ -3,6 +3,7 @@
 #include "input/input.h"
 #include "engine_input.h"
 #include "engine_controls.h"
+#include "interface/event_manager.h"
 void n3ds_log(const char *message);
 static unsigned int test_touch(unsigned int x,unsigned int y)
 { return y>=176 && y<232 && x>=236 && x<312?2:0; }
@@ -164,6 +165,33 @@ int halo_engine_input_tests(void)
     sample.held=NATIVE_KEY_A|NATIVE_KEY_ZL|NATIVE_KEY_ZR|NATIVE_KEY_L;
     n3ds_engine_input_sample(&sample);
     CHECK(pad->buttons[0]==1 && pad->buttons[6]==1 && pad->buttons[7]==1 && pad->buttons[14]==1);
+    /* A held resume modifier must not discard a new confirmation event. */
+    {
+        struct event_record event;
+        event_manager_initialize();
+        sample.held=0;n3ds_engine_input_sample(&sample);
+        sample.held=NATIVE_KEY_R;n3ds_engine_input_sample(&sample);
+        event_manager_update();
+        CHECK(get_next_event(&event,0) && event.type==3 &&
+            event.data.button.index==_gamepad_binary_button_right_thumb && event.data.button.value==1);
+        CHECK(!get_next_event(&event,0));
+        sample.held|=NATIVE_KEY_A;n3ds_engine_input_sample(&sample);
+        event_manager_update();
+        CHECK(get_next_event(&event,0) && event.type==3 &&
+            event.data.button.index==_gamepad_analog_button_a && event.data.button.value==1);
+        CHECK(get_next_event(&event,0) && event.type==3 &&
+            event.data.button.index==_gamepad_binary_button_right_thumb && event.data.button.value==2);
+        CHECK(!get_next_event(&event,0) && !get_next_event(&event,1));
+        event_manager_suppress(TRUE);event_manager_update();
+        CHECK(!get_next_event(&event,0));
+        event_manager_suppress(FALSE);event_manager_update();event_manager_flush();
+        CHECK(!get_next_event(&event,0));
+        event_manager_dispose();
+        sample.held=0;n3ds_engine_input_sample(&sample);
+        sample.held=NATIVE_KEY_A|NATIVE_KEY_ZL|NATIVE_KEY_ZR|NATIVE_KEY_L;
+        n3ds_engine_input_sample(&sample);
+        n3ds_log("PASS: menu events preserve R + confirm order, held values, controller isolation, suppression and flush");
+    }
     input_suppress(); CHECK(!memcmp(input_get_gamepad_state(0),&empty,sizeof(empty)));
     input_update(); input_update(); CHECK(input_get_gamepad_state(0)->buttons[0]==1);
     input_deactivate(); n3ds_engine_input_sample(&sample);

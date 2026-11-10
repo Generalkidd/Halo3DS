@@ -14,6 +14,18 @@ header included in hcex build.
 
 #include "math/real_math.h"
 
+/* Diagnostic records have no gameplay ownership. The release experiment
+ * removes both their writes and their allocation; live actor state is intact. */
+#if defined(HALO_N3DS_STRIP_DIAGNOSTICS)
+#define AI_DIAGNOSTICS_ENABLED 0
+#define AI_DEBUG_ONLY(...) ((void)0)
+#define AI_DEBUG_RECORD(index) ((struct actor_debug_info *)0)
+#else
+#define AI_DIAGNOSTICS_ENABLED 1
+#define AI_DEBUG_ONLY(...) ((void)(__VA_ARGS__))
+#define AI_DEBUG_RECORD(index) (&actor_debug_array[(index)])
+#endif
+
 /* ---------- constants */
 
 enum

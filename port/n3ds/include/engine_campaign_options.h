@@ -8,5 +8,8 @@ int n3ds_campaign_extras_enabled(void);
 int n3ds_campaign_options_save_error(void);
 void n3ds_campaign_options_filter(struct native_input_sample *sample);
 int n3ds_ui_difficulty_menu_active(void);
+int n3ds_ui_campaign_menu_active(void);
+const char *n3ds_campaign_checkpoint_info(int *available);
+int n3ds_campaign_checkpoint_resume(void);
 
 #endif

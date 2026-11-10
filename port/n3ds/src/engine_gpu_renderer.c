@@ -29,6 +29,8 @@
 #include "engine_controls.h"
 #include "engine_pc_preview.h"
 void n3ds_log(const char *message);
+#include "engine_render_commands.h"
+#include "engine_render_commands.inl"
 
 /* Temporary hardware diagnosis: retain the normal rendering path and flush
  * only its first three loading submissions to locate an early GPU stall. */
@@ -85,24 +87,31 @@ static int eye_right,overlay_stereo;
 static float stereo_level,eye_offset;
 static int diagnostic_mode;
 #include "engine_world_scale.inl"
-void n3ds_gpu_stereo_level(float level) {stereo_level=isfinite(level)?fminf(1,fmaxf(0,level)):0;}
-void n3ds_gpu_stereo_eye(int right,float offset) {eye_right=!!right;eye_offset=offset;}
-void n3ds_gpu_stereo_overlay(int enabled) {overlay_stereo=!!enabled;}
+void n3ds_gpu_stereo_level(float level) {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_VIEW);stereo_level=isfinite(level)?fminf(1,fmaxf(0,level)):0;}
+void n3ds_gpu_stereo_eye(int right,float offset) {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_VIEW);eye_right=!!right;eye_offset=offset;}
+void n3ds_gpu_stereo_overlay(int enabled) {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_VIEW);overlay_stereo=!!enabled;}
 int n3ds_gpu_overlay_other_begin(void)
 {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_VIEW);
     if(!overlay_stereo || !stereo_level || bottom_selected) return 0;
     C3D_FrameDrawOn(right_target);return 1;
 }
-void n3ds_gpu_overlay_other_end(void) {world_target_bind();}
+void n3ds_gpu_overlay_other_end(void) {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_VIEW);world_target_bind();}
 int n3ds_gpu_bottom_owned(void) { return bottom_target!=NULL; }
 void n3ds_gpu_hud_screen(int bottom)
 {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_VIEW);
     bottom_selected=!!bottom;
     world_target_bind();
     C3D_SetScissor(diagnostic_mode==1 && !bottom_selected?GPU_SCISSOR_NORMAL:GPU_SCISSOR_DISABLE,0,0,120,200);
 }
 void n3ds_gpu_hud_screen_restore(void)
-{ world_target_bind(); }
+{
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_VIEW); world_target_bind(); }
 static DVLB_s *shader;
 static shaderProgram_s program;
 static int program_ready, matrix_location, frame_active;
@@ -112,6 +121,7 @@ static int bound_vertex_valid;
 static unsigned long long vertex_buffer_requests,vertex_buffer_reuses;
 int n3ds_gpu_vertex_buffer_bind(const void *data,unsigned int stride,unsigned int attributes,unsigned int permutation)
 {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_STATE);
     if(!data) return 0;
     ++vertex_buffer_requests;
     if(frame_active && bound_vertex_valid && data==bound_vertex_data && stride==bound_vertex_stride &&
@@ -402,15 +412,46 @@ static void model_material_apply(const struct native_model_material *m,int decal
 }
 void n3ds_gpu_model_batch_begin(void)
 {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_STATE);
     if(model_batch_active) svcBreak(USERBREAK_PANIC);
     model_batch_active=1;model_state_valid=0;
 }
 void n3ds_gpu_model_batch_flush(void)
 {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_STATE);
     if(model_state_valid) n3ds_gpu_world_state_restore();
 }
+#ifdef HALO_N3DS_RENDER_COMMANDS
+/* Kevin Boggs: model_boundary_execute */
+static int model_boundary_execute(const void *unused)
+{
+    (void)unused;n3ds_gpu_model_batch_flush();return 1;
+}
+#endif
+/* Kevin Boggs: n3ds_gpu_model_prepare_boundary */
+void n3ds_gpu_model_prepare_boundary(void)
+{
+#ifdef HALO_N3DS_RENDER_COMMANDS
+    if(n3ds_render_commands_recording() && n3ds_render_command_allocate(model_boundary_execute,0))return;
+#endif
+    n3ds_gpu_model_batch_flush();
+}
+#ifdef HALO_N3DS_RENDER_WORKER
+/* Kevin Boggs: model_batch_end_execute */
+static int model_batch_end_execute(const void *unused)
+{
+    (void)unused;n3ds_gpu_model_batch_flush();model_batch_active=0;return 1;
+}
+#endif
 void n3ds_gpu_model_batch_end(void)
 {
+#ifdef HALO_N3DS_RENDER_WORKER
+    if(n3ds_render_commands_recording() && n3ds_render_command_allocate(model_batch_end_execute,0)) {
+        if(!n3ds_render_commands_submit())n3ds_render_commands_flush(N3DS_RENDER_FENCE_STATE);
+        return;
+    }
+#endif
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_STATE);
     n3ds_gpu_model_batch_flush();model_batch_active=0;
 }
 static unsigned char *index_stream;
@@ -524,7 +565,6 @@ static struct native_render_camera current_camera;
 static C3D_Mtx current_projection,current_model_projection;
 static struct native_render_camera first_person_world_camera;
 static int first_person_active,first_person_mask;
-#include "engine_gpu_fog.inl"
 static long long frame_wait_ticks;
 static int frame_sync=1;
 static unsigned int timing_frames;
@@ -545,6 +585,7 @@ static void renderer_diagnostic_initialize(void)
 int n3ds_gpu_frame_active(void) { return frame_active; }
 float n3ds_gpu_command_usage(void)
 {
+    N3DS_RENDER_WAIT();
     u32 *buffer,size,offset;
     GPUCMD_GetBuffer(&buffer,&size,&offset);
     return buffer && size ? (float)offset/size : 0.f;
@@ -553,6 +594,7 @@ void n3ds_gpu_frame_sync(int enabled) { frame_sync=!!enabled; }
 long long n3ds_gpu_frame_wait_ticks(void) { return frame_wait_ticks; }
 void n3ds_gpu_model_stencil_apply(void)
 {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_STATE);
     if(first_person_active) {
         C3D_StencilTest(true,GPU_ALWAYS,1,1,1);
         C3D_StencilOp(GPU_STENCIL_KEEP,GPU_STENCIL_KEEP,GPU_STENCIL_REPLACE);
@@ -563,6 +605,7 @@ void n3ds_gpu_model_stencil_apply(void)
 }
 int n3ds_gpu_first_person_begin(float near_clip,float far_clip)
 {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_VIEW);
     if(!frame_active || first_person_active || !(near_clip>0) || !(far_clip>near_clip) || !isfinite(far_clip)) return 0;
     first_person_world_camera=current_camera;
     struct native_render_camera weapon=current_camera;
@@ -573,6 +616,7 @@ int n3ds_gpu_first_person_begin(float near_clip,float far_clip)
 }
 void n3ds_gpu_first_person_end(void)
 {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_VIEW);
     if(!frame_active || !first_person_active) svcBreak(USERBREAK_PANIC);
     struct native_render_camera world=first_person_world_camera;
     world.suppress_clear=1;first_person_active=0;
@@ -580,6 +624,7 @@ void n3ds_gpu_first_person_end(void)
 }
 int n3ds_gpu_world_projection(float matrix[16])
 {
+    /* View changes fence; material replay never writes these view values. */
     if(!frame_active || !matrix) return 0;
     memcpy(matrix,&current_projection,sizeof(current_projection));return 1;
 }
@@ -604,7 +649,8 @@ int n3ds_gpu_sky_projection(float matrix[16])
 }
 void n3ds_gpu_opaque_sky_begin(void)
 {
-    n3ds_gpu_fog_sky(1);
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_STATE);
+
     C3D_Mtx projection;
     if(!n3ds_gpu_sky_projection((float *)&projection)) svcBreak(USERBREAK_PANIC);
     C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER,matrix_location,&projection);
@@ -612,13 +658,36 @@ void n3ds_gpu_opaque_sky_begin(void)
 }
 void n3ds_log(const char *message);
 
+#ifdef HALO_N3DS_RENDER_COMMANDS
+static struct {const void *data;unsigned int bytes;} published_geometry[128];
+#endif
+/* Kevin Boggs: n3ds_gpu_geometry_publish */
+void n3ds_gpu_geometry_publish(const void *data,unsigned int bytes)
+{
+#ifdef HALO_N3DS_RENDER_COMMANDS
+    if(!data || !bytes)return;
+    unsigned int available=128;
+    for(unsigned int i=0;i<128;++i) {
+        if(published_geometry[i].data==data)return;
+        if(!published_geometry[i].data && available==128)available=i;
+    }
+    if(available<128) {published_geometry[available].data=data;published_geometry[available].bytes=bytes;}
+#else
+    (void)data;(void)bytes;
+#endif
+}
 void *n3ds_gpu_geometry_allocate(unsigned int bytes) { return linearAlloc(bytes); }
 void *n3ds_gpu_geometry_optional_allocate(unsigned int bytes)
 {
     unsigned int free_bytes=linearSpaceFree();
     return free_bytes>2*1024*1024 && bytes<=free_bytes-2*1024*1024?linearAlloc(bytes):NULL;
 }
-void n3ds_gpu_geometry_free(void *memory) { if (memory) linearFree(memory); }
+void n3ds_gpu_geometry_free(void *memory) {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_LIFETIME);
+#ifdef HALO_N3DS_RENDER_COMMANDS
+    for(unsigned int i=0;i<128;++i)if(published_geometry[i].data==memory)published_geometry[i].data=NULL;
+#endif
+    if (memory) linearFree(memory); }
 void n3ds_gpu_geometry_flush(void *memory, unsigned int bytes)
 {
     uintptr_t p=(uintptr_t)memory;
@@ -631,11 +700,13 @@ void n3ds_gpu_geometry_flush(void *memory, unsigned int bytes)
             ++model_deferred;return;
         }
     }
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_STATE);
     GSPGPU_FlushDataCache(memory,bytes);
 }
 
 void n3ds_gpu_model_cache_release(void)
 {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_LIFETIME);
     /* Map transitions occur between frames. Retire every queued GPU reference
      * before releasing the cached blocks, including loading-overlay vertices. */
     if(frame_active || !n3ds_gpu_texture_barrier()) svcBreak(USERBREAK_PANIC);
@@ -650,6 +721,7 @@ void n3ds_gpu_model_cache_release(void)
 }
 void n3ds_gpu_map_scratch_release(void)
 {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_LIFETIME);
     extern void n3ds_gpu_text_map_release(void),n3ds_gpu_chicago_map_release(void),n3ds_gpu_widgets_map_release(void);
     if(frame_active || !n3ds_gpu_texture_barrier()) svcBreak(USERBREAK_PANIC);
     for(unsigned int stage=0;stage<3;++stage) n3ds_gpu_texture_bind(stage,NULL);
@@ -658,9 +730,10 @@ void n3ds_gpu_map_scratch_release(void)
 
 void n3ds_gpu_renderer_dispose(void)
 {
-    if(distance_fog_white && !n3ds_gpu_texture_barrier())abort();
-    n3ds_gpu_texture_destroy(distance_fog_white);distance_fog_white=NULL;
-    distance_fog_depth_w=-1;distance_fog_lut_far=0;distance_fog_mode=-99;
+#ifdef HALO_N3DS_RENDER_COMMANDS
+    n3ds_render_commands_release();
+#endif
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_LIFETIME);
     if(vertex_buffer_requests) {
         char line[160];snprintf(line,sizeof(line),"NATIVE VERTEX BINDINGS: cacheable_requests=%llu reused=%llu; world draws invalidate; same-frame descriptors only",vertex_buffer_requests,vertex_buffer_reuses);n3ds_log(line);
         vertex_buffer_requests=vertex_buffer_reuses=0;
@@ -736,6 +809,7 @@ void n3ds_gpu_renderer_dispose(void)
 }
 int n3ds_gpu_renderer_initialize(void)
 {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_STATE);
     if (target) return 0;
     extern void debug_dump_memory(void);
     n3ds_log("STARTUP: GPU renderer memory before targets");debug_dump_memory();
@@ -932,6 +1006,9 @@ int n3ds_gpu_frame_begin(void)
     n3ds_gpu_text_frame_begin();
     n3ds_gpu_widgets_frame_begin();
     n3ds_gpu_chicago_frame_begin();
+#ifdef HALO_N3DS_RENDER_COMMANDS
+    n3ds_render_commands_begin(model_frame_serial);
+#endif
     return 1;
 }
 struct native_render_vertex *n3ds_gpu_model_vertices_allocate(unsigned int count)
@@ -1021,14 +1098,17 @@ int n3ds_gpu_model_storage_tests(void)
     if(ok) n3ds_log("PASS: model storage grows in stable blocks, retains full vertex limit, reuses after GPU wait and releases between maps");
     return ok;
 }
-static void window_state_begin(const struct native_render_camera *camera)
+static void window_state_begin(const struct native_render_camera *camera,int update_camera)
 {
     n3ds_gpu_effect_state_invalidate();
     native_light_env_bind(NULL);
     model_state_valid=0;
     environment_state_valid=0;bump_state_valid=0;environment_program_valid=0;plasma_state_valid=0;
     if(!camera->suppress_clear) first_person_active=first_person_mask=0;
-    current_camera=*camera;flashlight_model_camera_update();distance_fog_window();
+    /* A material restore must not write view data concurrently read by the
+     * producer. Only a fenced view transition installs a different camera. */
+    if(update_camera)current_camera=*camera;
+    flashlight_model_camera_update();
     C3D_BindProgram(&program);
     C3D_AttrInfo *attributes = C3D_GetAttrInfo();
     AttrInfo_Init(attributes);
@@ -1055,8 +1135,9 @@ static void window_state_begin(const struct native_render_camera *camera)
 }
 void n3ds_gpu_window_begin(const struct native_render_camera *camera)
 {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_VIEW);
     C3D_Mtx projection, view, combined;
-    window_state_begin(camera);
+    window_state_begin(camera,1);
     Mtx_PerspTilt(&projection, camera->vertical_fov, (bottom_selected?320.f:400.f)/240.f,
         camera->near_clip, camera->far_clip, false);
     /* The camera already carries its eye translation; only shift the frustum
@@ -1073,19 +1154,22 @@ void n3ds_gpu_window_begin(const struct native_render_camera *camera)
 }
 void n3ds_gpu_world_state_restore(void)
 {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_STATE);
     struct native_render_camera restore=current_camera;
     if(!frame_active) svcBreak(USERBREAK_PANIC);
     restore.suppress_clear=1;
     /* Material changes do not change the camera. Reinstall its exact matrix;
      * camera/weapon-clip transitions still rebuild it in window_begin. */
-    window_state_begin(&restore);
+    window_state_begin(&restore,0);
     C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER,matrix_location,&current_projection);
 }
 int n3ds_gpu_geometry_draw(const struct native_render_vertex *vertices, const unsigned short *indices, unsigned int count)
-{ return n3ds_gpu_indexed_draw(vertices,indices,count,sizeof(*vertices),3,0x210); }
+{
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_IMMEDIATE); return n3ds_gpu_indexed_draw(vertices,indices,count,sizeof(*vertices),3,0x210); }
 int n3ds_gpu_preview_material_draw(const struct native_render_vertex *vertices,
     const unsigned short *indices,unsigned int count,int translucent,int depth_test,int cull_backfaces)
 {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_IMMEDIATE);
     if(!frame_active || !n3ds_gpu_texture_bound(0))return 0;
     n3ds_gpu_world_state_restore();
     C3D_CullFace(cull_backfaces?GPU_CULL_FRONT_CCW:GPU_CULL_NONE);
@@ -1103,6 +1187,7 @@ int n3ds_gpu_preview_material_draw(const struct native_render_vertex *vertices,
 int n3ds_gpu_preview_depth_draw(const struct native_render_vertex *vertices,
     const unsigned short *indices,unsigned int count,int cull_backfaces)
 {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_IMMEDIATE);
     if(!frame_active)return 0;
     n3ds_gpu_world_state_restore();
     C3D_CullFace(cull_backfaces?GPU_CULL_FRONT_CCW:GPU_CULL_NONE);
@@ -1111,6 +1196,11 @@ int n3ds_gpu_preview_depth_draw(const struct native_render_vertex *vertices,
     int result=n3ds_gpu_geometry_draw(vertices,indices,count);
     n3ds_gpu_world_state_restore();return result;
 }
+#ifdef HALO_N3DS_RENDERER_TESTS
+static int model_reference_program;
+#else
+#define model_reference_program 0
+#endif
 static int model_transform_draw(const void *vertices,const unsigned short *indices,unsigned int count,
     const float *rows,unsigned int nodes,const float uv[2],int sky,int decal,int two_sided,int skinned,
     const struct native_model_material *material)
@@ -1122,8 +1212,12 @@ static int model_transform_draw(const void *vertices,const unsigned short *indic
     int detailed=lit && !reflective && m->detail;
     if(detailed && (m->detail_function<0 || m->detail_function>1 || m->detail_mask<0 || m->detail_mask>8 ||
        (m->detail_mask && !m->multipurpose) || !isfinite(m->detail_scale[0]) || !isfinite(m->detail_scale[1]))) return 0;
-    int pi=skinned+2;
-    int key=!!sky | (!!decal<<1) | (!!two_sided<<2) | (!!skinned<<3) | (lit<<4) | (reflective<<5) | (detailed<<6);
+    /* Reuse the lit skin program for rigid equipment on New models.
+     * A fixed weight attribute selects bone zero with weight one. */
+    extern int n3ds_input_platform_original_model(void);
+    int shader_skinned=skinned || (lit && !model_reference_program && !n3ds_input_platform_original_model());
+    int pi=shader_skinned+2;
+    int key=!!sky | (!!decal<<1) | (!!two_sided<<2) | (!!shader_skinned<<3) | (lit<<4) | (reflective<<5) | (detailed<<6) | (skinned<<7);
     int projection_location=lit?lit_programs[pi].projection:(skinned?skin_projection:rigid_projection);
     int bone_location=lit?lit_programs[pi].bone:(skinned?skin_bone:rigid_bone);
     int options_location=lit?lit_programs[pi].options:(skinned?skin_options:rigid_options);
@@ -1152,12 +1246,17 @@ static int model_transform_draw(const void *vertices,const unsigned short *indic
       if(!same_program) C3D_BindProgram(lit?&lit_programs[pi].program:(skinned?&skin_program:&rigid_program));
       C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER,projection_location,&projection);
       if(lit) C3D_FVUnifSet(GPU_VERTEX_SHADER,lit_programs[pi].camera,0,0,0,0);
+    } else ++model_state_reuses;
+    /* Vertex layout can change while the same shader and palette stay bound.
+     * Bit 7 tracks the actual buffer layout; bit 3 tracks the shader program. */
+    if(!reuse || ((model_state_key^key)&128)) {
       C3D_AttrInfo *a=C3D_GetAttrInfo();AttrInfo_Init(a);
       AttrInfo_AddLoader(a,0,GPU_FLOAT,3);AttrInfo_AddLoader(a,1,GPU_FLOAT,3);AttrInfo_AddLoader(a,2,GPU_FLOAT,2);
       if(skinned) AttrInfo_AddLoader(a,3,GPU_FLOAT,4);
-    } else ++model_state_reuses;
-    n3ds_gpu_fog_sky(sky);
-    if(decal)n3ds_gpu_fog_blend(NATIVE_BLEND_ALPHA);
+      else if(shader_skinned) {AttrInfo_AddFixed(a,3);C3D_FixedAttribSet(3,0,0,1,0);}
+    }
+
+
     if(!retained || ((model_state_key^key)&114) || !!m->multipurpose!=!!model_cached_material.multipurpose ||
        m->alpha_test!=model_cached_material.alpha_test || (detailed &&
        (m->detail_function!=model_cached_material.detail_function || m->detail_mask!=model_cached_material.detail_mask || m->detail_after!=model_cached_material.detail_after)))
@@ -1217,16 +1316,18 @@ static int model_transform_draw(const void *vertices,const unsigned short *indic
     if(!model_batch_active) n3ds_gpu_world_state_restore();
     return result;
 }
+#include "engine_model_commands.inl"
 int n3ds_gpu_model_rigid_draw(const struct native_render_vertex *v,const unsigned short *i,unsigned int count,
     const float rows[12],const float uv[2],int sky,int decal,int two_sided,const struct native_model_material *m)
-{return model_transform_draw(v,i,count,rows,1,uv,sky,decal,two_sided,0,m);}
+{return model_command_draw(v,i,count,rows,1,uv,sky,decal,two_sided,0,m);}
 int n3ds_gpu_model_skin_draw(const struct native_skin_vertex *v,const unsigned short *i,unsigned int count,
     const float *rows,unsigned int nodes,const float uv[2],int sky,int decal,int two_sided,const struct native_model_material *m)
-{return model_transform_draw(v,i,count,rows,nodes,uv,sky,decal,two_sided,1,m);}
+{return model_command_draw(v,i,count,rows,nodes,uv,sky,decal,two_sided,1,m);}
 void n3ds_gpu_camera_origin(float origin[3])
 {memcpy(origin,current_camera.position,3*sizeof(float));}
 void n3ds_gpu_model_rebase_vertices(struct native_render_vertex *v,unsigned int count,int sky)
 {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_GEOMETRY);
     if(!sky) for(unsigned int i=0;i<count;++i) for(int c=0;c<3;++c)
         v[i].position[c]-=current_camera.position[c];
 }
@@ -1273,10 +1374,12 @@ static int model_cpu_draw(const struct native_render_vertex *v,const unsigned sh
 }
 int n3ds_gpu_model_cpu_draw(const struct native_render_vertex *v,const unsigned short *i,unsigned int n,
     int sky,int decal,int two_sided,const struct native_model_material *m)
-{return model_cpu_draw(v,i,n,sky,decal,two_sided,m,0);}
+{
+    const float uv[2]={1,1};return model_command_draw(v,i,n,NULL,0,uv,sky,decal,two_sided,-1,m);}
 int n3ds_gpu_model_cpu_relative_draw(const struct native_render_vertex *v,const unsigned short *i,unsigned int n,
     int sky,int decal,int two_sided,const struct native_model_material *m)
-{return model_cpu_draw(v,i,n,sky,decal,two_sided,m,1);}
+{
+    const float uv[2]={1,1};return model_command_draw(v,i,n,NULL,0,uv,sky,decal,two_sided,-2,m);}
 int n3ds_gpu_fragment_tests(void)
 {
     static const float normals[][3]={{1,0,0},{-1,0,0},{0,1,0},{0,-1,0},{0,0,1},{0,0,-1},
@@ -1342,7 +1445,6 @@ done:
     if(ready) shaderProgramFree(&probe);if(binary) DVLB_Free(binary);
     linearFree(vertices);linearFree(pixels);return !ok;
 }
-#include "engine_gpu_fog_tests.inl"
 int n3ds_gpu_cube_tests(void)
 {
     unsigned char rgba[6*8*8*4];unsigned int *readback=linearAlloc(240*400*4);
@@ -1609,6 +1711,9 @@ int n3ds_gpu_model_batch_tests(void)
     for(unsigned int i=0;i<sizeof(faces);++i) faces[i]=(i*17+i/256*23)&255;
     cube=n3ds_gpu_texture_create_cube(faces,8);if(!cube) goto done;
     for(int pass=0;pass<2;++pass) {
+#ifdef HALO_N3DS_RENDERER_TESTS
+        model_reference_program=!pass;
+#endif
         struct native_render_camera camera={.forward={0,0,-1},.up={0,1,0},.vertical_fov=1,.near_clip=.1f,.far_clip=100,.clear_color=0x102030ff};
         if(!n3ds_gpu_frame_begin()) goto done;
         active=1;n3ds_gpu_window_begin(&camera);
@@ -1662,6 +1767,9 @@ int n3ds_gpu_model_batch_tests(void)
     ok=!changed && covered>1000 && usage[1]<usage[0] && model_state_reuses>old_state && model_palette_reuses>old_palette;
     char message[256];snprintf(message,sizeof(message),"%s: model batch pixel comparison: changed=%u covered=%u command_ratio=%.3f state_reuses=%llu palette_reuses=%llu; rigid/skinned/reflection/sky/decal/view/weapon/mutated rows",ok?"PASS":"FAIL",changed,covered,usage[1]/usage[0],model_state_reuses-old_state,model_palette_reuses-old_palette);n3ds_log(message);
 done:
+#ifdef HALO_N3DS_RENDERER_TESTS
+    model_reference_program=0;
+#endif
     if(model_batch_active) n3ds_gpu_model_batch_end();
     if(active) n3ds_gpu_present();
     if(!n3ds_gpu_texture_barrier()) abort();
@@ -1702,10 +1810,12 @@ static int model_special_transform(const void *v,const unsigned short *indices,u
 }
 int n3ds_gpu_model_depth_transform_draw(const void *v,const unsigned short *indices,unsigned int count,
     const float *rows,unsigned int nodes,int skinned)
-{return model_special_transform(v,indices,count,rows,nodes,skinned,NULL,1,1,0,1);}
+{
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_IMMEDIATE);return model_special_transform(v,indices,count,rows,nodes,skinned,NULL,1,1,0,1);}
 int n3ds_gpu_model_cloak_transform_draw(const void *v,const unsigned short *indices,unsigned int count,
     const float *rows,unsigned int nodes,int skinned,const float *uv,float fade,int textured,int two_sided)
-{return model_special_transform(v,indices,count,rows,nodes,skinned,uv,0,fade,textured,two_sided);}
+{
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_IMMEDIATE);return model_special_transform(v,indices,count,rows,nodes,skinned,uv,0,fade,textured,two_sided);}
 static int model_depth_draw(const struct native_render_vertex *vertices,const unsigned short *indices,unsigned int count,int relative)
 {
     if(!frame_active) return 0;
@@ -1719,12 +1829,15 @@ static int model_depth_draw(const struct native_render_vertex *vertices,const un
     n3ds_gpu_world_state_restore();return result;
 }
 int n3ds_gpu_model_depth_draw(const struct native_render_vertex *v,const unsigned short *i,unsigned int n)
-{return model_depth_draw(v,i,n,0);}
+{
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_IMMEDIATE);return model_depth_draw(v,i,n,0);}
 int n3ds_gpu_model_depth_relative_draw(const struct native_render_vertex *v,const unsigned short *i,unsigned int n)
-{return model_depth_draw(v,i,n,1);}
+{
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_IMMEDIATE);return model_depth_draw(v,i,n,1);}
 int n3ds_gpu_model_decal_draw(const struct native_render_vertex *vertices,
     const unsigned short *indices,unsigned int count,int sky,int two_sided)
 {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_IMMEDIATE);
     if(!frame_active || !n3ds_gpu_texture_bound(0)) return 0;
     /* Keep the bounded native model lighting in RGB, while the base-map alpha
      * controls original SRCALPHA/INVSRCALPHA blending. Decals never write Z or A.
@@ -1743,6 +1856,7 @@ int n3ds_gpu_model_decal_draw(const struct native_render_vertex *vertices,
 int n3ds_gpu_glass_sky_draw(const struct native_render_vertex *vertices,const unsigned short *indices,
     unsigned int count,int pass,int two_sided,int sky)
 {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_IMMEDIATE);
     if(!frame_active || pass<0 || pass>2) return 0;
     n3ds_gpu_world_state_restore();
     C3D_TexEnv *env=C3D_GetTexEnv(0);
@@ -1759,14 +1873,20 @@ int n3ds_gpu_glass_sky_draw(const struct native_render_vertex *vertices,const un
     int result=n3ds_gpu_geometry_draw(vertices,indices,count);n3ds_gpu_world_state_restore();return result;
 }
 int n3ds_gpu_glass_draw(const struct native_render_vertex *v,const unsigned short *i,unsigned int n,int pass,int sides)
-{return n3ds_gpu_glass_sky_draw(v,i,n,pass,sides,0);}
+{
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_IMMEDIATE);return n3ds_gpu_glass_sky_draw(v,i,n,pass,sides,0);}
 static int indexed_draw_resident(const void *,const unsigned short *,unsigned int,unsigned int,unsigned int,unsigned int);
+#include "engine_environment_commands.inl"
 int n3ds_gpu_environment_bump_draw(const struct native_render_vertex *vertices,
     const struct native_environment_bump_vertex *bump,const unsigned short *indices,unsigned int count,
     float u_scale,float v_scale,unsigned int material,int alpha_test)
 {
     if(!frame_active || !environment_ready || !vertices || !bump || !indices || ((uintptr_t)indices&3) ||
        !count || count%3 || !isfinite(u_scale) || !isfinite(v_scale)) return 0;
+#ifdef HALO_N3DS_RENDER_COMMANDS
+    if(environment_command_record(3,vertices,bump,indices,count,1,0,u_scale,v_scale,material,alpha_test,NULL,0,0))return 1;
+#endif
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_IMMEDIATE);
     if(!n3ds_gpu_texture_wrap(1,1,1)) return 0;
     if(plasma_state_valid) {plasma_state_valid=0;bump_state_valid=0;}
     if(!bump_state_valid) {
@@ -1869,6 +1989,10 @@ int n3ds_gpu_environment_draw(const struct native_render_vertex *vertices,const 
 {
     if(!frame_active || !environment_ready || !vertices || !light_uv || !indices || !count || count%3 ||
        ((uintptr_t)indices&3) || detail<0 || detail>3 || !isfinite(detail_u_scale) || !isfinite(detail_v_scale)) return 0;
+#ifdef HALO_N3DS_RENDER_COMMANDS
+    if(environment_command_record(0,vertices,light_uv,indices,count,lightmap,detail,detail_u_scale,detail_v_scale,material,alpha_test,NULL,0,0))return 1;
+#endif
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_IMMEDIATE);
     if(bump_state_valid || plasma_state_valid) {native_light_env_bind(NULL);bump_state_valid=plasma_state_valid=0;environment_state_valid=0;}
     int key=!!lightmap | (detail<<1) | (!!alpha_test<<3);
     if(lightmap && !n3ds_gpu_texture_wrap(1,1,1)) return 0;
@@ -1924,6 +2048,10 @@ int n3ds_gpu_environment_emission_draw(const struct native_render_vertex *vertic
     if(!frame_active || !environment_ready || !vertices || !light_uv || !indices || !count || count%3 ||
        ((uintptr_t)indices&3) || !emission) return 0;
     for(int i=0;i<4;++i) if(!isfinite(emission->uv[i])) return 0;
+#ifdef HALO_N3DS_RENDER_COMMANDS
+    if(environment_command_record(1,vertices,light_uv,indices,count,lightmap,0,1,1,material,alpha_test,emission,0,0))return 1;
+#endif
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_IMMEDIATE);
     if(bump_state_valid || plasma_state_valid) {native_light_env_bind(NULL);bump_state_valid=plasma_state_valid=0;environment_state_valid=0;}
     int key=16 | !!lightmap | (!!alpha_test<<3),changed=!environment_state_valid || ((key^environment_key)&23);
     if(lightmap && !n3ds_gpu_texture_wrap(1,1,1)) return 0;
@@ -2050,6 +2178,10 @@ int n3ds_gpu_environment_plasma_draw(const struct native_render_vertex *vertices
     if(!frame_active || !environment_ready || !vertices || !light_uv || !indices || !count || count%3 ||
        ((uintptr_t)indices&3) || !emission || phase>255) return 0;
     for(int i=0;i<4;++i) if(!isfinite(emission->uv[i])) return 0;
+#ifdef HALO_N3DS_RENDER_COMMANDS
+    if(environment_command_record(2,vertices,light_uv,indices,count,lightmap,0,1,1,material,alpha_test,emission,on,phase))return 1;
+#endif
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_IMMEDIATE);
     int changed=!plasma_state_valid || plasma_lightmap!=!!lightmap;
     int buffer_changed=!plasma_state_valid || plasma_vertices!=vertices || plasma_light_uv!=light_uv;
     if(lightmap && !n3ds_gpu_texture_wrap(1,1,1)) return 0;
@@ -2360,9 +2492,15 @@ done:
 }
 int n3ds_gpu_geometry_draw_resident(const struct native_render_vertex *vertices,
     const unsigned short *indices,unsigned int count)
-{ return indexed_draw_resident(vertices,indices,count,sizeof(*vertices),3,0x210); }
+{
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_IMMEDIATE); return indexed_draw_resident(vertices,indices,count,sizeof(*vertices),3,0x210); }
 const unsigned short *n3ds_gpu_indices_upload(const unsigned short *indices,unsigned int count)
 {
+    /* Main-thread append only. Owned worker draws already contain staged
+     * indices and never read or advance this producer cursor. */
+#ifdef HALO_N3DS_RENDER_WORKER
+    if(render_command_on_worker())return NULL;
+#endif
     if (!frame_active || !indices || !count || count%3 || count > (INDEX_BYTES-index_used)/2) return NULL;
     unsigned short *gpu_indices = (unsigned short *)(index_stream+index_used);
     memcpy(gpu_indices, indices, count*2);
@@ -2373,8 +2511,18 @@ const unsigned short *n3ds_gpu_indices_upload(const unsigned short *indices,unsi
 int n3ds_gpu_indexed_draw(const void *vertices,const unsigned short *indices,unsigned int count,
     unsigned int stride,unsigned int attributes,unsigned int permutation)
 {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_IMMEDIATE);
     if(!frame_active || !vertices || !indices || !count || count%3) return 0;
     uintptr_t at=(uintptr_t)indices,base=(uintptr_t)index_stream;
+#ifdef HALO_N3DS_RENDER_WORKER
+    if(render_command_on_worker()) {
+        /* Only owned model/effect commands execute here. Their indices were
+         * validated and copied before publication. Do not consult index_used:
+         * the producer may be appending a disjoint range at the same time. */
+        if(at<base || at-base>INDEX_BYTES || (at&3) || count>(INDEX_BYTES-(at-base))/2)return 0;
+        return indexed_draw_resident(vertices,indices,count,stride,attributes,permutation);
+    }
+#endif
     const unsigned short *gpu_indices=indices;
     /* Only our immutable, already-written prefix can bypass a staging copy.
      * Ordinary caller buffers remain copied, including reused stack buffers. */
@@ -2402,6 +2550,9 @@ static int indexed_draw_resident(const void *vertices,const unsigned short *gpu_
 void n3ds_gpu_present(void)
 {
     if (!frame_active) svcBreak(USERBREAK_PANIC);
+#ifdef HALO_N3DS_RENDER_COMMANDS
+    n3ds_render_commands_end();
+#endif
     /* Dynamic indexed draws append to this arena; immutable BSP indices are
      * flushed once by their cache owner. Citro3D executes the
      * queued commands at FrameEnd, so flush the written prefix once here.
@@ -2524,24 +2675,33 @@ static void loading_text(void)
 }
 void n3ds_gpu_campaign_help(void)
 {
-    struct native_control_settings s;n3ds_controls_get(&s);
-#ifdef HALO_N3DS_UNIFIED_UI
-    const char *lines[]={"Campaign uses the Xbox retail maps.",(s.xbox_buttons^s.swap_ab)?"B: Start mission   R + B: Resume save":"A: Start mission   R + A: Resume save","SELECT: PC maps, modes and bots"};
-    n3ds_gpu_hud_screen(1);status_text(lines,n3ds_pc_maps_present() && !n3ds_wireless_active()?3:2,1);
-    {
-        extern int n3ds_ui_difficulty_menu_active(void);
-        extern int n3ds_campaign_network_blocked(void);
-        extern int n3ds_campaign_extras_enabled(void);
-        extern int n3ds_campaign_options_save_error(void);
-        if(n3ds_ui_difficulty_menu_active() && n3ds_pc_maps_present() && !n3ds_campaign_network_blocked()) {
-            controls_quad(16,94,288,64,0xff674826,0);
-            controls_text(28,108,n3ds_campaign_extras_enabled()?"PC campaign extras: ON":"PC campaign extras: OFF",0xffffffff,0);
-            controls_text(28,128,n3ds_campaign_options_save_error()?"Save failed - tap to retry":"Tap here before mission to switch",0xffe9d6aa,0);
+    extern int n3ds_ui_campaign_menu_active(void);
+    extern int n3ds_ui_difficulty_menu_active(void);
+    extern const char *n3ds_campaign_checkpoint_info(int *);
+    extern int n3ds_campaign_network_blocked(void);
+    int campaign=n3ds_ui_campaign_menu_active(),difficulty=n3ds_ui_difficulty_menu_active();
+    if((!campaign && !difficulty) || n3ds_campaign_network_blocked())return;
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_STATE);
+    n3ds_gpu_hud_screen(1);
+    if(campaign) {
+        int available=0;const char *info=n3ds_campaign_checkpoint_info(&available);
+        controls_text(16,34,"Campaign checkpoint",0xffffffff,0);
+        char title[40];const char *line=strchr(info,'\n');
+        if(line) {unsigned int length=(unsigned int)(line-info);if(length>=sizeof(title))length=sizeof(title)-1;memcpy(title,info,length);title[length]=0;controls_text(16,56,title,0xffe9d6aa,0);controls_text(16,68,line+1,0xffe9d6aa,0);}
+        else controls_text(16,56,info,0xffe9d6aa,0);
+        if(available) {
+            controls_quad(16,80,288,78,0xff674826,0);
+            controls_text(76,110,"Resume checkpoint",0xffffffff,0);
         }
     }
-#else
-    const char *lines[]={"At difficulty selection:",(s.xbox_buttons^s.swap_ab)?"B: Start mission   R + B: Resume save":"A: Start mission   R + A: Resume save"};
-    n3ds_gpu_hud_screen(1);status_text(lines,2,1);
+#ifdef HALO_N3DS_UNIFIED_UI
+    if(difficulty && n3ds_pc_maps_present()) {
+        extern int n3ds_campaign_extras_enabled(void);
+        extern int n3ds_campaign_options_save_error(void);
+        controls_quad(16,94,288,64,0xff674826,0);
+        controls_text(28,108,n3ds_campaign_extras_enabled()?"PC campaign extras: ON":"PC campaign extras: OFF",0xffffffff,0);
+        controls_text(28,128,n3ds_campaign_options_save_error()?"Save failed - tap to retry":"Tap here before mission to switch",0xffe9d6aa,0);
+    }
 #endif
     n3ds_gpu_hud_screen(0);n3ds_gpu_world_state_restore();
 }
@@ -2557,6 +2717,7 @@ void n3ds_gpu_loading_enable(int enabled)
 unsigned int n3ds_gpu_loading_submissions(void) { return loading_submissions; }
 void n3ds_gpu_loading_pulse(float progress,int force)
 {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_STATE);
     static u64 last;
     if(!loading_enabled) return;
     u64 now=svcGetSystemTick();
@@ -2627,6 +2788,7 @@ static int loading_bar(float progress)
 
 int n3ds_gpu_loading_draw(float progress)
 {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_IMMEDIATE);
     if(!loading_enabled) return 1;
     if(!frame_active || !isfinite(progress) || progress<0 || progress>1) return 0;
     int saved_overlay=overlay_stereo;overlay_stereo=0;
@@ -2697,11 +2859,14 @@ static int capture_stage(const char *name,unsigned int stage)
     return result;
 }
 int n3ds_gpu_loading_capture(unsigned int stage)
-{ return stage>4?1:capture_stage("halo-loading",stage); }
-int n3ds_gpu_screen_quad_capture(void) { return capture_stage("halo-screen",0); }
+{
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_STATE); return stage>4?1:capture_stage("halo-loading",stage); }
+int n3ds_gpu_screen_quad_capture(void) {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_STATE); return capture_stage("halo-screen",0); }
 
 int n3ds_gpu_readback(unsigned int *pixels,unsigned int count)
 {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_STATE);
     static unsigned int calls;
     int trace=++calls<=2;
     if(frame_active || !target || !pixels || count!=240*400) return 0;
@@ -2751,6 +2916,7 @@ int n3ds_gpu_readback(unsigned int *pixels,unsigned int count)
 /* Kevin Boggs: n3ds_gpu_texture_clip_frame - New3DS integration. */
 int n3ds_gpu_texture_clip_frame(unsigned int game_tick)
 {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_STATE);
     if(n3ds_gpu_screen_test())return 0;
     char path[96];
     snprintf(path,sizeof(path),"sdmc:/halo-source/texture-clip/frame%04u.rgba",game_tick);
@@ -2770,6 +2936,7 @@ int n3ds_gpu_texture_clip_frame(unsigned int game_tick)
 #endif
 int n3ds_gpu_screen_test(void)
 {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_STATE);
     char capture_memory[160];
     snprintf(capture_memory,sizeof(capture_memory),"SCREEN CAPTURE: linear_free=%u geometry_resident=%u geometry_arena=%u frame_active=%d",(unsigned int)linearSpaceFree(),model_resident_units*(unsigned int)sizeof(struct native_render_vertex),model_reserved*(unsigned int)sizeof(struct native_render_vertex),frame_active);
     n3ds_log(capture_memory);
@@ -3186,11 +3353,12 @@ done:
 int n3ds_gpu_water_draw(const struct native_render_vertex *vertices,const unsigned short *indices,
     unsigned int count,const struct native_water_material *m)
 {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_IMMEDIATE);
     if(!water_program.ready || !vertices || !indices || !count || !m || (m->flags&~15u)) return 0;
     C3D_Mtx projection;
     if(!n3ds_gpu_world_projection((float *)&projection) ||
        (m->sky && !n3ds_gpu_sky_projection((float *)&projection))) return 0;
-    n3ds_gpu_world_state_restore();n3ds_gpu_fog_sky(m->sky);
+    n3ds_gpu_world_state_restore();
     /* Two-dimensional mask and cube are independently filtered in one draw.
      * Null maps bind the neutral white texture, preserving authored absence. */
     if(!n3ds_gpu_texture_bind(0,m->cube) || !n3ds_gpu_texture_bind_sampler(1,m->base,
@@ -3235,10 +3403,11 @@ int n3ds_gpu_water_draw(const struct native_render_vertex *vertices,const unsign
 int n3ds_gpu_glass_native_sky_draw(const struct native_render_vertex *vertices,
     const unsigned short *indices,unsigned int count,const struct native_glass_material *m,int sky)
 {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_IMMEDIATE);
     if(!glass_program.ready || !vertices || !indices || !count || !m) return 0;
     C3D_Mtx projection;if(!(sky?n3ds_gpu_sky_projection((float *)&projection):n3ds_gpu_world_projection((float *)&projection))) return 0;
     n3ds_gpu_world_state_restore();
-    n3ds_gpu_fog_sky(sky);n3ds_gpu_fog_blend(NATIVE_BLEND_ADD);
+
     if(!n3ds_gpu_texture_bind(0,m->cube) || !n3ds_gpu_texture_bind(1,m->diffuse)) return 0;
     C3D_BindProgram(&glass_program.program);
     C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER,glass_program.projection,&projection);
@@ -3283,10 +3452,13 @@ int n3ds_gpu_glass_native_sky_draw(const struct native_render_vertex *vertices,
     n3ds_gpu_world_state_restore();return ok;
 }
 int n3ds_gpu_glass_native_draw(const struct native_render_vertex *v,const unsigned short *i,unsigned int n,const struct native_glass_material *m)
-{return n3ds_gpu_glass_native_sky_draw(v,i,n,m,0);}
+{
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_IMMEDIATE);return n3ds_gpu_glass_native_sky_draw(v,i,n,m,0);}
 #include "engine_flashlight_tests.inl"
 
 #ifdef HALO_N3DS_RENDERER_TESTS
 #include "engine_model_precision_tests.inl"
 #include "engine_world_scale_tests.inl"
 #endif
+
+#include "engine_environment_command_tests.inl"

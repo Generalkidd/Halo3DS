@@ -5,7 +5,16 @@ if (args.Length > 0)
 {
     // Developer integration runner uses the exact core called by the WinUI app.
     string command = args[0];
-    if (command == "model-tests") { ModelLodTests.Run(); }
+    if (command == "revisions") {
+        foreach (string folder in Directory.GetDirectories(args[1])) {
+            byte[] xbe = File.ReadAllBytes(Path.Combine(folder, "default.xbe"));
+            byte[] hud = Hud.Extract(xbe);
+            Data.Require(hud.Length == 6928, "Revision HUD length");
+            Data.Require(Loading.Extract(xbe) != null, "Revision artwork missing");
+            Console.WriteLine("PASS revision HUD and loading artwork: " + Path.GetFileName(folder));
+        }
+    }
+    else if (command == "model-tests") { ModelLodTests.Run(); }
     else if (command == "model-pack") { ModelLods.Generate(args[1],args[2]); Data.Require(ModelLods.Current(args[1],args[2]),"Model pack verification failed"); Console.WriteLine("PASS model pack " + new FileInfo(args[2]).Length); }
     else if (command == "texture-pack") { Textures.Generate(args[1],args[2]); Data.Require(Textures.Current(args[1],args[2]),"Archive verification failed"); Console.WriteLine("PASS native texture archive generated and verified"); }
     else if (command == "texture-all") {
@@ -98,7 +107,7 @@ if (args.Length > 0)
         Console.WriteLine("PASS launcher-only update");
         // Reject a corrupt source before publishing that map.
         string corrupt = Path.Combine(input, "bloodgulch.map");
-        using (var f = new FileStream(corrupt, FileMode.Open)) { f.Position = 4096; f.WriteByte(0xff); }
+        using (var f = new FileStream(corrupt, FileMode.Open)) { f.Position = 0; f.WriteByte(0xff); }
         File.Delete(Path.Combine(dest, "halo-source", "bloodgulch.nrl"));
         try { Installer.Run(options); throw new Exception("Corrupt source accepted"); }
         catch (SetupException) { Console.WriteLine("PASS corrupt source rejection"); }
@@ -119,7 +128,7 @@ string root = Path.Combine(Path.GetTempPath(), "halo-setup-tests-" + Guid.NewGui
 Directory.CreateDirectory(root);
 try
 {
-    PcMapsTests.Run(root);
+    PcMapsTests.Run(root); RevisionTests.Run(root);
     ExpectFailure("path traversal", () => Installer.SafePath(root, "../escape"));
     string legacyLauncher = Path.Combine(root, "3ds", "HaloSourceEngine", "HaloSourceEngine.3dsx");
     Directory.CreateDirectory(Path.GetDirectoryName(legacyLauncher)!);
@@ -160,7 +169,7 @@ try
     ExpectFailure("invalid map", () => Installer.CheckMap(SourceEntry.FromFile(ui), "ui", Data.Catalog["ui"]));
     byte[] header = new byte[2048]; "daeh"u8.CopyTo(header); "toof"u8.CopyTo(header.AsSpan(2044)); header[4] = 5;
     "ui"u8.CopyTo(header.AsSpan(32)); "01.01.14.2342"u8.CopyTo(header.AsSpan(64)); File.WriteAllBytes(ui, header);
-    ExpectFailure("unsupported map build", () => Installer.CheckMap(SourceEntry.FromFile(ui), "ui", Data.Catalog["ui"]));
+    ExpectFailure("invalid map regions", () => Installer.CheckMap(SourceEntry.FromFile(ui), "ui", Data.Catalog["ui"]));
     // Minimal synthetic XDVDFS entry. Also exercises malformed links and filename traversal.
     byte[] iso = new byte[0x14000]; "MICROSOFT*XBOX*MEDIA"u8.CopyTo(iso.AsSpan(0x10000));
     "MICROSOFT*XBOX*MEDIA"u8.CopyTo(iso.AsSpan(0x107ec));

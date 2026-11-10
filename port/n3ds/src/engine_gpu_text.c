@@ -1,4 +1,5 @@
 /* New3DS integration additions by Kevin Boggs. */
+#include "engine_render_commands.h"
 #include <3ds.h>
 #include <citro3d.h>
 #include <string.h>
@@ -28,11 +29,14 @@ static int touch_ready;
 static unsigned int touch_revision;
 static int hud_layout;
 static float sensor_x=42,sensor_y=438,sensor_scale=128.f/42.f;
-void n3ds_gpu_hud_layout(int group) {hud_layout=group;}
+void n3ds_gpu_hud_layout(int group) {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_STATE);hud_layout=group;}
 void n3ds_gpu_hud_sensor_origin(float x,float y,float radius)
-{sensor_x=x;sensor_y=y;sensor_scale=128.f/radius;}
+{
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_STATE);sensor_x=x;sensor_y=y;sensor_scale=128.f/radius;}
 int n3ds_gpu_touch_panel(const unsigned int *pixels,unsigned int revision)
 {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_STATE);
     if(!touch_ready) {
         if(!C3D_TexInit(&touch_texture,512,64,GPU_RGBA8)) return 0;
         touch_ready=1;touch_revision=~revision;
@@ -65,6 +69,7 @@ int n3ds_gpu_touch_panel(const unsigned int *pixels,unsigned int revision)
 }
 void n3ds_gpu_text_dispose(void)
 {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_LIFETIME);
     char message[128];snprintf(message,sizeof(message),"TEXT TRANSFERS: deferred=%u immediate=%u frame_flushes=%u",deferred,immediate,flushes);
     n3ds_log(message);deferred=immediate=flushes=0;dirty=0;
     n3ds_gpu_hud_dispose();
@@ -79,11 +84,13 @@ void n3ds_gpu_text_dispose(void)
  * text streams/shaders remain allocated; these images are recreated lazily. */
 void n3ds_gpu_text_map_release(void)
 {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_LIFETIME);
     n3ds_gpu_hud_dispose();
     if(touch_ready) {C3D_TexDelete(&touch_texture);touch_ready=0;}
 }
 int n3ds_gpu_text_initialize(void)
 {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_STATE);
     if(shader || stream) return 0;
     shader=DVLB_ParseFile((u32 *)engine_text_shader,sizeof(engine_text_shader));
     stream=linearAlloc(TEXT_VERTICES*sizeof(*stream));
@@ -99,14 +106,17 @@ int n3ds_gpu_text_initialize(void)
     return 1;
 fail: n3ds_gpu_text_dispose(); return 0;
 }
-void n3ds_gpu_text_frame_begin(void) { used=0;dirty=0; n3ds_gpu_hud_frame_begin(); }
+void n3ds_gpu_text_frame_begin(void) {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_STATE); used=0;dirty=0; n3ds_gpu_hud_frame_begin(); }
 void n3ds_gpu_text_flush(void)
-{ if(dirty && used) {GSPGPU_FlushDataCache(stream,used*sizeof(*stream));++flushes;}dirty=0; }
+{
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_STATE); if(dirty && used) {GSPGPU_FlushDataCache(stream,used*sizeof(*stream));++flushes;}dirty=0; }
 int n3ds_gpu_text_begin(float width,float height,unsigned int tint,int point,int wrap)
 {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_STATE);
     long long stamp=n3ds_engine_ticks();
     if(!program_ready || width<=0 || height<=0) return 0;
-    n3ds_gpu_fog_overlay();
+
     point_sampled=point; wrapped=wrap;
     C3D_BindProgram(&program);
     /* Projection depends only on logical screen dimensions, not each glyph.
@@ -166,12 +176,16 @@ static int text_draw(const struct native_text_vertex *vertices,unsigned int quad
     return 1;
 }
 
-int n3ds_gpu_text_draw(const struct native_text_vertex v[4]) {return text_draw(v,1,0);}
+int n3ds_gpu_text_draw(const struct native_text_vertex v[4]) {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_IMMEDIATE);return text_draw(v,1,0);}
 /* Kevin Boggs: n3ds_gpu_text_draw_many - New3DS integration. */
-int n3ds_gpu_text_draw_many(const struct native_text_vertex *v,unsigned int quads) {return text_draw(v,quads,0);}
-int n3ds_gpu_text_offscreen_draw(const struct native_text_vertex v[4]) {return text_draw(v,1,1);}
+int n3ds_gpu_text_draw_many(const struct native_text_vertex *v,unsigned int quads) {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_IMMEDIATE);return text_draw(v,quads,0);}
+int n3ds_gpu_text_offscreen_draw(const struct native_text_vertex v[4]) {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_IMMEDIATE);return text_draw(v,1,1);}
 int n3ds_gpu_text_offscreen_begin(float width,float height)
 {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_STATE);
     if(!n3ds_gpu_text_begin(width,height,0xffffffff,0,2)) return 0;
     C3D_Mtx projection;Mtx_Ortho(&projection,0,width,0,height,0,1,true);
     C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER,matrix_location,&projection);

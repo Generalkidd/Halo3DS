@@ -4,6 +4,7 @@
 #include "cseries/cseries.h"
 #include "game/players.h"
 void n3ds_bots_reset(void);
+void n3ds_bots_register_network(long index);
 short n3ds_bots_requested_count(void);
 void n3ds_bots_set_menu_count(short count);
 void n3ds_bots_set_menu_difficulty(short difficulty);

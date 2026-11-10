@@ -5,18 +5,19 @@ public static class Loading
 {
     public const string Name = "ntsc2276-loading.bin";
     public const string AssetHash = "47838bfd25e0f4a763a78ec1da4c1ee61b6a4f56c1e7eb2d05d5ea9dc1bd59dd";
-    const string XbeHash = "ed3a8e962351ad6c4b3b620768fb6a0bda658963390252439ea036d5ede3a3ac";
     public static byte[]? Extract(byte[] data)
     {
         string hash = Data.Hash(data);
         if (hash == AssetHash) return data;
-        if (hash != XbeHash) return null;
-        // Retail progress-bar loader: dimensions followed by run-length/intensity
-        // nibbles, at VA 0x210988 (.data file offset 0x20a728), 26596 RLE bytes.
+        if (data.Length < 26604 || System.Text.Encoding.ASCII.GetString(data, 0, 4) != "XBEH") return null;
         byte[] result = new byte[26604];
-        Array.Copy(data, 0x20a728, result, 0, result.Length);
-        Data.Require(Data.Hash(result) == AssetHash, "Loading artwork verification failed.");
-        return result;
+        for (int offset = 0; offset <= data.Length - result.Length; offset += 4)
+        {
+            if (Data.U32(data, offset) != 320 || Data.U32(data, offset + 4) != 240) continue;
+            Array.Copy(data, offset, result, 0, result.Length);
+            if (Data.Hash(result) == AssetHash) return result;
+        }
+        return null;
     }
     public static byte[]? Find(Dictionary<string, SourceEntry> files, string? extra, string destination)
     {

@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /* Native sorted queue consumption: model materials, original widget callbacks
  * and primary-map dynamic unlit effects. Unsupported variants fail explicitly. */
 #include "cseries.h"
@@ -375,7 +376,7 @@ void rasterizer_transparent_geometry_dispose_aux_buffer(void)
         n3ds_log(message);
         snprintf(message,sizeof(message),"EFFECT VERTEX REUSE: converted=%u reused=%u indexed=%u",effect_converted,effect_reused,effect_index_reused);n3ds_log(message);
         snprintf(message,sizeof(message),"EFFECT GPU OFFLOAD: duplicate_vertices_avoided=%u",packed_vertices_saved);n3ds_log(message);
-        rasterizer_memory_pool_dispose();
+        n3ds_model_transparent_reset();rasterizer_memory_pool_dispose();
         rasterizer_debug_options.zsprites=saved_zsprites;
     }
     initialized=FALSE;
@@ -383,8 +384,16 @@ void rasterizer_transparent_geometry_dispose_aux_buffer(void)
 void n3ds_transparent_begin_view(void)
 {
     assert(initialized && !drawing);
-    rasterizer_memory_pool_begin();
+    n3ds_model_transparent_reset();rasterizer_memory_pool_begin();
     rasterizer_transparent_geometry_begin();
+#ifdef HALO_N3DS_TRANSPARENT_OWNERSHIP_TESTS
+    static int ownership_tested;
+    if(!ownership_tested) {
+        ownership_tested=1;
+        if(!n3ds_model_transparent_tests()) {n3ds_log("RESULT: FAIL transparent pose ownership");abort();}
+        rasterizer_memory_pool_begin();rasterizer_transparent_geometry_begin();
+    }
+#endif
 }
 void rasterizer_transparent_geometry_groups_begin(void)
 {

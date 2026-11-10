@@ -77,8 +77,9 @@ static long touch_unit(void)
 /* Kevin Boggs: n3ds_postgame_return_to_lobby - New3DS integration. */
 void n3ds_postgame_return_to_lobby(void)
 {
+    int shared=n3ds_local_match_menu_queue_reopen();
 #ifdef HALO_N3DS_PC_LOCAL_MENU
-    {extern int n3ds_pc_tags_active(void);if(n3ds_pc_tags_active())n3ds_pc_local_menu_queue_reopen();}
+    {extern int n3ds_pc_tags_active(void);if(!shared && n3ds_pc_tags_active())n3ds_pc_local_menu_queue_reopen();}
 #endif
     main_goto_main_menu();
 }
@@ -113,7 +114,7 @@ static unsigned int touch_action(unsigned int x,unsigned int y)
         if(zone==1)return NATIVE_TOUCH_STUB_1;
         if(zone==2)return NATIVE_TOUCH_STUB_2;
         if(zone==3)return NATIVE_TOUCH_STUB_3;
-        if(zone==4)return n3ds_main_is_solo_multiplayer()?NATIVE_TOUCH_SCOREBOARD:NATIVE_TOUCH_STUB_4;
+        if(zone==4)return game_engine_running()?NATIVE_TOUCH_SCOREBOARD:NATIVE_TOUCH_STUB_4;
     }
     if(y<NATIVE_TOUCH_AIM_BOTTOM) {
         if(!player_control_camera_control_is_active()) return 0;
@@ -276,6 +277,14 @@ wchar_t *n3ds_hud_compat_text(long tag_index,short index)
     }
     return strings[index-74];
 }
+/* Kevin Boggs: n3ds_hud_restore_after_quad */
+void n3ds_hud_restore_after_quad(void)
+{
+    /* Consecutive HUD draws install their own complete material state. Keep
+     * the text shader resident instead of rebinding the world shader after
+     * each bitmap, then restore once at the end of the HUD pass. */
+    if(!split_hud) n3ds_gpu_world_state_restore();
+}
 void n3ds_hud_draw_screen(void)
 {
     extern void interface_draw_screen(void);
@@ -301,9 +310,9 @@ void n3ds_hud_draw_screen(void)
             fps_start=now;fps_frames=0;
         }
         n3ds_gpu_match_touch_overlay(fps_value,n3ds_controls_show_fps(),
-            n3ds_main_is_solo_multiplayer(),n3ds_input_touch_panel_pressed());
+            game_engine_running(),n3ds_input_touch_panel_pressed());
     }
-    if(hud_visible && !cinematic_in_progress() && n3ds_main_is_solo_multiplayer()) {
+    if(hud_visible && !cinematic_in_progress() && game_engine_running()) {
         const struct gamepad_state *pad=input_get_gamepad_state(0);
         if(pad && pad->buttons[_gamepad_binary_button_back] &&
            n3ds_input_touch_scoreboard_active()) {
@@ -331,6 +340,7 @@ void n3ds_hud_draw_screen(void)
         }
     }
     n3ds_hud_screen(0);split_hud=0;
+    n3ds_gpu_world_state_restore();
     for(int i=0;i<4;++i) *rects[i]=saved[i];
 }
 void n3ds_menu_draw_screen(void)

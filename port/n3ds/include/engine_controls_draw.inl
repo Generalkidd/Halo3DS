@@ -153,6 +153,19 @@ void n3ds_gpu_controls_entry(void)
  controls_text(32,214,"SELECT: Game settings",0xffffffff,0);
  n3ds_gpu_hud_screen(0);n3ds_gpu_texture_bind(0,saved);n3ds_gpu_world_state_restore();
 }
+/* Kevin Boggs: n3ds_gpu_wireless_bots - small host lobby controls using the existing UI renderer. */
+void n3ds_gpu_wireless_bots(int bots,int difficulty)
+{
+ void *saved=n3ds_gpu_texture_bound(0);n3ds_gpu_hud_screen(1);n3ds_gpu_hud_layout(0);
+ controls_quad(16,48,288,120,0xff24150c,0);
+ controls_text(56,60,"HOST BOT SETTINGS",0xffffffff,0);
+ char text[36];snprintf(text,sizeof(text),"<       Bots: %d       >",bots);
+ controls_text(48,92,text,0xffe9d6aa,0);
+ static const char *const labels[]={"Easy","Normal","Hard"};
+ snprintf(text,sizeof(text),"<    Difficulty: %-6s >",labels[difficulty>=0 && difficulty<3?difficulty:1]);
+ controls_text(32,128,text,0xffe9d6aa,0);
+ n3ds_gpu_hud_screen(0);n3ds_gpu_texture_bind(0,saved);n3ds_gpu_world_state_restore();
+}
 void n3ds_gpu_controls_draw(const struct native_control_settings *s,int selected,int original,int save_error)
 {
 #ifdef HALO_N3DS_EXPERIMENTAL_PC_ARSENAL
@@ -169,7 +182,7 @@ void n3ds_gpu_controls_draw(const struct native_control_settings *s,int selected
  controls_text(32,208,"Quality: richer combat effects and decals.",0xffe9d6aa,1);
  n3ds_gpu_hud_screen(1);controls_quad(0,0,320,240,0xff24150c,0);
  controls_text(108,16,"GAME SETTINGS",0xffffffff,0);
- const char *labels[]={"Right-stick aim","Touch aim","ABXY layout","Swap shoulders","PC textures","Swap X/Y","Swap A/B","Show FPS","Decals","Circle Pad Pro","Effects"};
+ const char *labels[]={"Right-stick aim","Touch aim","ABXY layout","Swap shoulders","PC textures","Swap X/Y","Swap A/B","Show FPS","Decals","Circle Pad Pro","Preset"};
  for(int row=0;row<n3ds_controls_row_count();++row){int field=n3ds_controls_row_field(row);
   unsigned int color=0xffffffff;float y=24+row*14;
   controls_quad(12,y,296,13,selected==row?0xff674826:0xff35251a,0);
@@ -181,13 +194,13 @@ void n3ds_gpu_controls_draw(const struct native_control_settings *s,int selected
       field==5?(s->swap_xy?"On":"Off"):
       field==6?(s->swap_ab?"On":"Off"):
       field==7?(s->show_fps?"On":"Off"):
-      field==8?(s->quality?(s->decals?"On":"Off"):"Disabled"):
-      field==9?(s->circle_pad_pro?"On":"Off"):(s->quality?"Quality":"Balanced"));
-  controls_text(164,y+3,value,color,0);
+      field==8?(s->quality==NATIVE_QUALITY_QUALITY?(s->decals?"On":"Off"):"Disabled"):
+      field==9?(s->circle_pad_pro?"On":"Off"):(s->quality==NATIVE_QUALITY_PERFORMANCE?"Performance":s->quality==NATIVE_QUALITY_QUALITY?"Quality":"Balanced"));
+  controls_text(field==10?148:164,y+3,value,color,0);
   controls_quad(242,y+1,28,11,0xff735333,0);controls_quad(274,y+1,28,11,0xff735333,0);
   controls_text(252,y+3,"-",color,0);controls_text(284,y+3,"+",color,0);
  }
- controls_text(16,178,"Performance (not available yet)",0xff807060,0);
+ controls_text(16,178,"Performance: simpler models/effects",0xff807060,0);
  controls_text(16,190,save_error?"Save failed. START retry / B cancel":"Up/down: select  Left/right: change",save_error?0xff70a0ff:0xffe9d6aa,0);
  controls_quad(16,202,134,30,0xff53391a,0);controls_quad(170,202,134,30,0xff674826,0);
  controls_text(35,214,"Reset defaults",0xffffffff,0);controls_text(190,214,"Save + back",0xffffffff,0);
@@ -250,6 +263,21 @@ void n3ds_gpu_local_match_gear(int map,int pc,int weapons,int vehicles,int selec
  n3ds_gpu_hud_screen(0);n3ds_gpu_texture_bind(0,saved);n3ds_gpu_world_state_restore();
 }
 
+/* Kevin Boggs: controls_map_thumbnail - draw an optional PC map picture without changing the live UI cache. */
+static void controls_map_thumbnail(int map)
+{
+    void *texture=n3ds_pc_preview_thumbnail(map);if(!texture)return;
+    int slot=n3ds_ui_map_browser_slot();if(slot<0 || slot>2)return;
+    float left=52.5f+103.75f*slot,right=left+87.5f;
+    n3ds_gpu_hud_screen(0);n3ds_gpu_texture_bind(0,texture);
+    n3ds_gpu_text_begin(400,240,0xffffffff,1,0);
+    /* Match the focused card in the original 640x480 map browser,
+     * transformed to the 400x240 top display. Leave its name/data unobscured. */
+    struct native_text_vertex q[4]={{{left,44},{1,1,1,1},{0,0}},{{right,44},{1,1,1,1},{1,0}},
+        {{right,101},{1,1,1,1},{1,1}},{{left,101},{1,1,1,1},{0,1}}};
+    n3ds_gpu_text_draw(q);
+}
+
 /* Kevin Boggs: n3ds_gpu_map_browser - keep preview controls on the lower display. */
 void n3ds_gpu_map_browser(int map,int pc,int ready)
 {
@@ -270,6 +298,7 @@ void n3ds_gpu_map_browser(int map,int pc,int ready)
     else if(!n3ds_preview_available())controls_text(64,112,"Preview unavailable",0xffffffff,0);
     controls_text(24,189,"Drag: rotate    L/R: zoom",0xffe9d6aa,0);
     controls_text(24,210,"D-pad: map   A: select   B: back",0xffffffff,0);
+    if(pc && (map==6 || map==7 || map==8 || map==10 || map==11 || map==17))controls_map_thumbnail(map);
     n3ds_gpu_hud_screen(0);n3ds_gpu_texture_bind(0,saved);n3ds_gpu_world_state_restore();
 }
 

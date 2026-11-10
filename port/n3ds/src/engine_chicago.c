@@ -35,8 +35,6 @@ _Static_assert(sizeof(struct chicago_map)==220,"Chicago map ABI");
 _Static_assert(offsetof(struct chicago_map,animation)==164,"Chicago animation ABI");
 _Static_assert(offsetof(struct chicago_shader,maps)==84,"Chicago maps ABI");
 _Static_assert(sizeof(struct chicago_shader)==100,"Chicago shader ABI");
-extern struct rasterizer_frame_begin_parameters global_frame_parameters;
-extern struct rasterizer_window_begin_parameters global_window_parameters;
 boolean rasterizer_set_texture_direct(short stage,long bitmap,short index);
 point2d *rasterizer_set_texture(short stage,short type,short usage,long bitmap,short index);
 void n3ds_log(const char *message);
@@ -128,7 +126,7 @@ int halo_engine_chicago_numeric_tests(void)
     n3ds_log("PASS: Chicago numeric compass/digit selection: 14 CPU vectors");return 0;
 }
 void n3ds_generic_model_draw(const struct shader *,short,const struct rasterizer_model_begin_parameters *,
-    const void *,unsigned int,short,const unsigned short *,unsigned int);
+    const void *,unsigned int,short,const unsigned short *,unsigned int,const struct native_model_view *);
 #ifdef HALO_N3DS_EXPERIMENTAL_PC_UI
 /* Chicago type 1 uses a reflection cube in map 0. Evaluate its authored
  * combiner at posed vertices until the native path has 3D cube coordinates.
@@ -136,7 +134,7 @@ void n3ds_generic_model_draw(const struct shader *,short,const struct rasterizer
 /* Kevin Boggs: chicago_cube_model_draw - New3DS integration. */
 static int chicago_cube_model_draw(const struct chicago_shader *material,short permutation,
     const struct rasterizer_model_begin_parameters *parameters,const void *data,
-    unsigned int count,short type,const unsigned short *indices,unsigned int index_count)
+    unsigned int count,short type,const unsigned short *indices,unsigned int index_count,const struct native_model_view *frame_view)
 {
     const struct n3ds_cache_view *view=n3ds_engine_cache_view(0);
     struct native_generic_material program={0};
@@ -175,7 +173,7 @@ static int chicago_cube_model_draw(const struct chicago_shader *material,short p
             map->u_scale*parameters->base_map_scale.i,
             map->v_scale*parameters->base_map_scale.j,
             map->u_offset,map->v_offset,map->rotation,
-            global_frame_parameters.game_time_sec,&transform[0],&transform[1]);
+            frame_view->game_time,&transform[0],&transform[1]);
         memcpy(program.transform[m],transform,sizeof(transform));
     }
     if (!n3ds_chicago_program(&program,maps,color,alpha,replicate)) return 0;
@@ -219,7 +217,7 @@ static int chicago_cube_model_draw(const struct chicago_shader *material,short p
         if (normalize3d(&normal)<=0) return 0;
         float eye[3],dot=0,reflection[3],samples[4][4]={{0}};
         for (int axis=0;axis<3;++axis) {
-            eye[axis]=global_window_parameters.camera.position.n[axis]-skinned->position[axis];
+            eye[axis]=frame_view->camera_position.n[axis]-skinned->position[axis];
             dot+=normal.n[axis]*eye[axis];
         }
         for (int axis=0;axis<3;++axis) reflection[axis]=2*dot*normal.n[axis]-eye[axis];
@@ -229,7 +227,7 @@ static int chicago_cube_model_draw(const struct chicago_shader *material,short p
         n3ds_generic_evaluate(&program,samples,output[i].color);
         if (material->fade_mode) {
             float fade=angular_fade(vertex,&parameters->skinning,
-                &global_window_parameters.camera.forward,material->fade_mode);
+                &frame_view->camera_forward,material->fade_mode);
             if (material->blend==0) output[i].color[3]*=fade;
             else if (material->blend==7)
                 for (int channel=0;channel<4;++channel) output[i].color[channel]*=fade;
@@ -245,7 +243,7 @@ static int chicago_cube_model_draw(const struct chicago_shader *material,short p
 #endif
 void n3ds_chicago_model_draw(const struct shader *shader,short permutation,
     const struct rasterizer_model_begin_parameters *parameters,const void *data,
-    unsigned int count,short type,const unsigned short *indices,unsigned int index_count)
+    unsigned int count,short type,const unsigned short *indices,unsigned int index_count,const struct native_model_view *frame_view)
 {
     const struct n3ds_cache_view *view=n3ds_engine_cache_view(0);
     const struct chicago_shader *material=(const void *)shader;
@@ -262,7 +260,7 @@ void n3ds_chicago_model_draw(const struct shader *shader,short permutation,
         const struct generic_shader *g=(const void *)shader;
         assert(n3ds_cache_resolve(view,g,sizeof(*g))==g);
         if(g->stages.count) {
-            n3ds_generic_model_draw(shader,permutation,parameters,data,count,type,indices,index_count);
+            n3ds_generic_model_draw(shader,permutation,parameters,data,count,type,indices,index_count,frame_view);
             return;
         }
         /* Original generic preprocessor explicitly outputs texture0 when no
@@ -271,7 +269,7 @@ void n3ds_chicago_model_draw(const struct shader *shader,short permutation,
     }
 #ifdef HALO_N3DS_EXPERIMENTAL_PC_UI
     if (!generic && material->type==1 && chicago_cube_model_draw(material,permutation,
-        parameters,data,count,type,indices,index_count)) return;
+        parameters,data,count,type,indices,index_count,frame_view)) return;
 #endif
     if (!(material->type==0 && material->maps.count>=1 && material->maps.count<=4 && !material->extra_layers.count)) {
         char detail[192];
@@ -385,7 +383,7 @@ void n3ds_chicago_model_draw(const struct shader *shader,short permutation,
         }
         shader_texture_animation_evaluate(&map->animation,&parameters->animation,
             map->u_scale*parameters->base_map_scale.i,map->v_scale*parameters->base_map_scale.j,
-            map->u_offset,map->v_offset,map->rotation,global_frame_parameters.game_time_sec,
+            map->u_offset,map->v_offset,map->rotation,frame_view->game_time,
             &transforms[m][0],&transforms[m][1]);
     }
     if(four) {
@@ -420,7 +418,7 @@ void n3ds_chicago_model_draw(const struct shader *shader,short permutation,
             vertices[i].uv[m][axis]=transforms[m][axis].n[0]*vertex->texcoord.x+
                 transforms[m][axis].n[1]*vertex->texcoord.y+transforms[m][axis].n[3];
         if(native.vertex_fade) {
-            float fade=angular_fade(vertex,&parameters->skinning,&global_window_parameters.camera.forward,material->fade_mode);
+            float fade=angular_fade(vertex,&parameters->skinning,&frame_view->camera_forward,material->fade_mode);
             for(int c=0;c<4;++c) vertices[i].color[c]=fade;
         }
     }

@@ -122,6 +122,19 @@ int main(void){
  int drawn=preview_draws;n3ds_map_browser_draw();assert(preview_draws==drawn);controls=0;
  browser_selection=33;n3ds_map_browser_filter(&sample);n3ds_map_browser_draw();assert(preview_map==1 && preview_pc);
  browser_selection=13;n3ds_map_browser_filter(&sample);drawn=preview_draws;n3ds_map_browser_draw();assert(preview_draws==drawn);
+ /* Postgame returns to the successful match, not cancelled settings. */
+ assert(n3ds_local_match_menu_queue_reopen());
+ menu=0;sample.held=0;n3ds_local_match_menu_filter(&sample);assert(!local_match_open);
+ menu=1;sample.held=0;n3ds_local_match_menu_filter(&sample);assert(local_match_open);
+#ifdef HALO_N3DS_PC_LOCAL_MENU
+ assert(local_match_pc && local_match_weapons==12);
+ assert(!strcmp(local_match_map,"pc\\levels\\test\\bloodgulch\\bloodgulch"));
+#else
+ assert(!local_match_pc && local_match_weapons==0);
+#endif
+ assert(local_match_variant.universal_variant.score_limit==73 && local_match_bots==2 && local_match_difficulty==2);
+ tap(NATIVE_KEY_B);wireless=1;assert(!n3ds_local_match_menu_queue_reopen());wireless=0;
+ puts("PASS: successful match snapshot survives gameplay and cancelled edits; wireless excluded");
  puts("PASS: browser map identities, debounce, gesture isolation and cleanup on leaving the browser");
  puts("PASS: local settings, preserved gametype, touch/keys, opening debounce, Back, failed launch, wireless exclusion");
  return 0;

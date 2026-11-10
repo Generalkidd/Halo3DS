@@ -98,7 +98,7 @@ static class Tests
     }
     static void Safety(string root)
     {
-        PcMapsTests.Run(root);
+        PcMapsTests.Run(root); RevisionTests.Run(root);
         Check(Data.Catalog.Count==24,"embedded catalog loads");
         Reject("path traversal",delegate { Installer.SafePath(root,"../escape"); });
         Reject("sibling prefix escape",delegate { Installer.SafePath(root,"../"+Path.GetFileName(root)+"-other/file"); });
@@ -159,7 +159,7 @@ static class Tests
             Installer.PrepareMap(SourceEntry.FromFile(Path.Combine(expanded,name+".map")),target,name,Data.Catalog[name],default(CancellationToken),delegate{});
             Check(Data.HashFile(target)==Data.Catalog[name].Sha256,"expanded input "+name);
         }
-        using(var f=new FileStream(Path.Combine(input,"bloodgulch.map"),FileMode.Open)){f.Position=4096;f.WriteByte((byte)(f.ReadByte()^255));}
+        using(var f=new FileStream(Path.Combine(input,"bloodgulch.map"),FileMode.Open)){f.Position=0;f.WriteByte(255);}
         File.Delete(Path.Combine(output,"halo-source\\bloodgulch.nrl"));
         Reject("corrupt source",delegate{Installer.Run(options);});
         Check(Data.HashFile(Path.Combine(output,"halo-source\\bloodgulch.map"))==Data.Catalog["bloodgulch"].Sha256,"good map survives failed repair");

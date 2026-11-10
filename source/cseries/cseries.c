@@ -155,7 +155,7 @@ enum
 
 /* ---------- macros */
 
-#if defined(HALO_N3DS)
+#if defined(HALO_N3DS) && !defined(HALO_RELEASE)
 #define cseries_match_assert(file, line, expr) if (!(expr)) { display_assert(STRINGIFY(expr), MATCH_FILE(file), MATCH_LINE(line), TRUE); system_exit(-1); }
 #elif defined(HALO_RELEASE)
 #define cseries_match_assert(file, line, expr) { (void)(expr); }
@@ -355,7 +355,7 @@ char *csprintf(
 	return buffer;
 }
 
-#ifdef HALO_RELEASE
+#if defined(HALO_RELEASE) && !defined(HALO_N3DS)
 __thread boolean display_assert_skipped = FALSE;
 #endif
 

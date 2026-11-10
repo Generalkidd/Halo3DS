@@ -193,6 +193,7 @@ struct game_options;
 
 #ifdef HALO_N3DS
 #include "engine_game.h"
+#ifndef HALO_N3DS_STRIP_DIAGNOSTICS
 long long n3ds_engine_ticks(void);
 long long n3ds_engine_tick_frequency(void);
 void n3ds_log(const char *);
@@ -212,6 +213,11 @@ static void n3ds_game_profile(unsigned int kind,const long long stamps[6])
 #define NATIVE_GAME_BEGIN() long long native_stamps[6];native_stamps[0]=n3ds_engine_ticks()
 #define NATIVE_GAME_STAMP(i) native_stamps[i]=n3ds_engine_ticks()
 #define NATIVE_GAME_END(kind) do {NATIVE_GAME_STAMP(5);n3ds_game_profile(kind,native_stamps);} while(0)
+#else
+#define NATIVE_GAME_BEGIN() ((void)0)
+#define NATIVE_GAME_STAMP(i) ((void)0)
+#define NATIVE_GAME_END(kind) ((void)0)
+#endif
 #else
 #define NATIVE_GAME_BEGIN() ((void)0)
 #define NATIVE_GAME_STAMP(i) ((void)0)

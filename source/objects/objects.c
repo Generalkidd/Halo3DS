@@ -2279,6 +2279,12 @@ void object_export_function_values(
 // These local variants preserve the original XDK 3911 operand provenance for
 // this large function.  They are semantically identical to the shared matrix
 // validation macros, but the typed aliases reproduce the January codegen.
+#ifdef HALO_N3DS_STRIP_DIAGNOSTICS
+#define ocnm_root_matrix_internal(file, line, matrix, string) { (void)0; }
+#define ocnm_root_matrix_custom(file, line, matrix, custom_string) { (void)0; }
+#define ocnm_parent_matrix_internal(file, line, matrix, string) { (void)0; }
+#define ocnm_parent_matrix_custom(file, line, matrix, custom_string) { (void)0; }
+#else
 #define ocnm_root_matrix_internal(file, line, matrix, string) \
 match_vassert(file, line, valid_real((*matrix).scale), csprintf(temporary, "%s had a bad scale %f", string, (*matrix).scale)); \
 match_vassert(file, line, valid_real_normal3d(&(*matrix).forward), csprintf(temporary, "%s had a bad forward (%f,%f,%f)", string, (*matrix).forward.i, (*matrix).forward.j, (*matrix).forward.k)); \
@@ -2331,6 +2337,8 @@ if (!valid_real_matrix4x3(matrix)) \
 	real_vector3d const *ocnm_up = &(*matrix).up; \
 	ocnm_parent_matrix_internal(file, line, matrix, string); \
 }
+
+#endif
 
 #ifdef HALO_N3DS
 #include "engine_object_reuse.inl"
@@ -2660,6 +2668,7 @@ void object_compute_node_matrices(
 					object_nodes[node_stack_index] = node_matrix;
 				}
 
+#ifndef HALO_N3DS_STRIP_DIAGNOSTICS
 				if (!valid_real_matrix4x3(&object_nodes[node_stack_index]))
 				{
 					real_matrix4x3 const *validated_root_node_matrix;
@@ -2760,6 +2769,7 @@ void object_compute_node_matrices(
 						validated_root_node_matrix,
 						"object_compute_node_matrices root node matrix");
 				}
+#endif
 			}
 			else
 			{
@@ -2773,6 +2783,7 @@ void object_compute_node_matrices(
 					&object_nodes[node_stack_index]);
 			}
 
+#ifndef HALO_N3DS_STRIP_DIAGNOSTICS
 			if (node_stack_index==0)
 			{
 				real_matrix4x3 *final_matrix = &object_nodes[node_stack_index];
@@ -2783,6 +2794,7 @@ void object_compute_node_matrices(
 					match_assert_valid_real_matrix4x3_internal("c:\\halo\\SOURCE\\objects\\objects.c", 2935, final_matrix, string);
 				}
 			}
+#endif
 
 			next_sibling_node_index = node->next_sibling_node_index;
 
@@ -3623,7 +3635,7 @@ boolean object_force_inside_bsp(
 	return result;
 }
 
-#ifdef HALO_N3DS
+#if defined(HALO_N3DS) && !defined(HALO_N3DS_STRIP_DIAGNOSTICS)
 extern long long n3ds_engine_ticks(void),n3ds_engine_tick_frequency(void);
 extern void n3ds_log(const char *);
 static int native_object_sample;
@@ -4206,7 +4218,7 @@ void objects_garbage_collection(
 void objects_update(
 	void)
 {
-#ifdef HALO_N3DS
+#if defined(HALO_N3DS) && !defined(HALO_N3DS_STRIP_DIAGNOSTICS)
     /* One sampled simulation tick per second; avoid timing every object on
      * every tick. No actor scheduling or simulation rate changes. */
     static unsigned int native_object_frames;
@@ -4325,7 +4337,7 @@ void objects_update(
 	}
 
 	objects_garbage_collection();
-#ifdef HALO_N3DS
+#if defined(HALO_N3DS) && !defined(HALO_N3DS_STRIP_DIAGNOSTICS)
     if(native_object_sample) {
         char message[220];double scale=1000./n3ds_engine_tick_frequency();
         snprintf(message,sizeof(message),"OBJECT TICK SAMPLE: frame=%u type_ms=%.3f damage_ms=%.3f nodes_ms=%.3f functions_lights_ms=%.3f",native_object_frames,

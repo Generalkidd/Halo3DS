@@ -1,6 +1,7 @@
 /* New3DS integration additions by Kevin Boggs. */
-/* Local solo-match bots adapted from the Halo CE recomp combat bot logic.
- * A bot is a player in this process, never a network client. */
+/* Bots adapted from the Halo CE recomp combat bot logic. Local matches may
+ * use direct helpers; wireless bots emit actions on the host only, replicated
+ * through the normal player update stream. They never impersonate a console. */
 #include "cseries/cseries.h"
 #include "cseries/cseries_windows.h"
 #define PATH_EXTERNAL_FLEE_ROUTINES
@@ -787,7 +788,7 @@ void n3ds_bots_fill_action(short queue_index, short identifier,
 		state->last_unit_index = bot->unit_index;
 		state->combat_target = NONE;
 		state->last_perception_tick = -1000;
-		if (combat_bot_is_kode(queue_index) || combat_bot_is_star(queue_index))
+		if (game_connection()==_game_connection_local && (combat_bot_is_kode(queue_index) || combat_bot_is_star(queue_index)))
 		{
 			unsigned long camo_seed = (unsigned long)bot->unit_index ^
 				((unsigned long)tick * 0x9e3779b9UL) ^
@@ -826,7 +827,7 @@ void n3ds_bots_fill_action(short queue_index, short identifier,
 			state->weapon_target = NONE;
 			state->last_scan_tick = -1000;
 		}
-		else if (bot->action_object_index == state->weapon_target &&
+		else if (game_connection()==_game_connection_local && bot->action_object_index == state->weapon_target &&
 			(bot->action_result == _player_action_result_add_weapon_to_inventory ||
 			 bot->action_result == _player_action_result_swap_for_weapon) &&
 			combat_bot_distance_squared(&bot_unit->object.position,
@@ -1108,7 +1109,7 @@ void n3ds_bots_fill_action(short queue_index, short identifier,
 			queue_index, mode, (real)sqrt(objective_distance2),
 			bot_position.x, bot_position.y, objective.x, objective.y,
 			(int)bot->action_result);
-	if (mode == 2 && desired_seat_index != NONE &&
+	if (game_connection()==_game_connection_local && mode == 2 && desired_seat_index != NONE &&
 		objective_distance2 < 1.2f * 1.2f &&
 		unit_enter_seat(bot->unit_index, state->vehicle_target, desired_seat_index))
 	{
@@ -1152,6 +1153,13 @@ void n3ds_bots_fill_action(short queue_index, short identifier,
 	action->desired_weapon_index = NONE;
 	action->desired_grenade_index = NONE;
 	action->desired_zoom_level = NONE;
+    if(game_connection()==_game_connection_network_server && objective_distance2<1.2f*1.2f) {
+        if(mode==2 && tick-state->last_action_tick>20) {
+            action->control_flags|=FLAG(_unit_control_action_bit);state->last_action_tick=tick;
+        }
+        if((mode==5 || mode==7) && bot->action_object_index==objective_index)
+            action->control_flags|=FLAG(_unit_control_swap_weapons_bit);
+    }
 	if (mode == 1 || mode == 2 || mode == 4 || mode == 5 ||
 		mode == 6 || mode == 7 || mode == 8 || mode == 9 || mode == 10 || mode == 11 || mode == 12)
 	{
@@ -1167,7 +1175,7 @@ void n3ds_bots_fill_action(short queue_index, short identifier,
 					queue_index, vehicle->unit.driver_object_index, bot->unit_index,
 					tag_get_name(vehicle->definition_index));
 		}
-		if ((mode == 5 || mode == 7) && objective_index != NONE &&
+		if (game_connection()==_game_connection_local && (mode == 5 || mode == 7) && objective_index != NONE &&
 			objective_distance2 < 1.2f * 1.2f &&
 			bot->action_object_index == objective_index &&
 			(bot->action_result == _player_action_result_add_weapon_to_inventory ||
@@ -1303,7 +1311,7 @@ void n3ds_bots_fill_action(short queue_index, short identifier,
 			action->primary_trigger = 0.f;
 			state->last_melee_tick = tick;
 			state->melee_until_tick = tick + 15;
-			if (best_distance2 < 1.6f * 1.6f && unit->unit.current_weapon_index != NONE)
+			if (game_connection()==_game_connection_local && best_distance2 < 1.6f * 1.6f && unit->unit.current_weapon_index != NONE)
 			{
 				long weapon_index = unit->unit.weapon_object_indices[unit->unit.current_weapon_index];
 				struct weapon_datum *weapon = weapon_try_and_get(weapon_index);
@@ -1365,7 +1373,7 @@ void n3ds_bots_fill_action(short queue_index, short identifier,
 		}
 		/* The fake client cannot report a projectile hit. The fallback applies
 		   damage only to a visible target when this shot's aim roll hit. */
-		if (action->primary_trigger > 0.f && tick % shot_interval == queue_index % shot_interval &&
+		if (game_connection()==_game_connection_local && action->primary_trigger > 0.f && tick % shot_interval == queue_index % shot_interval &&
 			unit->unit.current_weapon_index != NONE)
 		{
 			long weapon_index = unit->unit.weapon_object_indices[unit->unit.current_weapon_index];
@@ -1588,4 +1596,11 @@ short n3ds_bots_create(short count)
 		n3ds_log(message);
 	}
 	return created;
+}
+
+/* Kevin Boggs: n3ds_bots_register_network - bind the replicated roster to host action generation. */
+void n3ds_bots_register_network(long index)
+{
+    unsigned slot=DATUM_INDEX_TO_ABSOLUTE_INDEX(index);
+    if(slot<MAXIMUM_NUMBER_OF_PLAYERS && player_try_and_get(index))n3ds_bot_players[slot]=index;
 }

@@ -1,8 +1,10 @@
 # Cross-platform command-line setup
 
 The CLI prepares Halo3DS game data on Windows, Linux and macOS using the same
-converter as the Windows setup apps. It accepts the English North American
-original Xbox release, build `01.10.12.2276`. PC/MCC data is unsupported.
+converter as the Windows setup apps. It accepts original Xbox ISO/XISO files and extracted maps. US retail, Rev 1
+and Rev 2 are supported; other recognizable Xbox releases receive a compatibility
+warning. PC/MCC data cannot replace the Xbox base installation. Use the Windows
+GUI's optional PC section to add retail PC maps.
 It does not compile the engine. Bring a `Halo3DS.3dsx` from a release or your build.
 
 ## Easy setup (no programming tools needed)
@@ -80,7 +82,8 @@ saves and unrelated files are retained.
 | --- | --- |
 | File or folder was not found | Drag it from Finder/File Explorer again. Select the file itself, rather than its containing folder. |
 | Choose a Halo3DS.3dsx file | Download `Halo3DS.3dsx` from the release; a ZIP or Windows EXE is not the game file. |
-| Unsupported Xbox release / PC/MCC | Use the English North American original Xbox retail dump, build `01.10.12.2276`. |
+| PC/MCC source rejected | Select the original Xbox game as the base source. |
+| Compatibility warning | This Xbox release is unverified. Setup can continue, but gameplay compatibility is not guaranteed. |
 | Missing compatibility/HUD data | Use the full Xbox ISO, or select its matching `default.xbe` when asked. |
 | Not enough destination space | Free the stated space or choose another output folder, then rerun. |
 | Sound needs DSP firmware | On your console, open Rosalina with **L + D-pad Down + SELECT**, then **Miscellaneous options → Dump DSP firmware**. |
@@ -102,6 +105,9 @@ PowerShell example:
 ```powershell
 ./halo3ds-setup.exe prepare --source 'C:\Games\Halo Xbox.iso' --destination 'H:\' --game 'C:\Builds\Halo3DS.3dsx'
 ```
+
+`verify` checks against the original retail map hash catalog. A revised disc can
+therefore fail that strict comparison even when `prepare` accepts it.
 
 `prepare` also accepts an extracted Xbox game folder or maps folder. If its
 matching `default.xbe` is not alongside the maps, add

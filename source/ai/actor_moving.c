@@ -1417,7 +1417,7 @@ static void actor_move_vector_avoidance(
 		struct object_datum *object = object_get(object_index);
 		boolean direction_chosen = FALSE;
 		struct actor_debug_info *debug_info =
-			&actor_debug_array[DATUM_INDEX_TO_ABSOLUTE_INDEX(actor_index)];
+			AI_DEBUG_RECORD(DATUM_INDEX_TO_ABSOLUTE_INDEX(actor_index));
 		struct vector_avoidance_data avoidance_data;
 		real weights[VECTOR_AVOIDANCE_NUMBER_OF_DIRECTIONS];
 		real_vector3d movement_vector;
@@ -1435,7 +1435,7 @@ static void actor_move_vector_avoidance(
 		short ray_index;
 		boolean sharp_turn = FALSE;
 
-		debug_info->field_19C = game_time_get();
+		AI_DEBUG_ONLY(debug_info->field_19C = game_time_get());
 		avoidance_data.structure = global_structure_bsp_get();
 		avoidance_data.bsp = global_collision_bsp_get();
 		avoidance_data.object_index = object_index;
@@ -1481,10 +1481,10 @@ static void actor_move_vector_avoidance(
 				&collision_t,
 				NULL);
 
-			debug_info->ray_origin[ray_index] = ray_origin;
-			debug_info->ray_direction[ray_index] = ray_direction;
-			debug_info->avoidance_type[ray_index] = avoidance_type;
-			debug_info->collision_t[ray_index] = collision_t;
+			AI_DEBUG_ONLY(debug_info->ray_origin[ray_index] = ray_origin);
+			AI_DEBUG_ONLY(debug_info->ray_direction[ray_index] = ray_direction);
+			AI_DEBUG_ONLY(debug_info->avoidance_type[ray_index] = avoidance_type);
+			AI_DEBUG_ONLY(debug_info->collision_t[ray_index] = collision_t);
 			if (avoidance_type > _actor_vector_avoidance_clear)
 			{
 				real sense_emergency = 1.f - collision_t;
@@ -1522,10 +1522,10 @@ static void actor_move_vector_avoidance(
 					&ray_direction,
 					&avoidance_t[ray_index],
 					&actor->control.vector_avoidance_clear_times[direction_index][ray_index]);
-				debug_info->field_6358[direction_index][ray_index] = ray_origin;
-				debug_info->field_6418[direction_index][ray_index] = ray_direction;
-				debug_info->field_62F8[direction_index][ray_index] = avoidance_types[ray_index];
-				debug_info->avoid_t[direction_index][ray_index] = avoidance_t[ray_index];
+				AI_DEBUG_ONLY(debug_info->field_6358[direction_index][ray_index] = ray_origin);
+				AI_DEBUG_ONLY(debug_info->field_6418[direction_index][ray_index] = ray_direction);
+				AI_DEBUG_ONLY(debug_info->field_62F8[direction_index][ray_index] = avoidance_types[ray_index]);
+				AI_DEBUG_ONLY(debug_info->avoid_t[direction_index][ray_index] = avoidance_t[ray_index]);
 			}
 
 			direction_weight = 0.f;
@@ -1578,7 +1578,7 @@ static void actor_move_vector_avoidance(
 		}
 
 		angular_speed = magnitude3d(&object->object.angular_velocity);
-		debug_info->field_6551 = FALSE;
+		AI_DEBUG_ONLY(debug_info->field_6551 = FALSE);
 		if (angular_speed > 0.02f)
 		{
 			real velocity_weight = MIN((angular_speed - 0.02f)*12.5f, 1.f)*0.8f;
@@ -1615,11 +1615,11 @@ static void actor_move_vector_avoidance(
 				velocity_weight = 0.f;
 			}
 
-			debug_info->field_6554 = velocity_weight;
-			debug_info->field_6558 = angular_speed;
-			debug_info->field_6551 = TRUE;
-			debug_info->avoidance_vector = velocity_direction;
-			debug_info->field_6568 = velocity_approximate_weight;
+			AI_DEBUG_ONLY(debug_info->field_6554 = velocity_weight);
+			AI_DEBUG_ONLY(debug_info->field_6558 = angular_speed);
+			AI_DEBUG_ONLY(debug_info->field_6551 = TRUE);
+			AI_DEBUG_ONLY(debug_info->avoidance_vector = velocity_direction);
+			AI_DEBUG_ONLY(debug_info->field_6568 = velocity_approximate_weight);
 		}
 
 		best_weight = -REAL_MAX;
@@ -1638,7 +1638,7 @@ static void actor_move_vector_avoidance(
 			"c:\\halo\\SOURCE\\ai\\actor_moving.c",
 			2435,
 			(best_avoidance_direction >= 0) && (best_avoidance_direction < VECTOR_AVOIDANCE_NUMBER_OF_DIRECTIONS));
-		csmemcpy(debug_info->field_64D8, weights, sizeof(weights));
+		AI_DEBUG_ONLY(csmemcpy(debug_info->field_64D8, weights, sizeof(weights)));
 
 		movement_vector = *movement_direction;
 		forward_dot = 1.f;
@@ -1668,12 +1668,12 @@ static void actor_move_vector_avoidance(
 		}
 
 		weight_difference = best_weight - movement_approximate_weight;
-		debug_info->field_6524 = avoidance_data.forward;
-		debug_info->field_6530 = *movement_direction;
-		debug_info->field_6504 = movement_direction_approximation;
-		debug_info->field_64FC = best_weight;
-		debug_info->field_6500 = best_avoidance_direction;
-		debug_info->field_6508 = movement_approximate_weight;
+		AI_DEBUG_ONLY(debug_info->field_6524 = avoidance_data.forward);
+		AI_DEBUG_ONLY(debug_info->field_6530 = *movement_direction);
+		AI_DEBUG_ONLY(debug_info->field_6504 = movement_direction_approximation);
+		AI_DEBUG_ONLY(debug_info->field_64FC = best_weight);
+		AI_DEBUG_ONLY(debug_info->field_6500 = best_avoidance_direction);
+		AI_DEBUG_ONLY(debug_info->field_6508 = movement_approximate_weight);
 		if (maximum_sense_emergency > 0.6f)
 		{
 			emergency_scale = 1.f + MIN(1.f, (maximum_sense_emergency - 0.6f)/(1.f - 0.6f));
@@ -1682,28 +1682,28 @@ static void actor_move_vector_avoidance(
 		{
 			emergency_scale = MIN(1.f, maximum_sense_emergency/0.3f);
 		}
-		debug_info->field_6510 = forward_dot;
-		debug_info->sign_no_danger = weight_difference;
+		AI_DEBUG_ONLY(debug_info->field_6510 = forward_dot);
+		AI_DEBUG_ONLY(debug_info->sign_no_danger = weight_difference);
 
 		if (forward_dot < -0.2f)
 		{
 			if (actor->control.vector_avoidance_sharp_turn_timer != NONE &&
 				actor->control.vector_avoidance_sharp_turn_timer < 90)
 			{
-				debug_info->field_653C = 7;
+				AI_DEBUG_ONLY(debug_info->field_653C = 7);
 				sharp_turn = TRUE;
 			}
 			else if (magnitude_squared3d(&object->object.angular_velocity) > 0.05f*0.05f)
 			{
 				if (weight_difference > 2.f && best_weight > 2.f)
 				{
-					debug_info->field_653C = 6;
+					AI_DEBUG_ONLY(debug_info->field_653C = 6);
 					sharp_turn = TRUE;
 				}
 			}
 			else if (emergency_scale > 0.5f)
 			{
-				debug_info->field_653C = 5;
+				AI_DEBUG_ONLY(debug_info->field_653C = 5);
 				sharp_turn = TRUE;
 			}
 		}
@@ -1765,18 +1765,18 @@ static void actor_move_vector_avoidance(
 						rotation.j = avoidance_data.forward.j*rotation_angle;
 						rotation.k = avoidance_data.forward.k*rotation_angle;
 						direction_chosen = TRUE;
-						debug_info->field_653C = 4;
-						debug_info->sign_rotated = rotation_angle;
+						AI_DEBUG_ONLY(debug_info->field_653C = 4);
+						AI_DEBUG_ONLY(debug_info->sign_rotated = rotation_angle);
 					}
 					else
 					{
-						debug_info->sign_too_far_cosangle = direction_dot;
-						debug_info->field_653C = 3;
+						AI_DEBUG_ONLY(debug_info->sign_too_far_cosangle = direction_dot);
+						AI_DEBUG_ONLY(debug_info->field_653C = 3);
 					}
 				}
 				else
 				{
-					debug_info->field_653C = 2;
+					AI_DEBUG_ONLY(debug_info->field_653C = 2);
 				}
 			}
 			else if (maximum_sense_emergency > 0.f)
@@ -1805,25 +1805,25 @@ static void actor_move_vector_avoidance(
 					rotation.j *= rotation_angle;
 					rotation.k *= rotation_angle;
 				}
-				debug_info->field_6520 = rotation_angle;
+				AI_DEBUG_ONLY(debug_info->field_6520 = rotation_angle);
 				direction_chosen = TRUE;
-				debug_info->field_653C = 1;
-				debug_info->field_651C = maximum_sense_emergency;
+				AI_DEBUG_ONLY(debug_info->field_653C = 1);
+				AI_DEBUG_ONLY(debug_info->field_651C = maximum_sense_emergency);
 			}
 			else
 			{
-				debug_info->field_653C = 0;
+				AI_DEBUG_ONLY(debug_info->field_653C = 0);
 			}
 		}
 
-		debug_info->field_6550 = direction_chosen;
+		AI_DEBUG_ONLY(debug_info->field_6550 = direction_chosen);
 		if (direction_chosen)
 			actor->control.vector_avoidance_current_direction = best_avoidance_direction;
 		else
 			actor->control.vector_avoidance_current_direction = NONE;
-		debug_info->avoidance_data = avoidance_data;
-		debug_info->field_654C = emergency;
-		debug_info->field_6540 = rotation;
+		AI_DEBUG_ONLY(debug_info->avoidance_data = avoidance_data);
+		AI_DEBUG_ONLY(debug_info->field_654C = emergency);
+		AI_DEBUG_ONLY(debug_info->field_6540 = rotation);
 	}
 
 	*avoidance_rotation = rotation;
@@ -1995,9 +1995,9 @@ boolean actor_path_refresh(
 					&actor->input.position.body_position,
 					&actor->control.path.destination.point);
 				struct actor_debug_info *debug_info =
-					&actor_debug_array[DATUM_INDEX_TO_ABSOLUTE_INDEX(actor_index)];
+					AI_DEBUG_RECORD(DATUM_INDEX_TO_ABSOLUTE_INDEX(actor_index));
 
-				debug_info->last_path_refresh = game_time_get();
+				AI_DEBUG_ONLY(debug_info->last_path_refresh = game_time_get());
 
 				if (actor->state.flying)
 				{

@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 #define HALO_N3DS_INLINE_DATUM 1
 /*
 COLLISIONS.C
@@ -107,6 +108,8 @@ symbols in this file:
 #include "physics.h"
 #include "objects/object_types.h"
 #include "objects/objects.h"
+#include "cseries/errors.h"
+#include "objects/reference_lists.h"
 #include "game/game_globals.h"
 #include "math/real_math_planes.h"
 #include "scenario/fog_definitions.h"
@@ -311,7 +314,7 @@ boolean collision_test_point(
 
 		for (object_index = cluster_get_first_collideable_object(&reference_index, cluster_index);
 			object_index != NONE;
-			object_index = cluster_get_next_collideable_object(&reference_index))
+			object_index = reference_list_get_next_datum_index(collideable_object_cluster_partition.data_reference_data,&reference_index))
 		{
 			if (object_test_point(object_index, collision_flags, point, ignore_object_index))
 			{
@@ -327,6 +330,10 @@ collision:
 	return TRUE;
 }
 
+/* Private query mode, stripped before forwarding the original collision flags.
+ * Only n3ds_collision_test_line_any requests this; normal queries still find
+ * the closest hit and fill every collision result field. */
+#define N3DS_COLLISION_ANY_HIT (1UL << 31)
 boolean collision_test_vector(
 	unsigned long flags,
 	real_point3d const *point,
@@ -335,6 +342,8 @@ boolean collision_test_vector(
 	struct collision_result *collision)
 {
 	boolean hit = FALSE;
+	boolean any_hit = !!(flags & N3DS_COLLISION_ANY_HIT);
+	flags &= ~N3DS_COLLISION_ANY_HIT;
 	boolean test_environment = TEST_FLAG(flags, _collision_test_structure_bit) ||
 		TEST_FLAG(flags, _collision_test_media_bit) ||
 		TEST_FLAG(flags, _collision_test_objects_bit);
@@ -388,6 +397,11 @@ boolean collision_test_vector(
 			&bsp_result) &&
 			TEST_FLAG(flags, _collision_test_structure_bit))
 		{
+			if (any_hit)
+			{
+				collision_log_end_time(_collision_function_vector_structure, collision_usage_times.vector_structure.QuadPart);
+				return TRUE;
+			}
 			long material_type;
 
 			collision->t = bsp_result.t;
@@ -560,9 +574,36 @@ boolean collision_test_vector(
 
 					for (object_index = cluster_get_first_collideable_object(&reference_index, cluster_index);
 						object_index != NONE;
-						object_index = cluster_get_next_collideable_object(&reference_index))
+						object_index = reference_list_get_next_datum_index(collideable_object_cluster_partition.data_reference_data,&reference_index))
 					{
+#ifdef HALO_N3DS
+                        /* Share the checked datum lookup between marking and
+                         * the common root miss. Keep recursive sibling lists
+                         * intact and use the original sphere predicate. */
+                        struct object_datum *candidate=object_header_get(object_index)->datum;
+                        if(candidate->object.magic_number==global_object_marker)continue;
+                        candidate->object.magic_number=global_object_marker;
+                        if(candidate->object.next_object_index==NONE &&
+                           (object_index==ignore_object_index ||
+                            TEST_FLAG(candidate->object.flags,_object_invisible_bit) ||
+                            !TEST_FLAG(flags,candidate->object.type+_collision_test_objects_first_type_bit) ||
+                            !fast_vector_intersects_sphere(point,vector,&candidate->object.bounding_sphere_center,
+                                                           candidate->object.bounding_sphere_radius))) {
+#ifdef HALO_N3DS_COLLISION_RAY_VERIFY
+                            struct collision_result reference=*collision;
+                            boolean reference_hit=object_test_vector(object_index,flags,bsp_flags,point,vector,ignore_object_index,&reference);
+                            if(reference_hit || csmemcmp(&reference,collision,sizeof(reference))) {
+                                extern void n3ds_log(const char *);
+                                n3ds_log("RESULT: FAIL ray prefilter changed collision");
+                                abort();
+                            }
+#endif
+                            continue;
+                        }
+                        if (
+#else
 						if (object_mark_function(object_index) &&
+#endif
 							object_test_vector(
 								object_index,
 								flags,
@@ -573,10 +614,12 @@ boolean collision_test_vector(
 								collision))
 						{
 							hit = TRUE;
+							if (any_hit) goto objects_done;
 						}
 					}
 				}
 			}
+objects_done:
 			object_marker_end();
 			structure_cluster_marker_end();
 			collision_log_end_time(
@@ -584,6 +627,7 @@ boolean collision_test_vector(
 				collision_usage_times.vector_objects.QuadPart);
 		}
 
+		if (any_hit) return hit;
 		if (!hit)
 		{
 			collision->t = 1.0f;
@@ -865,10 +909,38 @@ boolean collision_get_features_in_sphere(
 							&reference_index,
 							leaf->cluster_index);
 						object_index != NONE;
-						object_index = cluster_get_next_collideable_object(&reference_index))
+						object_index = reference_list_get_next_datum_index(collideable_object_cluster_partition.data_reference_data,&reference_index))
 					{
+#ifdef HALO_N3DS
+                        /* Halo64 b629d0a's common-miss pretest: reuse the datum
+                         * for marking and reject before entering the recursive
+                         * feature collector. A sibling list must still be visited.
+                         * Parent bounds enclose children in the original collector. */
+                        struct object_datum *candidate=object_header_get(object_index)->datum;
+                        if(candidate->object.magic_number==global_object_marker)continue;
+                        candidate->object.magic_number=global_object_marker;
+                        if(candidate->object.next_object_index==NONE &&
+                           (object_index==ignore_object_index ||
+                            TEST_FLAG(candidate->object.flags,_object_invisible_bit) ||
+                            TEST_FLAG(candidate->object.flags,_object_no_collisions_bit) ||
+                            (TEST_FLAG(candidate->object.damage_flags,_object_dead_bit) && candidate->object.type==_object_type_biped) ||
+                            !point_in_sphere(center,&candidate->object.bounding_sphere_center,
+                                             candidate->object.bounding_sphere_radius+radius))) {
+#ifdef HALO_N3DS_COLLISION_PREFILTER_VERIFY
+                            struct collision_feature_list before=*features;
+                            object_get_features_in_sphere(flags,object_index,center,radius,height,width,ignore_object_index,features);
+                            if(csmemcmp(&before,features,sizeof(before))) {
+                                extern void n3ds_log(const char *);
+                                n3ds_log("RESULT: FAIL collision prefilter changed features");
+                            }
+#endif
+                            continue;
+                        }
+                        {
+#else
 						if (object_mark_function(object_index))
 						{
+#endif
 							object_get_features_in_sphere(
 								flags,
 								object_index,
@@ -1825,4 +1897,31 @@ static void collision_fix_pill_nudge_collision(
 	}
 
 	return;
+}
+
+/* Kevin Boggs: n3ds_collision_test_line_any */
+boolean n3ds_collision_test_line_any(
+    unsigned long flags,
+    const real_point3d *point0,
+    const real_point3d *point1,
+    long ignore_object_index)
+{
+    real_vector3d vector;
+    struct collision_result ignored;
+    vector_from_points3d(point0, point1, &vector);
+    boolean hit = collision_test_vector(flags | N3DS_COLLISION_ANY_HIT,
+        point0, &vector, ignore_object_index, &ignored);
+#ifdef HALO_N3DS_COLLISION_ANY_VERIFY
+    /* Verification builds compare every optimized visibility ray to the
+     * original closest-hit path. Never enable this in a timed benchmark. */
+    struct collision_result reference;
+    boolean expected = collision_test_vector(flags, point0, &vector, ignore_object_index, &reference);
+    if (hit != expected)
+    {
+        extern void n3ds_log(const char *);
+        n3ds_log("RESULT: FAIL any-hit visibility mismatch");
+        abort();
+    }
+#endif
+    return hit;
 }

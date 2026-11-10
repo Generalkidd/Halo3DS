@@ -63,6 +63,9 @@ int n3ds_gpu_model_reflection_tests(void);
 /* Immutable stream revisions stay GPU-resident; NULL requests frame fallback.
  * Caller supplies a stable0..255 cache slot and a new revision on every decode. */
 void *n3ds_gpu_model_resident_upload(unsigned int slot,unsigned long long revision,const void *source,unsigned int bytes);
+/* Publish an immutable optional geometry allocation; its owner must not write
+ * it again until n3ds_gpu_geometry_free. A full registry keeps immediate draws. */
+void n3ds_gpu_geometry_publish(const void *,unsigned int bytes);
 int n3ds_gpu_model_resident_tests(void);
 int n3ds_gpu_model_lighting_tests(void);
 /* Rigid input stores a local normal in color; rows are scaled bone XYZ rows. */
@@ -81,8 +84,13 @@ int n3ds_gpu_model_transform_tests(void);
  * Flush before any CPU-shaded/transparent path or external render-state change. */
 void n3ds_gpu_model_batch_begin(void);
 void n3ds_gpu_model_batch_flush(void);
+/* Engine preparation boundary: restore in command order without a CPU join. */
+void n3ds_gpu_model_prepare_boundary(void);
 void n3ds_gpu_model_batch_end(void);
 int n3ds_gpu_model_batch_tests(void);
+/* Borrowed environment vertex/coordinate/index ranges must remain immutable
+ * through presentation and the following FrameBegin GPU completion wait. */
+void n3ds_gpu_environment_batch_end(void);
 int n3ds_gpu_environment_draw(const struct native_render_vertex *,const float *light_uv,
     const unsigned short *,unsigned int count,int lightmap,int detail,float detail_u_scale,float detail_v_scale,unsigned int material,int alpha_test);
 /* Original primary/secondary emission plus constant plasma-off channel.
@@ -182,6 +190,8 @@ int n3ds_gpu_indexed_draw(const void *vertices,const unsigned short *indices,
 /* Frame-owned immutable copy; remains valid through both eye views and is
  * retired only by the next frame's GPU wait. NULL outside an active frame. */
 const unsigned short *n3ds_gpu_indices_upload(const unsigned short *indices,unsigned int count);
+/* Producer-side range check for immutable map or current-frame model data. */
+int n3ds_gpu_model_geometry_owned(const void *vertices,unsigned int bytes);
 struct native_render_vertex *n3ds_gpu_model_vertices_allocate(unsigned int count);
 unsigned long long n3ds_gpu_model_frame_serial(void);
 void n3ds_gpu_model_cache_release(void);

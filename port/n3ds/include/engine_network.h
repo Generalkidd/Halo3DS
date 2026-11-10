@@ -13,6 +13,8 @@ struct network_game_server;
 int n3ds_network_server_coop_current_difficulty(struct network_game_server *server);
 int n3ds_network_server_coop_difficulty(struct network_game_server *server, int difficulty);
 int n3ds_network_coop_active(void);
+int n3ds_network_bot_options(int count_delta,int difficulty_delta,int *count,int *difficulty);
+int n3ds_ui_wireless_lobby_active(void);
 /* Reserved high bits travel in the existing reliable player-action stream.
  * They are removed before unit control flags reach gameplay. */
 #define N3DS_COOP_SKIP 0x40000000u
