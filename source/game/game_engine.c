@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /*
 GAME_ENGINE.C
 
@@ -574,6 +575,14 @@ symbols in this file:
 #include "text/unicode.h"
 #include "units/bipeds.h"
 #include "units/units.h"
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_UI
+#include "tag_files/tag_files.h"
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_MENU_KEYS
+#include <stdio.h>
+#include <string.h>
+#endif
+int n3ds_pc_tags_active(void);
+#endif
 
 /* ---------- constants */
 
@@ -1882,7 +1891,7 @@ static void game_engine_rasterize_in_game_score(
 					row_string,
 					L"\t%s\t%s\t%s",
 					place_string,
-					player->name,
+					player_display_name(player),
 					status_string);
 
 				if (has_teams)
@@ -2123,7 +2132,7 @@ void game_engine_post_rasterize_post_game(
 				draw_string_set_color(
 					&team_colors[PIN(team_index, 0, 1)]);
 			}
-			usnprintf(row_string, NUMBEROF(row_string), L" \t \t%s", player->name);
+			usnprintf(row_string, NUMBEROF(row_string), L" \t \t%s", player_display_name(player));
 			row_string[NUMBEROF(row_string) - 1] = 0;
 			drawline(row_string, draw_row, 0);
 			draw_string_set_color(&winner_color);
@@ -6026,12 +6035,19 @@ boolean game_engine_allow_dynamic_lighting(
 boolean game_engine_allow_integrated_lights(
 	long object_index)
 {
+#ifdef HALO_N3DS
+	/* Keep the bottom-screen flashlight usable in every multiplayer variant.
+	 * The existing unit/input path still owns toggling, battery and networking. */
+	(void)object_index;
+	return TRUE;
+#else
 	boolean allow_integrated_lights = TRUE;
 
 	if (game_engine)
 		allow_integrated_lights = !TEST_FLAG(game_engine_globals.flags, _game_engine_allow_integrated_lights_bit);
 
 	return allow_integrated_lights;
+#endif
 }
 
 void game_engine_variant_cleanup(
@@ -6485,6 +6501,33 @@ long game_engine_remap_vehicle(
 		vehicle1 = TAG_BLOCK_GET_ELEMENT(vehicles, 1, struct game_globals_vehicle);
 		vehicle2 = TAG_BLOCK_GET_ELEMENT(vehicles, 2, struct game_globals_vehicle);
 
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_UI
+		/* PC retail globals list six multiplayer vehicles, including the Rocket
+		 * Warthog. The Xbox rule below only recognizes its first three entries.
+		 * Keep that rule for Xbox caches; use the complete PC list while honoring
+		 * the original variant's vehicle-set restriction. */
+		if(n3ds_pc_tags_active())
+		{
+			boolean listed=FALSE;
+			for(short i=0;i<vehicles->count;++i)
+			{
+				struct game_globals_vehicle *entry=TAG_BLOCK_GET_ELEMENT(vehicles,i,struct game_globals_vehicle);
+				if(entry->vehicle.index==result) {listed=TRUE;break;}
+			}
+			if(!listed || global_variant.universal_variant.vehicle_set==1) return NONE;
+			switch(global_variant.universal_variant.vehicle_set)
+			{
+			case 2:
+				if(result!=vehicle0->vehicle.index &&
+					_stricmp(tag_get_name(result),"vehicles\\rwarthog\\rwarthog")) return NONE;
+				break;
+			case 3: if(result!=vehicle1->vehicle.index) return NONE;break;
+			case 4: if(result!=vehicle2->vehicle.index) return NONE;break;
+			}
+			return result;
+		}
+#endif
+
 		if (result != vehicle0->vehicle.index &&
 			result != vehicle1->vehicle.index &&
 			result != vehicle2->vehicle.index)
@@ -6543,6 +6586,22 @@ long game_engine_remap_weapon(
 		return weapon_definition_index;
 	}
 
+#if defined(HALO_N3DS_EXPERIMENTAL_PC_UI) && defined(HALO_N3DS_PC_LOCAL_MENU)
+	if(n3ds_pc_tags_active() && n3ds_main_is_solo_multiplayer()) {
+		extern int n3ds_pc_local_weapon_override(void);
+		int override=n3ds_pc_local_weapon_override();
+		if(override)return list_index_to_weapon_definition_index(override==1?1:14);
+	}
+#endif
+
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_UI
+	if (n3ds_pc_tags_active())
+	{
+		if (global_variant.universal_variant.weapon_set == 10)
+			return NONE;
+	}
+	else
+#endif
 	if (weapon_list_index == 1)
 		weapon_list_index = 7;
 
@@ -6624,6 +6683,11 @@ long game_engine_remap_weapon(
 		case 9:
 			weapon_list_index = 8;
 			break;
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_UI
+		case 14:
+			if (n3ds_pc_tags_active()) weapon_list_index = 8;
+			break;
+#endif
 		}
 		break;
 
@@ -6638,6 +6702,12 @@ long game_engine_remap_weapon(
 		case 5:
 			weapon_list_index = 4;
 			break;
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_UI
+		case 14:
+		case 15:
+			if (n3ds_pc_tags_active()) weapon_list_index = 0;
+			break;
+#endif
 		}
 		break;
 	}
@@ -7030,13 +7100,13 @@ static void internal_rasterize_target_name(
 	if (player->unknown7c != NONE)
 	{
 		struct player_datum *target_player = player_get(player->unknown7c);
-		wchar_t target_name[12] = { 0 };
+		wchar_t target_name[20] = { 0 };
 		long hold_time = player->target_hold_time;
 		real alpha;
 
 		if (hold_time >= 10)
 			hold_time = 10;
-		ustrncpy(target_name, target_player->name, NUMBEROF(target_name) - 1);
+		ustrncpy(target_name, player_display_name(target_player), NUMBEROF(target_name) - 1);
 		target_name[NUMBEROF(target_name) - 1] = 0;
 		alpha = (real)pow((double)(hold_time * 0.1f), 1.9f) * 0.5f;
 		game_engine_rasterize_message(target_name, alpha);
@@ -7111,28 +7181,28 @@ static boolean internal_rasterize_score(
 			message,
 			message_character_count,
 			GET_GAME_ENGINE_HUD_FORMAT(0x4A),
-			player->name);
+			player_display_name(player));
 		break;
 	case 1:
 		usnprintf(
 			message,
 			message_character_count,
 			GET_GAME_ENGINE_HUD_FORMAT(0x4B),
-			player->name);
+			player_display_name(player));
 		break;
 	case 2:
 		usnprintf(
 			message,
 			message_character_count,
 			GET_GAME_ENGINE_HUD_FORMAT(0x4C),
-			player->name);
+			player_display_name(player));
 		break;
 	case 3:
 		usnprintf(
 			message,
 			message_character_count,
 			GET_GAME_ENGINE_HUD_FORMAT(0x4D),
-			player->name);
+			player_display_name(player));
 		break;
 	case 4:
 		other_player = player_get(parameter2);
@@ -7140,8 +7210,8 @@ static boolean internal_rasterize_score(
 			message,
 			message_character_count,
 			GET_GAME_ENGINE_HUD_FORMAT(0x4E),
-			player->name,
-			other_player->name);
+			player_display_name(player),
+			player_display_name(other_player));
 		break;
 	case 5:
 		other_player = player_get(parameter2);
@@ -7149,8 +7219,8 @@ static boolean internal_rasterize_score(
 			message,
 			message_character_count,
 			GET_GAME_ENGINE_HUD_FORMAT(0x4F),
-			player->name,
-			other_player->name);
+			player_display_name(player),
+			player_display_name(other_player));
 		break;
 	case 28:
 		other_player = player_get(parameter2);
@@ -7158,14 +7228,14 @@ static boolean internal_rasterize_score(
 			message,
 			message_character_count,
 			GET_GAME_ENGINE_HUD_FORMAT(0x50),
-			other_player->name);
+			player_display_name(other_player));
 		break;
 	case 6:
 		usnprintf(
 			message,
 			message_character_count,
 			GET_GAME_ENGINE_HUD_FORMAT(0x51),
-			player->name);
+			player_display_name(player));
 		break;
 	case 13:
 		other_player = player_get(parameter2);
@@ -7173,7 +7243,7 @@ static boolean internal_rasterize_score(
 			message,
 			message_character_count,
 			GET_GAME_ENGINE_HUD_FORMAT(0x52),
-			other_player->name);
+			player_display_name(other_player));
 		break;
 	case 10:
 		ustrncpy(
@@ -7216,7 +7286,7 @@ static boolean internal_rasterize_score(
 			message,
 			message_character_count,
 			GET_GAME_ENGINE_HUD_FORMAT(0x58),
-			other_player->name);
+			player_display_name(other_player));
 		break;
 	case 14:
 		usnprintf(
@@ -7264,7 +7334,7 @@ static boolean internal_rasterize_score(
 			message,
 			message_character_count,
 			GET_GAME_ENGINE_HUD_FORMAT(0x5E),
-			other_player->name,
+			player_display_name(other_player),
 			score);
 		break;
 	case 23:
@@ -7448,6 +7518,19 @@ static void game_engine_update_item_spawn(
 				object_index = object_new(&placement_data);
 				if (object_index != NONE)
 				{
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_MENU_KEYS
+					if(n3ds_pc_tags_active()) {
+						static unsigned int reported;
+						const char *actual=tag_get_name(object_get(object_index)->definition_index);
+						unsigned int bit=actual && strstr(actual,"flamethrower")?1u:
+							actual && strstr(actual,"plasma_cannon")?2u:0u;
+						if(bit && !(reported&bit)) {
+							extern void n3ds_log(const char *);
+							char message[150];snprintf(message,sizeof(message),"PC PICKUP SPAWN: %s",actual);
+							n3ds_log(message);reported|=bit;
+						}
+					}
+#endif
 					struct item_datum *item = item_get(object_index);
 
 					object_set_garbage(object_index, FALSE);

@@ -1102,9 +1102,9 @@ long actor_aim_projectile(
 	if (actor->control.fire_state == _actor_fire_state_bursting)
 	{
 		struct actor_debug_info *actor_debug_info =
-			&actor_debug_array[DATUM_INDEX_TO_ABSOLUTE_INDEX(actor_index)];
+			AI_DEBUG_RECORD(DATUM_INDEX_TO_ABSOLUTE_INDEX(actor_index));
 
-		actor_debug_info->last_projectile_aiming_time = game_time_get();
+		AI_DEBUG_ONLY(actor_debug_info->last_projectile_aiming_time = game_time_get());
 
 		if (actor->control.current_fire_target_type == _actor_fire_target_prop &&
 			actor->control.current_fire_target_prop_index != NONE)
@@ -1124,8 +1124,8 @@ long actor_aim_projectile(
 			1071,
 			vector);
 
-		actor_debug_info->field_60 = actor->control.burst_aim_by_vector;
-		actor_debug_info->field_64 = *origin;
+		AI_DEBUG_ONLY(actor_debug_info->field_60 = actor->control.burst_aim_by_vector);
+		AI_DEBUG_ONLY(actor_debug_info->field_64 = *origin);
 
 		if (actor->control.burst_aim_by_vector)
 		{
@@ -1135,7 +1135,7 @@ long actor_aim_projectile(
 		{
 			real_point3d const *burst_target = &actor->control.burst_target;
 
-			actor_debug_info->field_7C = *burst_target;
+			AI_DEBUG_ONLY(actor_debug_info->field_7C = *burst_target);
 			vector->i = burst_target->x - origin->x;
 			vector->j = burst_target->y - origin->y;
 			vector->k = burst_target->z - origin->z;
@@ -1146,7 +1146,7 @@ long actor_aim_projectile(
 			"c:\\halo\\SOURCE\\ai\\actor_combat.c",
 			1090,
 			vector);
-		actor_debug_info->field_70 = *vector;
+		AI_DEBUG_ONLY(actor_debug_info->field_70 = *vector);
 
 		{
 			real_vector3d weapon_vector;
@@ -1177,13 +1177,13 @@ long actor_aim_projectile(
 						GRENADE_AIMING_ANGLE_COSINE);
 				}
 
-				actor_debug_info->field_88 = TRUE;
-				actor_debug_info->field_98 = weapon_vector;
-				actor_debug_info->field_8C = *vector;
+				AI_DEBUG_ONLY(actor_debug_info->field_88 = TRUE);
+				AI_DEBUG_ONLY(actor_debug_info->field_98 = weapon_vector);
+				AI_DEBUG_ONLY(actor_debug_info->field_8C = *vector);
 			}
 			else
 			{
-				actor_debug_info->field_88 = FALSE;
+				AI_DEBUG_ONLY(actor_debug_info->field_88 = FALSE);
 			}
 		}
 
@@ -1639,7 +1639,7 @@ void actor_combat_update(
 	boolean hold_burst_start = FALSE;
 	long weapon_index = actor_get_weapon(actor_index);
 	struct actor_debug_info *actor_debug_info =
-		&actor_debug_array[DATUM_INDEX_TO_ABSOLUTE_INDEX(actor_index)];
+		AI_DEBUG_RECORD(DATUM_INDEX_TO_ABSOLUTE_INDEX(actor_index));
 	short firing_decision = NONE;
 	boolean fire;
 
@@ -2004,11 +2004,11 @@ void actor_combat_update(
 			{
 				fire = TRUE;
 				actor->control.aiming_at_fire_target = TRUE;
-				actor_debug_info->burst_alignment.time = game_time_get();
+				AI_DEBUG_ONLY(actor_debug_info->burst_alignment.time = game_time_get());
 				if (TEST_FLAG(actor_definition->flags, _actor_definition_start_firing_before_aligned_bit))
 				{
-					actor_debug_info->burst_alignment.aligned = TRUE;
-					actor_debug_info->burst_alignment.aligned_immediately = TRUE;
+					AI_DEBUG_ONLY(actor_debug_info->burst_alignment.aligned = TRUE);
+					AI_DEBUG_ONLY(actor_debug_info->burst_alignment.aligned_immediately = TRUE);
 				}
 				else
 				{
@@ -2024,12 +2024,12 @@ void actor_combat_update(
 					{
 						hold_burst_start = TRUE;
 					}
-					actor_debug_info->burst_alignment.weapon_vector = weapon_vector;
-					actor_debug_info->burst_alignment.aim_vector = actor->control.current_fire_target_aim_vector;
-					actor_debug_info->burst_alignment.alignment = alignment;
-					actor_debug_info->burst_alignment.threshold = alignment_threshold;
-					actor_debug_info->burst_alignment.aligned = alignment >= alignment_threshold;
-					actor_debug_info->burst_alignment.aligned_immediately = FALSE;
+					AI_DEBUG_ONLY(actor_debug_info->burst_alignment.weapon_vector = weapon_vector);
+					AI_DEBUG_ONLY(actor_debug_info->burst_alignment.aim_vector = actor->control.current_fire_target_aim_vector);
+					AI_DEBUG_ONLY(actor_debug_info->burst_alignment.alignment = alignment);
+					AI_DEBUG_ONLY(actor_debug_info->burst_alignment.threshold = alignment_threshold);
+					AI_DEBUG_ONLY(actor_debug_info->burst_alignment.aligned = alignment >= alignment_threshold);
+					AI_DEBUG_ONLY(actor_debug_info->burst_alignment.aligned_immediately = FALSE);
 				}
 			}
 		}
@@ -2159,8 +2159,8 @@ void actor_combat_update(
 				weapon_index != NONE);
 
 			actor->control.burst_origin = actor->control.burst_initial_position;
-			actor_debug_info->burst_tracked_position = actor->control.burst_initial_position;
-			actor_debug_info->burst_lead_vector = *global_zero_vector3d;
+			AI_DEBUG_ONLY(actor_debug_info->burst_tracked_position = actor->control.burst_initial_position);
+			AI_DEBUG_ONLY(actor_debug_info->burst_lead_vector = *global_zero_vector3d);
 
 			if (actor->control.current_fire_target_type == _actor_fire_target_prop)
 			{
@@ -2168,7 +2168,7 @@ void actor_combat_update(
 				real target_tracking;
 				real target_leading;
 
-				actor_debug_info->burst_last_known_position = prop->center_of_mass;
+				AI_DEBUG_ONLY(actor_debug_info->burst_last_known_position = prop->center_of_mass);
 				ignore_unit_index = prop->attached_to_unit_index;
 
 				target_tracking = firing_variant_definition->ranged_combat.target_track_fraction;
@@ -2190,7 +2190,7 @@ void actor_combat_update(
 						firing_variant_definition->ranged_combat.target_track_fraction,
 						&actor->control.burst_origin);
 				}
-				actor_debug_info->burst_tracked_position = actor->control.burst_origin;
+				AI_DEBUG_ONLY(actor_debug_info->burst_tracked_position = actor->control.burst_origin);
 
 				target_leading = firing_variant_definition->ranged_combat.target_lead_fraction;
 				target_leading += game_difficulty_get_team_value(
@@ -2207,7 +2207,7 @@ void actor_combat_update(
 					lead_vector.i = time_to_target*prop->velocity.i;
 					lead_vector.j = time_to_target*prop->velocity.j;
 					lead_vector.k = time_to_target*prop->velocity.k;
-					actor_debug_info->burst_lead_vector = lead_vector;
+					AI_DEBUG_ONLY(actor_debug_info->burst_lead_vector = lead_vector);
 					point_from_line3d(
 						&actor->control.burst_origin,
 						&lead_vector,
@@ -2221,7 +2221,7 @@ void actor_combat_update(
 					"c:\\halo\\SOURCE\\ai\\actor_combat.c",
 					707,
 					actor->control.current_fire_target_type == _actor_fire_target_manual_point);
-				actor_debug_info->burst_last_known_position = actor->control.burst_origin;
+				AI_DEBUG_ONLY(actor_debug_info->burst_last_known_position = actor->control.burst_origin);
 			}
 
 			{
@@ -2403,7 +2403,7 @@ void actor_combat_update(
 					{
 						rate_of_fire *= firing_pattern->rate_of_fire_modifier;
 					}
-					actor_debug_info->shooting_rof = rate_of_fire;
+					AI_DEBUG_ONLY(actor_debug_info->shooting_rof = rate_of_fire);
 					trigger_delay = (short)fast_ftol(TICKS_PER_SECOND/rate_of_fire);
 					actor->control.trigger_delay_timer = MAX(2, trigger_delay);
 				}
@@ -2430,7 +2430,7 @@ void actor_combat_update(
 		}
 	}
 
-	actor_debug_info->firing_decision = firing_decision;
+	AI_DEBUG_ONLY(actor_debug_info->firing_decision = firing_decision);
 
 	return;
 }

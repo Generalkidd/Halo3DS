@@ -608,8 +608,15 @@ void network_event(
 	va_start(arguments, format);
 	_vsnprintf(temporary, NUMBEROF(temporary) - 1, format, arguments);
 	va_end(arguments);
-
-	error(3, temporary);
+	temporary[NUMBEROF(temporary)-1] = 0;
+#ifdef HALO_N3DS
+	{
+		extern void n3ds_log(const char *);
+		n3ds_log(temporary);
+	}
+#else
+	error(3, "%s", temporary);
+#endif
 
 	return;
 }

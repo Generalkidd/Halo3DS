@@ -46,6 +46,7 @@ long csstrncmp(const char *left, const char *right, unsigned long size) { return
 long csmemcmp(const void *left, const void *right, unsigned long size) { return memcmp(left, right, size); }
 #endif
 #ifndef HALO_N3DS_ORIGINAL_CSERIES
+#undef error
 void error(short priority, const char *format, ...)
 {
     char message[2048];

@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /*
 PARTICLES.C
 
@@ -94,6 +95,10 @@ symbols in this file:
 #include "scenario/scenario.h"
 #include "sound/game_sound.h"
 #include "sound/sound_definitions.h"
+#ifdef HALO_N3DS
+#include "engine_combat_fx.h"
+#include "tag_files/tag_groups.h"
+#endif
 
 /* ---------- constants */
 
@@ -200,6 +205,11 @@ static boolean particle_update_frame_time(
 	real dt,
 	struct particle_datum *particle,
 	struct particle_definition *definition);
+#ifdef HALO_N3DS
+static int native_particle_simple_mode;
+static boolean native_particle_simple(const struct particle_datum *,const struct particle_definition *);
+static int native_particle_combat_tag(long index);
+#endif
 static boolean particle_update_physics(
 	long particle_index,
 	real dt,
@@ -642,6 +652,18 @@ static boolean particle_update_physics(
 			short collision_material_type;
 			unsigned long collision_flags;
 
+#ifdef HALO_N3DS
+            if(native_particle_simple_mode && native_particle_simple(particle,definition) && !native_particle_combat_tag(particle->definition_index)) {
+                extern unsigned long n3ds_point_physics_cosmetic(const struct point_physics_definition *,struct location *,real_point3d *,real_vector3d *,real,real);
+                collision_flags=n3ds_point_physics_cosmetic(physics,&particle->location,&particle->position,
+                    &particle->translational_velocity,particle_radius_from_data(particle,definition),dt);
+                /* Without surface bounces, decoration can leave the BSP.
+                 * Never pass an invalid cluster to visibility or lighting. */
+                if(particle->location.cluster_index==NONE) {
+                    particle_delete(particle_index);return FALSE;
+                }
+            } else
+#endif
 			collision_flags = point_physics_update(
 				0,
 				physics,
@@ -1005,6 +1027,32 @@ static boolean native_particle_cosmetic(const struct particle_datum *p,const str
  return p->object_index==NONE && !TEST_FLAG(p->flags,_particle_datum_attached_to_local_player_bit) &&
   p->lifespan>.20f && d->effect.index==NONE && d->collision_effect.index==NONE && d->collision_material_effects.index==NONE;
 }
+/* Kevin Boggs: native_particle_simple */
+static boolean native_particle_simple(const struct particle_datum *p,const struct particle_definition *d)
+{
+    return native_particle_cosmetic(p,d) && !(d->flags &
+        (FLAG(_particle_definition_dies_on_contact_with_structure_bit)|FLAG(_particle_definition_dies_on_contact_with_air_bit)|
+         FLAG(_particle_definition_dies_on_contact_with_water_bit)|FLAG(_particle_definition_dies_at_rest_bit)));
+}
+/* Kevin Boggs: native_particle_combat_tag - New3DS integration.
+ * Reuse the combat classification for particles of the same definition.
+ * A match can update hundreds of particles sharing a few tags. */
+static int native_particle_combat_tag(long tag_index)
+{
+ extern unsigned int n3ds_engine_cache_generation(void);
+ struct combat_slot { long tag; unsigned char valid,combat; };
+ static struct combat_slot slots[256];
+ static unsigned int generation;
+ static int quality=-1;
+ int active_quality=n3ds_controls_quality();
+ unsigned int active_generation=n3ds_engine_cache_generation();
+ if(generation!=active_generation || quality!=active_quality) { memset(slots,0,sizeof(slots));generation=active_generation;quality=active_quality; }
+ struct combat_slot *slot=&slots[(unsigned int)tag_index&255U];
+ if(!slot->valid || slot->tag!=tag_index) {
+  slot->tag=tag_index;slot->combat=!!n3ds_combat_fx_name(tag_get_name(tag_index));slot->valid=1;
+ }
+ return slot->combat;
+}
 int n3ds_particle_budget_tests(void)
 {
  struct particle_datum p={0};struct particle_definition d={0};p.object_index=NONE;p.lifespan=1;
@@ -1024,7 +1072,9 @@ void particles_update(
 	long particle_index;
 #ifdef HALO_N3DS
  extern int n3ds_input_platform_original_model(void);
- unsigned int cosmetic_count=0,cosmetic_cap=n3ds_input_platform_original_model()?48:144;
+ int native_original=n3ds_input_platform_original_model();
+ unsigned int cosmetic_count=0,cosmetic_cap=native_original?32:144;
+ if(n3ds_controls_performance())cosmetic_cap/=2;
  static unsigned int native_removed,native_updates;
 #endif
 #ifdef HALO_N3DS_PARTICLE_PROFILE
@@ -1048,9 +1098,11 @@ void particles_update(
 		struct particle_definition *definition = particle_definition_get(particle->definition_index);
 		boolean was_new = (particle->age == 0.0f);
 #ifdef HALO_N3DS
-  if(native_particle_cosmetic(particle,definition) && ++cosmetic_count>cosmetic_cap) {
+  if(native_particle_cosmetic(particle,definition) && ++cosmetic_count>cosmetic_cap &&
+     !native_particle_combat_tag(particle->definition_index)) {
    datum_delete(particle_data,particle_index);++native_removed;continue;
   }
+  native_particle_simple_mode=(native_original || n3ds_controls_performance()) && cosmetic_count>12;
 #endif
 
 		if (render.frame_index - particle->last_rendered_frame_index >

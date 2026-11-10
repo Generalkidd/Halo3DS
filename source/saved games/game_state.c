@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /*
 GAME_STATE.C
 
@@ -237,6 +238,13 @@ void game_state_call_before_load_procs(
 void game_state_call_after_load_procs(
 	void)
 {
+#ifdef HALO_N3DS_PHYSICS_15HZ
+    /* Transient movement credit and held animations cannot cross a restore. */
+    extern void n3ds_biped_physics_reset(void);
+    extern void n3ds_vehicle_physics_reset(void);
+    n3ds_biped_physics_reset();
+    n3ds_vehicle_physics_reset();
+#endif
 	game_state_after_load_proc *proc = after_load_procs;
 	long i;
 

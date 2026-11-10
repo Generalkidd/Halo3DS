@@ -31,13 +31,35 @@ struct checkpoint_header {
 struct pointer_record {unsigned int offset,target;};
 struct regions {unsigned long base[5],size[5];};
 static struct {byte *arena;struct regions regions;struct pointer_record *records;unsigned int count;unsigned long callbacks[2];} writing;
+static struct {long profile;int valid;char directory[256];} checkpoint_profile;
 static int path_for_directory(const char *directory,char path[256])
 {
     char active[256];
-    if(!directory) {if(!player_ui_get_path_to_local_player_profile_directory(0,active)) return 0;directory=active;}
+    if(!directory) {
+        long profile=player_ui_get_active_player_profile_index(0);
+        if(profile==NONE)return 0;
+        if(checkpoint_profile.valid && checkpoint_profile.profile==profile)directory=checkpoint_profile.directory;
+        else {
+            checkpoint_profile.valid=0;
+            if(!player_ui_get_path_to_local_player_profile_directory(0,active))return 0;
+            directory=active;
+        }
+    }
     unsigned int n=strlen(directory);
     if(n<3 || n>220 || directory[1]!=':' || (directory[0]!='u' && directory[0]!='U')) return 0;
+    if(directory==active) {
+        strcpy(checkpoint_profile.directory,active);
+        checkpoint_profile.profile=player_ui_get_active_player_profile_index(0);checkpoint_profile.valid=1;
+    }
     snprintf(path,256,"%s%ssavegame.n3ds",directory,directory[n-1]=='\\' || directory[n-1]=='/'?"":"\\");return 1;
+}
+/* Kevin Boggs: n3ds_checkpoint_profile_changed */
+void n3ds_checkpoint_profile_changed(void)
+{
+    /* Resolve while selecting a profile, not in the middle of a checkpoint.
+     * Invalidate even when the numeric index was reused by a new profile. */
+    checkpoint_profile.valid=0;
+    char path[256];path_for_directory(NULL,path);
 }
 const char *game_state_get_persistent_storage_filename(void) {return "savegame.n3ds";}
 void game_state_create_persistent_storage(const char *directory)
@@ -86,6 +108,24 @@ static int encode_pointer(void *field,int clear)
 }
 static int compare_records(const void *a,const void *b)
 {unsigned int x=((const struct pointer_record *)a)->offset,y=((const struct pointer_record *)b)->offset;return x<y?-1:x>y;}
+/* Kevin Boggs: checkpoint_sort_records */
+static void checkpoint_sort_records(struct pointer_record *records,unsigned int count)
+{
+    /* Arena offsets are aligned and below 4 MiB: two stable 10-bit passes
+     * replace qsort's indirect comparison calls for thousands of pointers. */
+    if(count<2)return;
+    struct pointer_record *scratch=(malloc)(count*sizeof(*scratch));
+    if(!scratch){qsort(records,count,sizeof(*records),compare_records);return;}
+    for(unsigned int pass=0;pass<2;++pass) {
+        unsigned short bins[1024]={0};unsigned int shift=2+10*pass;
+        struct pointer_record *from=pass?scratch:records,*to=pass?records:scratch;
+        for(unsigned int i=0;i<count;++i)++bins[(from[i].offset>>shift)&1023u];
+        unsigned int next=0;
+        for(unsigned int i=0;i<1024;++i){unsigned int n=bins[i];bins[i]=next;next+=n;}
+        for(unsigned int i=0;i<count;++i)to[bins[(from[i].offset>>shift)&1023u]++]=from[i];
+    }
+    free(scratch);
+}
 static int decode_pointer(unsigned int target,const struct regions *r,unsigned int *value)
 {
     if(!target) {*value=0;return 1;}
@@ -185,6 +225,20 @@ static struct checkpoint_job_data checkpoint_job,checkpoint_pending;
 static int checkpoint_just_captured;
 long long n3ds_engine_ticks(void),n3ds_engine_tick_frequency(void);
 void n3ds_engine_sleep(unsigned int);
+/* Kevin Boggs: checkpoint_write_bytes */
+static int checkpoint_write_bytes(const struct checkpoint_job_data *job,unsigned int handle,const void *data,unsigned int bytes)
+{
+    /* Each call holds the shared file-service lock. Release it between small
+     * writes so texture/audio reads can run while a slow SD card saves. */
+    const byte *p=data;
+    while(bytes) {
+        unsigned int count=MIN(bytes,8192u);
+        if(!n3ds_file_write_buffered(handle,p,count))return 0;
+        p+=count;bytes-=count;
+        if(job->threaded)n3ds_engine_sleep(1);
+    }
+    return 1;
+}
 static unsigned int checkpoint_write_worker(void *argument)
 {
     struct checkpoint_job_data *job=argument;
@@ -206,12 +260,12 @@ static unsigned int checkpoint_write_worker(void *argument)
         }
         crc_checksum_buffer(&crc,block,n);
         unsigned int count=n3ds_save_pack(block,n,packed,n3ds_save_pack_bound());
-        if(!count || !n3ds_file_write_buffered(handle,&count,4) || !n3ds_file_write_buffered(handle,packed,count)) goto done;
+        if(!count || !n3ds_file_write_buffered(handle,&count,4) || !checkpoint_write_bytes(job,handle,packed,count)) goto done;
         h.reserved+=count+4;offset+=n;
         if(job->threaded) n3ds_engine_sleep(1);
     }
     crc_checksum_buffer(&crc,job->records,h.pointer_count*sizeof(*job->records));h.payload_crc=crc;h.header_crc=checksum(&h,sizeof(h));
-    if(!n3ds_file_write_buffered(handle,job->records,h.pointer_count*sizeof(*job->records)) || !n3ds_file_write_at(handle,0,&h,sizeof(h))) goto done;
+    if(!checkpoint_write_bytes(job,handle,job->records,h.pointer_count*sizeof(*job->records)) || !n3ds_file_write_at(handle,0,&h,sizeof(h))) goto done;
     ok=n3ds_file_close(handle);handle=0;if(!ok) goto done;ok=0;
     struct checkpoint_header old;struct game_state_header old_engine;
     unsigned int old_handle=open_valid(path,&old,&old_engine,NULL);
@@ -269,7 +323,7 @@ void game_state_write_to_persistent_storage(void *buffer,unsigned long *field,lo
     writing.records=(malloc)(MAX_POINTERS*sizeof(struct pointer_record));
     if(!writing.records) {n3ds_log("CHECKPOINT: insufficient memory; previous save retained");return;}
     if(!n3ds_checkpoint_visit(encode_pointer)) goto rejected;
-    qsort(writing.records,writing.count,sizeof(*writing.records),compare_records);
+    checkpoint_sort_records(writing.records,writing.count);
     for(unsigned int i=1;i<writing.count;++i) if(writing.records[i-1].offset==writing.records[i].offset) goto rejected;
     h.magic=STORAGE_MAGIC;h.version=STORAGE_VERSION;h.header_bytes=sizeof(h);h.payload_bytes=bytes;
     h.engine_header_bytes=header_bytes;h.checksum_offset=offsetof(struct game_state_header,checksum);h.pointer_count=writing.count;

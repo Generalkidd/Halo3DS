@@ -1,3 +1,4 @@
+# New3DS integration additions by Kevin Boggs.
 # One source-file list for both release packages. Never include local IDE settings,
 # build output, game data or credentials from a developer's working directory.
 function Get-HaloSetupRepositoryRoot([string]$SetupRoot) {
@@ -5,7 +6,7 @@ function Get-HaloSetupRepositoryRoot([string]$SetupRoot) {
 }
 
 function Get-HaloSetupSourceFiles([string]$SetupRoot) {
-    foreach ($directory in @('App','Cli','Cli.Tests','Core','Tests','Resources','tools','Licenses','vendor','Launcher','Windows7')) {
+    foreach ($directory in @('App','Cli','Core','Resources','tools','Licenses','vendor','Launcher','Windows7')) {
         Get-ChildItem -LiteralPath (Join-Path $SetupRoot $directory) -Recurse -File | Where-Object {
             $_.FullName -notmatch '[\\/](bin|obj|build|publish|__pycache__|\.vs)[\\/]' -and
             $_.Name -notmatch '\.(user|suo|exe|dll|pdb|zip|7z|rar|3dsx|elf|map|xbe|iso|xiso|dmp|log|pfx|key)$'
@@ -15,7 +16,7 @@ function Get-HaloSetupSourceFiles([string]$SetupRoot) {
         Get-Item -LiteralPath (Join-Path $SetupRoot $name)
     }
     $repositoryRoot = Get-HaloSetupRepositoryRoot $SetupRoot
-    foreach ($name in @('README.md','docs/DEVELOPMENT.md','docs/SETUP-CLI.md','LICENSE.md','port/n3ds/vendor/lz4/LICENSE','port/n3ds/vendor/libctru-allocator/LICENSE.txt')) {
+    foreach ($name in @('README.md','docs/DEVELOPMENT.md','docs/SETUP-CLI.md','LICENSE.md','LICENSE-KEVIN-MIT.md','LICENSING.md','port/n3ds/vendor/lz4/LICENSE','port/n3ds/vendor/libctru-allocator/LICENSE.txt')) {
         Get-Item -LiteralPath (Join-Path $repositoryRoot $name)
     }
 }

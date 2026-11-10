@@ -197,6 +197,7 @@ void errors_initialize(
 	return;
 }
 
+#undef error
 void error(
 	short priority,
 	const char *format,

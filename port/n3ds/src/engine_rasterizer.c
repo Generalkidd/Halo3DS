@@ -186,7 +186,7 @@ void _rasterizer_window_begin(const struct rasterizer_window_begin_parameters *p
     memcpy(camera.up, input->up.n, sizeof(camera.up));
     camera.vertical_fov=input->vertical_field_of_view;
     camera.near_clip=input->z_near; camera.far_clip=input->z_far;
-    camera.clear_color=0x101822ff; /* Opaque pass; atmospheric fog is not implemented yet. */
+    camera.clear_color=0x101822ff; /* Fallback background where no sky model is authored. */
     camera.suppress_clear=parameters->suppress_clear;
     n3ds_gpu_window_begin(&camera); frame_state=3;
 }
@@ -274,7 +274,7 @@ void rasterizer_draw_dynamic_triangles_static_vertices(long handle, long first,
     assert(n3ds_gpu_geometry_draw(vertices,triangles->indices+first*3,count*3));
 }
 void _rasterizer_environment_diffuse_textures_begin(void) { assert(frame_state==3 && !diffuse_active); diffuse_active=1; }
-void _rasterizer_environment_diffuse_textures_end(void) { assert(diffuse_active); n3ds_gpu_world_state_restore();diffuse_active=0; }
+void _rasterizer_environment_diffuse_textures_end(void) { assert(diffuse_active); n3ds_gpu_environment_batch_end();diffuse_active=0; }
 void _rasterizer_environment_diffuse_texture_draw(const struct shader *shader, short bitmap_index,
     long handle, long first, long count, const struct vertex_buffer *source)
 {
@@ -447,7 +447,7 @@ void n3ds_engine_bsp_draw(const struct shader *shader,short bitmap_index,
         entry->bitmap_shader=shader;entry->bitmap_permutation=bitmap_index;
         entry->lightmap_group=lightmap_group;entry->lightmap_index=lightmap_index;entry->bitmap_metadata_valid=1;
     }
-    if(!rasterizer_set_texture_bitmap_data(0,entry->bitmap_metadata[0])) n3ds_gpu_texture_bind(0,NULL);
+    if(!rasterizer_set_texture_bitmap_data(0,entry->bitmap_metadata[0])) n3ds_gpu_texture_prepare_bind(0,NULL,~0u);
     if(!entry->light_uv) {n3ds_gpu_world_state_restore();assert(n3ds_gpu_geometry_draw_resident(vertices,visible_indices,count));return;}
     /* Lightmaps always clamp. Installing the default repeat sampler first
      * forced two descriptor changes per draw even when reusing the same map. */
@@ -522,8 +522,8 @@ void n3ds_engine_bsp_draw(const struct shader *shader,short bitmap_index,
         entry->detail_shader=shader;entry->detail_bitmap_index=bitmap_index;
     }
     if(detail && (!entry->detail_scale_valid || !isfinite(entry->detail_scale[0]) || !isfinite(entry->detail_scale[1]))) detail=0;
-    if(!lightmap) n3ds_gpu_texture_bind(1,NULL);
-    if(!detail) n3ds_gpu_texture_bind(2,NULL);
+    if(!lightmap) n3ds_gpu_texture_prepare_bind(1,NULL,~0u);
+    if(!detail) n3ds_gpu_texture_prepare_bind(2,NULL,~0u);
     if(lightmap) ++bsp_lightmap_draws;else ++bsp_base_draws;
     if(detail) ++bsp_detail_draws;
     if(detail==3) ++bsp_detail_add_draws;

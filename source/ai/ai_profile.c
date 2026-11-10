@@ -227,7 +227,9 @@ void ai_profile_initialize(
 	void)
 {
 	csmemset(&ai_profile, 0, sizeof(ai_profile));
-	ai_profile.show = TRUE;
+	#ifndef HALO_N3DS_STRIP_DIAGNOSTICS
+    ai_profile.show = TRUE;
+#endif
 	return;
 }
 
@@ -253,6 +255,9 @@ void ai_profile_dispose_from_old_map(
 void ai_profile_update(
 	void)
 {
+#ifdef HALO_N3DS_STRIP_DIAGNOSTICS
+    return;
+#endif
 	short index;
 	struct ai_meter_definition const *definition = global_ai_meter_definitions;
 	struct ai_meter *meter = ai_profile.meters;
@@ -328,6 +333,9 @@ short ai_profile_change_render_spray(
 void ai_profile_render(
 	void)
 {
+#ifdef HALO_N3DS_STRIP_DIAGNOSTICS
+    return;
+#endif
 	global_ai_profile_string_position = rasterizer_globals.reserved04.frame_bounds.y1 - 20;
 	ai_profile_render_spray();
 	if (ai_profile.show)

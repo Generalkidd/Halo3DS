@@ -1,9 +1,11 @@
+/* New3DS integration additions by Kevin Boggs. */
 #include "cseries.h"
 #include "rasterizer/rasterizer.h"
 #include "rasterizer/rasterizer_text.h"
 #include "rasterizer/rasterizer_debug_options.h"
 #include "engine_renderer.h"
 #include "engine_text.h"
+#include "engine_hud.h"
 
 extern struct rasterizer_window_begin_parameters global_window_parameters;
 boolean rasterizer_set_texture_bitmap_data(short stage,const struct bitmap_data *bitmap);
@@ -64,5 +66,5 @@ void rasterizer_text_draw_character(const struct dynamic_screen_vertex *vertices
 }
 void rasterizer_text_end(void)
 {
-    if(active) { active=0; n3ds_gpu_world_state_restore(); }
+    if(active) { active=0; n3ds_hud_restore_after_quad(); }
 }

@@ -254,6 +254,9 @@ symbols in this file:
 #include "items/weapon_definitions.h"
 #include "items/weapons.h"
 #include "main/main.h"
+#ifdef HALO_N3DS
+#include "engine_network.h"
+#endif
 #include "objects/damage.h"
 #include "objects/damage_effect_definitions.h"
 #include "physics/collisions.h"
@@ -1389,12 +1392,11 @@ static void player_pseudo_kill(
 				NONE);
 		}
 
-		players_globals->dead_units[player->local_player_index] =
-			player->unit_index;
+		dead_unit_index = player->unit_index;
+		/* A wireless partner has no local controller slot on this console. */
+		if(player->local_player_index != NONE)
+			players_globals->dead_units[player->local_player_index] = dead_unit_index;
 		player_died(player_index);
-
-		dead_unit_index =
-			players_globals->dead_units[player->local_player_index];
 		unit = unit_get(dead_unit_index);
 		weapon_index = unit_inventory_get_weapon(
 			dead_unit_index,
@@ -1653,7 +1655,11 @@ boolean player_teleport_internal(
 		match_vassert(
 			"c:\\halo\\SOURCE\\game\\players.c",
 			0x4FB,
-			local_player_count()>1,
+			local_player_count()>1
+#ifdef HALO_N3DS
+			|| n3ds_network_coop_active()
+#endif
+			,
 			"source_unit_index==NONE || local_player_count()>1");
 		if (object_get_ultimate_parent(source_unit_index) != source_unit_index)
 		{
@@ -1867,7 +1873,11 @@ failure:
 	match_assert(
 		"c:\\halo\\SOURCE\\game\\players.c",
 		0x5AB,
-		player->local_player_index!=NONE);
+		player->local_player_index!=NONE
+#ifdef HALO_N3DS
+		|| n3ds_network_coop_active()
+#endif
+		);
 	player_pseudo_kill(player_index, source_unit_index);
 
 	return result;
@@ -2247,7 +2257,11 @@ void players_reconnect_to_structure_bsp(
 	long player_unit_index;
 
 	if (players_globals->pending_teleport_starting_location_index != NONE &&
-		players_globals->local_player_count > 1)
+		(players_globals->local_player_count > 1
+#ifdef HALO_N3DS
+		|| n3ds_network_coop_active()
+#endif
+		))
 	{
 		scenario = global_scenario_get();
 		bsp_switch = TAG_BLOCK_GET_ELEMENT(
@@ -2334,21 +2348,36 @@ void players_reconnect_to_structure_bsp(
 			"no players in the bsp");
 		if (found_player)
 		{
-			local_player_index = local_player_get_next(NONE);
-			while (local_player_index != NONE)
+#ifdef HALO_N3DS
+			if(n3ds_network_coop_active())
 			{
-				player_index = local_player_get_player_index(local_player_index);
-				player = player_get(player_index);
-				if (player->unit_index != NONE &&
-					player->unit_index != source_unit_index)
+				/* Every peer moves both players in the same order, even though
+				 * only one of them has a local view/controller here. */
+				data_iterator_new(&iterator,player_data);
+				while((player=data_iterator_next(&iterator)))
+					if(player->unit_index!=NONE && player->unit_index!=source_unit_index)
+						player_teleport_on_bsp_switch(iterator.datum_index,
+							source_unit_index,&teleport_position);
+			}
+			else
+#endif
+			{
+				local_player_index = local_player_get_next(NONE);
+				while (local_player_index != NONE)
 				{
-					player_teleport_on_bsp_switch(
-						player_index,
-						source_unit_index,
-						&teleport_position);
-					player_get(player_index)->cluster_index = NONE;
+					player_index = local_player_get_player_index(local_player_index);
+					player = player_get(player_index);
+					if (player->unit_index != NONE &&
+						player->unit_index != source_unit_index)
+					{
+						player_teleport_on_bsp_switch(
+							player_index,
+							source_unit_index,
+							&teleport_position);
+						player_get(player_index)->cluster_index = NONE;
+					}
+					local_player_index = local_player_get_next(local_player_index);
 				}
-				local_player_index = local_player_get_next(local_player_index);
 			}
 		}
 		players_globals->pending_teleport_starting_location_index = NONE;
@@ -3657,10 +3686,15 @@ void players_update_after_game(
 							bsp_switch_trigger_volume->trigger_volume_index,
 							player->unit_index))
 					{
+						short switching_player=player->local_player_index;
+#ifdef HALO_N3DS
+						if(n3ds_network_coop_active())
+							switching_player=DATUM_INDEX_TO_ABSOLUTE_INDEX(iterator.datum_index);
+#endif
 						if (players_globals->local_player_triggered_switch !=
 							_local_player_triggered_switch_none &&
 							players_globals->local_player_triggered_switch !=
-							player->local_player_index)
+							switching_player)
 						{
 							error(
 								2,
@@ -3669,7 +3703,7 @@ void players_update_after_game(
 
 						players_globals->bsp_check_recursive_switch_ticks = 0;
 						players_globals->local_player_triggered_switch =
-							player->local_player_index;
+							switching_player;
 						players_globals->pending_teleport_starting_location_index =
 							bsp_switch_trigger_volume_index;
 						main_switch_structure_bsp(

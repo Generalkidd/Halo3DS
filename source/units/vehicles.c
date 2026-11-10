@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /*
 VEHICLES.C
 
@@ -308,6 +309,23 @@ the comparator checks. */
 extern boolean debug_objects_vehicle_powered_mass_points;
 extern real global_gravity;
 
+/* New3DS integration additions by Kevin Boggs. */
+#ifdef HALO_N3DS_PHYSICS_15HZ
+#include "engine_physics_schedule.h"
+#include "game/game.h"
+#include "cutscene/cinematics.h"
+static struct n3ds_physics_schedule n3ds_vehicle_clocks[64];
+extern void n3ds_vehicle_physics_set_step(real step);
+extern int n3ds_wireless_active(void);
+extern int n3ds_network_coop_active(void);
+/* Kevin Boggs: n3ds_vehicle_physics_reset */
+void n3ds_vehicle_physics_reset(void)
+{
+    csmemset(n3ds_vehicle_clocks, 0, sizeof(n3ds_vehicle_clocks));
+    n3ds_vehicle_physics_set_step(1.f);
+}
+#endif
+
 /* ---------- globals */
 
 static struct profile_section vehicle_update_section = {"vehicle_update", NONE, TRUE};
@@ -323,6 +341,9 @@ void vehicles_initialize(
 void vehicles_initialize_for_new_map(
 	void)
 {
+#ifdef HALO_N3DS_PHYSICS_15HZ
+    n3ds_vehicle_physics_reset();
+#endif
 	return;
 }
 
@@ -914,8 +935,16 @@ static void compute_airborne_ticks(
 		vehicle_definition_get(vehicle->definition_index)->object.physics.index);
 	short mass_point_index;
 
+#ifdef HALO_N3DS_PHYSICS_15HZ
+	/* Counted in ticks: a physics step covers one or two. */
+	extern real n3ds_vehicle_physics_step(void);
+	short n3ds_step_ticks = (short)n3ds_vehicle_physics_step();
+
+	vehicle->vehicle.airborne_ticks = (byte)MIN(0xff, vehicle->vehicle.airborne_ticks+n3ds_step_ticks);
+#else
 	if (vehicle->vehicle.airborne_ticks<0xff)
 		vehicle->vehicle.airborne_ticks++;
+#endif
 
 	for (mass_point_index = 0; mass_point_index<physics->mass_points.count; mass_point_index++)
 	{
@@ -924,8 +953,12 @@ static void compute_airborne_ticks(
 		if (TEST_FLAG(mass_point->flags, 1))
 		{
 			vehicle->vehicle.airborne_ticks = 0;
+#ifdef HALO_N3DS_PHYSICS_15HZ
+            vehicle->vehicle.on_ground_ticks = (byte)MIN(0xff, vehicle->vehicle.on_ground_ticks+n3ds_step_ticks);
+#else
 			if (vehicle->vehicle.on_ground_ticks<0xff)
 				vehicle->vehicle.on_ground_ticks++;
+#endif
 			return;
 		}
 
@@ -1767,6 +1800,10 @@ static void create_crashing_effects(
 		delta.k = vehicle->object.translational_velocity.k-previous_velocity->k;
 
 		speed = magnitude3d(&delta);
+#ifdef HALO_N3DS_PHYSICS_15HZ
+        extern real n3ds_vehicle_physics_step(void);
+        speed /= n3ds_vehicle_physics_step();
+#endif
 		if (speed>0.02f)
 		{
 			for (mass_point_index = 0; mass_point_index<physics->mass_points.count; mass_point_index++)
@@ -2074,7 +2111,14 @@ static void update_human_jeep_physics(
 	struct physics_definition *physics = physics_definition_get(
 		definition->unit.object.physics.index);
 
+#ifdef HALO_N3DS_PHYSICS_15HZ
+	/* Physics steps can cover two ticks; wheel phase
+	must cover the same signed motor travel as that step. */
+	extern real n3ds_vehicle_physics_step(void);
+	vehicle->vehicle.wheel = vehicle->vehicle.speed*n3ds_vehicle_physics_step()+vehicle->vehicle.wheel;
+#else
 	vehicle->vehicle.wheel = vehicle->vehicle.speed+vehicle->vehicle.wheel;
+#endif
 	vehicle->vehicle.wheel = (real)fmod(vehicle->vehicle.wheel, definition->wheel_circumference);
 	if (vehicle->vehicle.wheel<0.0f)
 		vehicle->vehicle.wheel += definition->wheel_circumference;
@@ -2604,8 +2648,22 @@ boolean vehicle_update(
 	global_current_collision_users[global_current_collision_user_depth++] =
 		_collision_user_vehicles;
 
+#ifdef HALO_N3DS_PHYSICS_15HZ
+    /* Vehicles retain the original 30 Hz integration, including offline ground vehicles. */
+    int reduced = 0;
+    int step = n3ds_physics_schedule_step(&n3ds_vehicle_clocks[(unsigned)vehicle_index & 63u],
+                                         vehicle_index, game_time_get(), reduced);
+#ifdef HALO_N3DS_PHYSICS_PROFILE
+    extern void n3ds_physics_profile_step(int kind,int step);
+    n3ds_physics_profile_step(1,step);
+#endif
+    n3ds_vehicle_physics_set_step(step ? (real)step : 1.f);
+    if(step && definition->unit.object.physics.index!=NONE &&
+        !TEST_FLAG(vehicle->object.flags, _object_at_rest_bit))
+#else
 	if (definition->unit.object.physics.index!=NONE &&
 		!TEST_FLAG(vehicle->object.flags, _object_at_rest_bit))
+#endif
 	{
 		real_vector3d previous_velocity = vehicle->object.translational_velocity;
 
@@ -2674,6 +2732,9 @@ boolean vehicle_update(
 
 	match_assert("c:\\halo\\SOURCE\\units\\vehicles.c", 372,
 		global_current_collision_user_depth > 1);
+#ifdef HALO_N3DS_PHYSICS_15HZ
+    n3ds_vehicle_physics_set_step(1.f);
+#endif
 	--global_current_collision_user_depth;
 
 	if (TEST_FLAG(definition->flags, 6))

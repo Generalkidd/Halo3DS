@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /*
 STRUCTURES.C
 
@@ -74,6 +75,9 @@ symbols in this file:
 #include "structure_bsp_definitions.h"
 #include "structure_vector_tests.h"
 #include "structures.h"
+#ifdef HALO_N3DS
+extern void n3ds_structure_visibility_cache_reset(void);
+#endif
 
 /* ---------- constants */
 
@@ -243,6 +247,9 @@ void structures_initialize(
 void structures_initialize_for_new_map(
 	void)
 {
+#ifdef HALO_N3DS
+    n3ds_structure_visibility_cache_reset();
+#endif
 	structure_detail_objects_initialize_for_new_map();
 	structure_decals_initialize_for_new_map();
 	return;
@@ -251,6 +258,9 @@ void structures_initialize_for_new_map(
 void structures_dispose_from_old_map(
 	void)
 {
+#ifdef HALO_N3DS
+    n3ds_structure_visibility_cache_reset();
+#endif
 	structure_decals_dispose_from_old_map();
 	structure_detail_objects_dispose_from_old_map();
 	return;

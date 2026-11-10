@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /*
 GAME.C
 
@@ -192,6 +193,7 @@ struct game_options;
 
 #ifdef HALO_N3DS
 #include "engine_game.h"
+#ifndef HALO_N3DS_STRIP_DIAGNOSTICS
 long long n3ds_engine_ticks(void);
 long long n3ds_engine_tick_frequency(void);
 void n3ds_log(const char *);
@@ -211,6 +213,11 @@ static void n3ds_game_profile(unsigned int kind,const long long stamps[6])
 #define NATIVE_GAME_BEGIN() long long native_stamps[6];native_stamps[0]=n3ds_engine_ticks()
 #define NATIVE_GAME_STAMP(i) native_stamps[i]=n3ds_engine_ticks()
 #define NATIVE_GAME_END(kind) do {NATIVE_GAME_STAMP(5);n3ds_game_profile(kind,native_stamps);} while(0)
+#else
+#define NATIVE_GAME_BEGIN() ((void)0)
+#define NATIVE_GAME_STAMP(i) ((void)0)
+#define NATIVE_GAME_END(kind) ((void)0)
+#endif
 #else
 #define NATIVE_GAME_BEGIN() ((void)0)
 #define NATIVE_GAME_STAMP(i) ((void)0)
@@ -475,6 +482,13 @@ void game_tick(
 	void)
 {
 	real seconds_per_tick;
+#ifdef HALO_N3DS
+	extern int n3ds_network_coop_active(void);
+	extern void n3ds_main_coop_before_tick(void), n3ds_main_coop_after_tick(void);
+	extern void director_update(real), observer_update(real);
+	boolean native_coop = n3ds_network_coop_active();
+	if(native_coop) n3ds_main_coop_before_tick();
+#endif
     NATIVE_GAME_BEGIN();
 
 	profile_tick_start();
@@ -509,10 +523,25 @@ void game_tick(
 	recorded_animations_update();
     NATIVE_GAME_STAMP(3);
 	objects_update();
+#ifdef HALO_N3DS
+	/* The native renderer consumes the original decal list every frame. Advance
+	 * its authored lifetime and decay values on the simulation clock. */
+	{extern int n3ds_controls_decals(void);if(n3ds_controls_decals())decals_update();}
+#endif
     NATIVE_GAME_STAMP(4);
 	players_update_after_game();
 	hud_update();
 	player_effect_update();
+#ifdef HALO_N3DS
+	if(native_coop)
+	{
+		/* camera_time is read by campaign scripts, so its clock must follow
+		 * shared simulation ticks, including catch-up ticks on the client. */
+		director_update(1.f / TICKS_PER_SECOND);
+		observer_update(1.f / TICKS_PER_SECOND);
+		n3ds_main_coop_after_tick();
+	}
+#endif
 
 	profile_exit(game_update_section);
 	collision_log_end_period();
@@ -761,6 +790,9 @@ void game_initialize_for_new_map(
 	real_math_reset_precision();
 	rasterizer_initialize_for_new_map();
 	game_state_initialize_for_new_map();
+#ifdef HALO_N3DS_UNIFIED_UI
+	{extern void n3ds_campaign_extras_for_new_map(void);n3ds_campaign_extras_for_new_map();}
+#endif
 	game_time_initialize_for_new_map();
 	interface_initialize_for_new_map();
 	game_allegiance_initialize_for_new_map();

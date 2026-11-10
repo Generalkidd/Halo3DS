@@ -645,6 +645,9 @@ symbols in this file:
 /* ---------- headers */
 
 #include "cseries.h"
+#ifdef HALO_N3DS
+#include "engine_network.h"
+#endif
 #include "units.h"
 
 #include "bipeds.h"
@@ -2700,6 +2703,12 @@ void unit_set_mouth_aperture(
 	long unit_index,
 	real mouth_aperture)
 {
+#ifdef HALO_N3DS
+	/* Playback timing is local, but this overlay changes simulation bones and
+	 * attached weapon markers. Do not feed asynchronous audio into lockstep.
+	 * Speech still plays; network co-op omits audio-driven lip animation. */
+	if (n3ds_network_coop_active()) return;
+#endif
 	struct unit_datum *unit = unit_get(unit_index);
 	real *current_mouth_aperture = &unit->unit.mouth_aperture;
 

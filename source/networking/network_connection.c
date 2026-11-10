@@ -325,6 +325,14 @@ static void network_connection_log_traffic_event(
 	long amount,
 	struct network_connection *connection)
 {
+#if defined(HALO_N3DS)
+	/* The Xbox diagnostic flushes the SD card for every packet. Session errors
+	 * are already recorded by network_event; keep gameplay free of this I/O. */
+	(void)event;
+	(void)amount;
+	(void)connection;
+	return;
+#else
 	struct transport_address address;
 	double elapsed_seconds;
 
@@ -453,6 +461,7 @@ static void network_connection_log_traffic_event(
 			!"unknown traffic event");
 		return;
 	}
+#endif
 }
 
 void network_connection_get_address(
@@ -884,7 +893,13 @@ boolean network_connection_write(
 				message,
 				buffer_size);
 		}
-		while (bytes_written <= 0 && bytes_written == _transport_result_operation_would_block);
+		/* A full queue must not lock the main thread while waiting for another
+         * console. The native adapter queues whole messages or fails closed. */
+#ifdef HALO_N3DS
+        while (FALSE);
+#else
+        while (bytes_written <= 0 && bytes_written == _transport_result_operation_would_block);
+#endif
 
 		if (bytes_written > 0)
 		{

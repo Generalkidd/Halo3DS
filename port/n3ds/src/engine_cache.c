@@ -1,7 +1,9 @@
+/* New3DS integration additions by Kevin Boggs. */
 #include "cseries.h"
 #include "cache_reader.h"
 #include "cache_build_compatibility.h"
 #include "engine_cache.h"
+#include "engine_map_format.h"
 #include "engine_textures.h"
 #include "cache_files.h"
 #include "crc.h"
@@ -12,6 +14,15 @@
 #include "structure_bsp_definitions.h"
 #include "collision_bsp_definitions.h"
 #include "collision_bsp.h"
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_MAP_ID
+#include "pc_diagnostic_maps.h"
+#endif
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_UI
+#include "../pc/engine_pc_runtime.h"
+#endif
+#ifdef HALO_N3DS_UNIFIED_UI
+#include "engine_campaign_overlay.h"
+#endif
 
 void n3ds_log(const char *message);
 void n3ds_cache_progress(const char *stage,unsigned long done,unsigned long total)
@@ -155,6 +166,9 @@ static struct n3ds_cache_view bsp_arena;
 static int bsp_arena_attempted;
 static void bsp_close(struct n3ds_cache_view *view)
 {
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_UI
+    if (n3ds_pc_tags_active()) {memset(view,0,sizeof(*view));return;}
+#endif
     if(view->tags && view->tags==bsp_arena.tags) memset(view,0,sizeof(*view));
     else n3ds_cache_close(view);
 }
@@ -251,6 +265,17 @@ const struct n3ds_cache_view *n3ds_engine_cache_view(int bsp)
     return bsp ? &native_bsp : &native_tags;
 }
 
+#if defined(HALO_N3DS_EXPERIMENTAL_PC_ALL_MAPS) || defined(HALO_N3DS_EXPERIMENTAL_PC_MATRIX)
+/* Kevin Boggs: n3ds_is_campaign_map - New3DS integration. */
+static int n3ds_is_campaign_map(const char *base)
+{
+    static const char *const names[]={"a10","a30","a50","b30","b40","c10","c20","c40","d20","d40"};
+    for(unsigned int i=0;i<sizeof(names)/sizeof(names[0]);++i)
+        if(!strcmp(base,names[i])) return 1;
+    return 0;
+}
+#endif
+
 static int load_tag_candidate(const char *name,struct n3ds_cache_view *candidate,char *path,char *base_name)
 {
     struct cache_file_tag_instance *scenario;
@@ -264,12 +289,42 @@ static int load_tag_candidate(const char *name,struct n3ds_cache_view *candidate
     for (scan = base; *scan; ++scan)
         if (!((*scan >= 'a' && *scan <= 'z') || (*scan >= 'A' && *scan <= 'Z') ||
               (*scan >= '0' && *scan <= '9') || *scan == '_')) return 1;
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_UI
+#if defined(HALO_N3DS_EXPERIMENTAL_PC_ALL_MAPS) || defined(HALO_N3DS_EXPERIMENTAL_PC_MATRIX)
+    if (n3ds_pc_map_selection(name)>=0
+#if !defined(HALO_N3DS_UNIFIED_UI)
+        || !strcmp(base,"ui")
+#endif
+#if defined(HALO_N3DS_EXPERIMENTAL_PC_MAP_NAME)
+        || !strcmp(base,HALO_N3DS_EXPERIMENTAL_PC_MAP_NAME)
+#endif
+        ) {
+#else
+    if (!strcmp(base, "ui")
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_MAP_NAME
+        || !strcmp(base, HALO_N3DS_EXPERIMENTAL_PC_MAP_NAME)
+#endif
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_A10
+        || !strcmp(base, "a10")
+#endif
+        ) {
+#endif
+        snprintf(path, 128, "sdmc:/halo-source/pc-retail/%s.map", base);
+        if (n3ds_pc_tags_open(base, candidate)) goto fail;
+        strcpy(base_name, base);
+        return 0;
+    }
+#endif
+    if(n3ds_map_uses_pc(name))goto fail;
     snprintf(path, 128, "sdmc:/halo-source/%s.map", base);
     snprintf(sidecar, sizeof(sidecar), "sdmc:/halo-source/%s.nrl", base);
     if (n3ds_cache_open(candidate, path, 1) ||
         _stricmp(candidate->header.name, base) || relocate(candidate, sidecar, NULL)) goto fail;
     scenario = n3ds_cache_tag(candidate, candidate->tag_header->scenario_tag_index, 'scnr');
     if (!scenario || !n3ds_cache_resolve(candidate, scenario->base_address, sizeof(struct scenario))) goto fail;
+#ifdef HALO_N3DS_UNIFIED_UI
+    n3ds_campaign_overlay_open(candidate,base);
+#endif
     strcpy(base_name,base);
     return 0;
 fail:
@@ -280,7 +335,7 @@ fail:
 /* Listing must not deserialize every level while a menu is opening. Check
  * the small header pair and extents here; actual selection/loading retains
  * the complete tag CRC, relocation and scenario validation below. */
-boolean n3ds_engine_map_installed(const char *name)
+static boolean installed_map_header(const char *name,unsigned long *identity)
 {
     struct cache_file_header header;
     struct relocation_header relocation;
@@ -290,6 +345,31 @@ boolean n3ds_engine_map_installed(const char *name)
     for(scan=name;*scan;++scan) if(*scan=='/' || *scan=='\\') base=scan+1;
     if(!*base || strlen(base)>=32) return FALSE;
     for(scan=base;*scan;++scan) if(!((*scan>='a' && *scan<='z') || (*scan>='A' && *scan<='Z') || (*scan>='0' && *scan<='9') || *scan=='_')) return FALSE;
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_UI
+#if defined(HALO_N3DS_EXPERIMENTAL_PC_ALL_MAPS) || defined(HALO_N3DS_EXPERIMENTAL_PC_MATRIX)
+    if (n3ds_pc_map_selection(name)>=0
+#if !defined(HALO_N3DS_UNIFIED_UI)
+        || !strcmp(base,"ui")
+#endif
+#if defined(HALO_N3DS_EXPERIMENTAL_PC_MAP_NAME)
+        || !strcmp(base,HALO_N3DS_EXPERIMENTAL_PC_MAP_NAME)
+#endif
+        ) {
+        unsigned long pc_identity=n3ds_pc_map_identity(base);
+        if(identity)*identity=pc_identity;
+        return pc_identity!=0;
+    }
+#else
+    if (!strcmp(base, "ui")) return n3ds_pc_map_available(base);
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_MAP_NAME
+    if (!strcmp(base, HALO_N3DS_EXPERIMENTAL_PC_MAP_NAME)) return n3ds_pc_map_available(base);
+#endif
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_A10
+    if (!strcmp(base, "a10")) return n3ds_pc_map_available(base);
+#endif
+#endif
+#endif
+    if(n3ds_map_uses_pc(name))return FALSE;
     snprintf(path,sizeof(path),"sdmc:/halo-source/%s.map",base);
     file=fopen(path,"rb");if(!file) return FALSE;
     int read=fread(&header,1,sizeof(header),file)==sizeof(header);
@@ -305,12 +385,22 @@ boolean n3ds_engine_map_installed(const char *name)
     read=fread(&relocation,1,sizeof(relocation),file)==sizeof(relocation);
     if(fseek(file,0,SEEK_END)) read=0;
     size=ftell(file);fclose(file);
-    return read && relocation.magic==0x314c524e && relocation.version==1 &&
+    boolean valid=read && relocation.magic==0x314c524e && relocation.version==1 &&
         relocation.bytes==(unsigned long)header.tag_data_size && relocation.xbox_base==0x803a6000 &&
         relocation.count && relocation.count<=relocation.bytes/4 &&
         size==(long)(sizeof(relocation)+relocation.count*sizeof(struct relocation_record)) &&
         relocation.header_crc==crc32(&header,sizeof(header));
+    if(valid && identity) {
+        unsigned long value=crc32(&relocation,sizeof(relocation));
+        *identity=value?value:1;
+    }
+    return valid;
 }
+
+boolean n3ds_engine_map_installed(const char *name)
+{ return installed_map_header(name,NULL); }
+unsigned long n3ds_engine_map_identity(const char *name)
+{ unsigned long identity=0;installed_map_header(name,&identity);return identity; }
 
 boolean n3ds_engine_map_available(const char *name)
 {
@@ -333,6 +423,8 @@ long n3ds_engine_tags_load(const char *name)
     assert(!native_read_stream);
     native_stream_opens=native_stream_reads=native_stream_bytes=0;
     cache_files_bind_native(&native_tags.header, native_tags.tag_header);
+    if(strcmp(native_name,"ui")) n3ds_engine_texture_prewarm_hud();
+    {extern void n3ds_model_lod_prepare(void);n3ds_model_lod_prepare();}
     return native_tags.tag_header->scenario_tag_index;
 }
 
@@ -356,9 +448,16 @@ boolean n3ds_engine_bsp_load(struct scenario_structure_bsp_reference *reference)
     if (index == count) return FALSE;
     instance = n3ds_cache_tag(&native_tags, reference->structure_bsp.index, 'sbsp');
     if (!instance || instance->base_address) return FALSE;
-    bsp_arena_prepare(references,count);
-    snprintf(sidecar, sizeof(sidecar), "sdmc:/halo-source/%s-bsp%ld.nrl", native_name, index);
-    if (load_bsp(&candidate, &native_tags, reference, native_map, sidecar)) goto fail;
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_UI
+    if (n3ds_pc_tags_active()) {
+        if (n3ds_pc_bsp_load(&candidate, reference)) goto fail;
+    } else
+#endif
+    {
+        bsp_arena_prepare(references,count);
+        snprintf(sidecar, sizeof(sidecar), "sdmc:/halo-source/%s-bsp%ld.nrl", native_name, index);
+        if (load_bsp(&candidate, &native_tags, reference, native_map, sidecar)) goto fail;
+    }
     header = (struct cache_file_structure_bsp_header *)candidate.tags;
     if (header->signature != 'sbsp' ||
         !n3ds_cache_resolve(&candidate, header->base_address, sizeof(struct structure_bsp))) goto fail;
@@ -366,7 +465,10 @@ boolean n3ds_engine_bsp_load(struct scenario_structure_bsp_reference *reference)
     cache_generation_advance();
     native_reference = reference;
     cache_files_bind_native_bsp(header, reference->structure_bsp.index);
-    bsp_prefetch_next(references,count,index,native_map);
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_UI
+    if (!n3ds_pc_tags_active())
+#endif
+        bsp_prefetch_next(references,count,index,native_map);
     return TRUE;
 fail:
     bsp_close(&candidate);
@@ -399,17 +501,25 @@ void n3ds_engine_tags_unload(void)
     extern void n3ds_engine_mission_batches_release(void);
     n3ds_engine_mission_batches_release();
     texture_cache_flush();
+    {int applied=n3ds_engine_texture_apply_saved_profile();assert(applied);}
     if (native_reference) n3ds_engine_bsp_unload(native_reference);
     n3ds_cache_close(&bsp_arena);bsp_arena_attempted=0;bsp_reads_clear();
     extern void n3ds_gpu_model_cache_release(void);
     n3ds_gpu_model_cache_release();
+    {extern void n3ds_model_lod_close(void);n3ds_model_lod_close();}
     n3ds_files_lock();
     if(native_read_stream) {
         int closed=!fclose(native_read_stream);native_read_stream=NULL;assert(closed);
         char message[160];snprintf(message,sizeof(message),"MAP READ STREAM: opens=%u reads=%u bytes=%u closed=%d",native_stream_opens,native_stream_reads,native_stream_bytes,closed);n3ds_log(message);
     }
     if (native_tags.tags) {++native_tag_generation;cache_generation_advance();cache_files_bind_native(NULL, NULL);}
+#ifdef HALO_N3DS_UNIFIED_UI
+    n3ds_campaign_overlay_close();
+#endif
     n3ds_cache_close(&native_tags);
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_UI
+    n3ds_pc_tags_close();
+#endif
     native_map[0] = native_name[0] = 0;
     n3ds_files_unlock();
     /* Original models need a contiguous region for the next campaign cache.
@@ -434,10 +544,25 @@ void n3ds_engine_tags_unload(void)
     }
 }
 
+/* Kevin Boggs: n3ds_engine_sound_read_path */
+const char *n3ds_engine_sound_read_path(void)
+{
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_UI
+    if(n3ds_pc_tags_active() || n3ds_pc_tags_loaded()) return NULL;
+#endif
+    return native_tags.tags && native_map[0] ? native_map : NULL;
+}
+
 boolean n3ds_engine_cache_read(unsigned long offset, unsigned long bytes, void *destination)
 {
     boolean result=FALSE;
     n3ds_files_lock();
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_UI
+    if (n3ds_pc_tags_active() || (n3ds_pc_tags_loaded() && offset >= 0x40000000UL)) {
+        result = n3ds_pc_cache_read(offset, bytes, destination);
+        goto done;
+    }
+#endif
     if (!native_tags.tags || !destination || !bytes || offset < 2048 ||
         offset > (unsigned long)native_tags.header.file_length ||
         bytes > (unsigned long)native_tags.header.file_length-offset) goto done;

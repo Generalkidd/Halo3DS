@@ -64,6 +64,7 @@ dspfirm.cdc
 ntsc2276-hud-strings.bin
 ntsc2276-loading.bin
 *.ntx
+*.hld
 sdmc/
 sd-ready/
 crash-dumps/

@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /*
 NETWORK_GAME_GLOBALS.C
 
@@ -330,6 +331,9 @@ struct network_game *network_game_get_game(
 boolean network_game_player_is_local(
 	struct network_player *player)
 {
+#ifdef HALO_N3DS
+    if(player && player->controller_index>0)return FALSE;
+#endif
 	boolean machine_index;
 	struct network_machine *machine;
 

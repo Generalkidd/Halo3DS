@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /*
 GAME_ENGINE_RACE.H
 */
@@ -109,5 +110,9 @@ void race_flags_make_unique(
 
 extern struct game_engine race_engine;
 extern struct race_globals race_globals;
+#ifdef HALO_N3DS
+boolean game_engine_race_next_goal(long player_index, real_point3d const *position,
+	real_point3d *goal);
+#endif
 
 #endif // __GAME_ENGINE_RACE_H

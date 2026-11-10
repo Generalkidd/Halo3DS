@@ -1966,7 +1966,7 @@ void ai_initialize_for_new_map(
 void ai_update(
 	void)
 {
-#ifdef HALO_N3DS
+#if defined(HALO_N3DS) && !defined(HALO_N3DS_STRIP_DIAGNOSTICS)
     extern long long n3ds_engine_ticks(void),n3ds_engine_tick_frequency(void);
     extern void n3ds_log(const char *);
     static unsigned int samples;
@@ -1981,8 +1981,8 @@ void ai_update(
 
 	if (update_ai)
 	{
-		ai_debug_update();
-		ai_profile_update();
+		AI_DEBUG_ONLY(ai_debug_update());
+		AI_PROFILE_ONLY(ai_profile_update());
 		ai_place_pending_mounted_weapons();
 
 		if (move_actors_randomly)
@@ -1993,11 +1993,11 @@ void ai_update(
 		else if (ai_globals->ai_active)
 		{
 			ai_conversation_update();
-#ifdef HALO_N3DS
+#if defined(HALO_N3DS) && !defined(HALO_N3DS_STRIP_DIAGNOSTICS)
             stamps[1]=n3ds_engine_ticks();
 #endif
             encounters_update();
-#ifdef HALO_N3DS
+#if defined(HALO_N3DS) && !defined(HALO_N3DS_STRIP_DIAGNOSTICS)
             stamps[2]=n3ds_engine_ticks();
 #endif
             actors_update();
@@ -2010,7 +2010,7 @@ void ai_update(
 		}
 	}
 
-#ifdef HALO_N3DS
+#if defined(HALO_N3DS) && !defined(HALO_N3DS_STRIP_DIAGNOSTICS)
     stamps[3]=n3ds_engine_ticks();
     for(int i=0;i<3;++i) totals[i]+=stamps[i+1]-stamps[i];
     if(++samples%30==0) {
@@ -2255,7 +2255,7 @@ boolean ai_test_line_of_fire(
 	short pill_count;
 	short pill_index;
 
-	ai_profile.meters[_ai_meter_line_of_fire].accumulator++;
+	AI_PROFILE_ONLY(ai_profile.meters[_ai_meter_line_of_fire].accumulator++);
 
 	pill_count = ai_find_line_of_fire_friend_pills(
 		actor_index,
@@ -2344,7 +2344,7 @@ short ai_test_line_of_sight(
 		global_current_collision_user_depth < MAXIMUM_COLLISION_USER_STACK_DEPTH);
 	global_current_collision_users[global_current_collision_user_depth++] =
 		_collision_user_ai_lineofsight;
-	ai_profile.meters[_ai_meter_line_of_sight].accumulator++;
+	AI_PROFILE_ONLY(ai_profile.meters[_ai_meter_line_of_sight].accumulator++);
 
 	if (p0_cluster_index != NONE && p1_cluster_index != NONE && !scenario_test_pvs(p0_cluster_index, p1_cluster_index))
 		goto obstructed;
@@ -2375,7 +2375,7 @@ short ai_test_line_of_sight(
 	{
 		real_vector3d vector;
 
-		ai_profile.meters[_ai_meter_collisions].accumulator++;
+		AI_PROFILE_ONLY(ai_profile.meters[_ai_meter_collisions].accumulator++);
 		vector_from_points3d(p0, p1, &vector);
 
 		if (!collision_test_vector(
@@ -2407,6 +2407,8 @@ short ai_test_line_of_sight(
 			goto occluded;
 	}
 
+	/* The offset rays below use only blocked/clear. The first ray above must
+	 * retain its full closest-hit result for fog and distance classification. */
 	if (mode == _ai_line_of_sight_normal)
 		goto classify_visibility;
 
@@ -2432,45 +2434,41 @@ short ai_test_line_of_sight(
 			p0b.y = p0->y - perpendicular.j * 0.25f;
 			p0b.z = p0->z - perpendicular.k * 0.25f;
 
-			ai_profile.meters[_ai_meter_collisions].accumulator++;
+			AI_PROFILE_ONLY(ai_profile.meters[_ai_meter_collisions].accumulator++);
 			if (clear_line_of_sight)
 			{
-				blocked = collision_test_line(
+				blocked = n3ds_collision_test_line_any(
 					collision_flags,
 					&p0a,
 					p1,
-					ignore_object_index,
-					&collision);
+					ignore_object_index);
 
 				if (!blocked)
 				{
-					ai_profile.meters[_ai_meter_collisions].accumulator++;
-					blocked = collision_test_line(
+					AI_PROFILE_ONLY(ai_profile.meters[_ai_meter_collisions].accumulator++);
+					blocked = n3ds_collision_test_line_any(
 						collision_flags,
 						&p0b,
 						p1,
-						ignore_object_index,
-						&collision);
+						ignore_object_index);
 				}
 			}
 			else
 			{
-				blocked = !collision_test_line(
+				blocked = !n3ds_collision_test_line_any(
 					collision_flags,
 					&p0a,
 					p1,
-					ignore_object_index,
-					&collision);
+					ignore_object_index);
 
 				if (!blocked)
 				{
-					ai_profile.meters[_ai_meter_collisions].accumulator++;
-					blocked = !collision_test_line(
+					AI_PROFILE_ONLY(ai_profile.meters[_ai_meter_collisions].accumulator++);
+					blocked = !n3ds_collision_test_line_any(
 						collision_flags,
 						&p0b,
 						p1,
-						ignore_object_index,
-						&collision);
+						ignore_object_index);
 				}
 			}
 		}
@@ -2487,34 +2485,31 @@ short ai_test_line_of_sight(
 			point_from_line3d(p1, &perpendicular, -0.1f, &p1b);
 			point_from_line3d(p1, global_down3d, 0.1f, &p1c);
 
-			ai_profile.meters[_ai_meter_collisions].accumulator++;
-			blocked = collision_test_line(
+			AI_PROFILE_ONLY(ai_profile.meters[_ai_meter_collisions].accumulator++);
+			blocked = n3ds_collision_test_line_any(
 				collision_flags,
 				&p1a,
 				p0,
-				ignore_object_index,
-				&collision);
+				ignore_object_index);
 
 			if (!blocked)
 			{
-				ai_profile.meters[_ai_meter_collisions].accumulator++;
-				blocked = collision_test_line(
+				AI_PROFILE_ONLY(ai_profile.meters[_ai_meter_collisions].accumulator++);
+				blocked = n3ds_collision_test_line_any(
 					collision_flags,
 					&p1b,
 					p0,
-					ignore_object_index,
-					&collision);
+					ignore_object_index);
 			}
 
 			if (!blocked)
 			{
-				ai_profile.meters[_ai_meter_collisions].accumulator++;
-				blocked = collision_test_line(
+				AI_PROFILE_ONLY(ai_profile.meters[_ai_meter_collisions].accumulator++);
+				blocked = n3ds_collision_test_line_any(
 					collision_flags,
 					&p1c,
 					p0,
-					ignore_object_index,
-					&collision);
+					ignore_object_index);
 			}
 		}
 	}
@@ -2595,7 +2590,7 @@ boolean ai_test_ballistic_line_of_fire(
 		MAXIMUM_LINE_OF_FIRE_PILLS,
 		pills);
 
-	if (!ai_debug.ballistic_lineoffire_freeze)
+	if (AI_DIAGNOSTICS_ENABLED && !ai_debug.ballistic_lineoffire_freeze)
 	{
 		ai_debug.ballistic_lineoffire_valid = TRUE;
 		ai_debug.ballistic_lineoffire_start = *origin;
@@ -2633,7 +2628,7 @@ boolean ai_test_ballistic_line_of_fire(
 
 	do
 	{
-		if (!ai_debug.ballistic_lineoffire_freeze &&
+		if (AI_DIAGNOSTICS_ENABLED && !ai_debug.ballistic_lineoffire_freeze &&
 			ai_debug.ballistic_lineoffire_point_count < MAXIMUM_AI_DEBUG_BALLISTIC_POINTS)
 		{
 			ai_debug.ballistic_lineoffire_point[ai_debug.ballistic_lineoffire_point_count] = point;
@@ -2699,14 +2694,14 @@ boolean ai_test_ballistic_line_of_fire(
 	}
 	while (segment_start_time < ticks);
 
-	if (!ai_debug.ballistic_lineoffire_freeze &&
+	if (AI_DIAGNOSTICS_ENABLED && !ai_debug.ballistic_lineoffire_freeze &&
 		ai_debug.ballistic_lineoffire_point_count < MAXIMUM_AI_DEBUG_BALLISTIC_POINTS)
 	{
 		ai_debug.ballistic_lineoffire_point[ai_debug.ballistic_lineoffire_point_count] = end_point;
 		ai_debug.ballistic_lineoffire_point_count++;
 	}
 
-	if (!ai_debug.ballistic_lineoffire_freeze)
+	if (AI_DIAGNOSTICS_ENABLED && !ai_debug.ballistic_lineoffire_freeze)
 		ai_debug.ballistic_lineoffire_success = line_of_fire;
 
 	match_assert("c:\\halo\\SOURCE\\ai\\ai.c", 0x478, global_current_collision_user_depth > 1);

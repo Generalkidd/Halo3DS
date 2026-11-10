@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /*
 OBJECTS.C
 */
@@ -2278,6 +2279,12 @@ void object_export_function_values(
 // These local variants preserve the original XDK 3911 operand provenance for
 // this large function.  They are semantically identical to the shared matrix
 // validation macros, but the typed aliases reproduce the January codegen.
+#ifdef HALO_N3DS_STRIP_DIAGNOSTICS
+#define ocnm_root_matrix_internal(file, line, matrix, string) { (void)0; }
+#define ocnm_root_matrix_custom(file, line, matrix, custom_string) { (void)0; }
+#define ocnm_parent_matrix_internal(file, line, matrix, string) { (void)0; }
+#define ocnm_parent_matrix_custom(file, line, matrix, custom_string) { (void)0; }
+#else
 #define ocnm_root_matrix_internal(file, line, matrix, string) \
 match_vassert(file, line, valid_real((*matrix).scale), csprintf(temporary, "%s had a bad scale %f", string, (*matrix).scale)); \
 match_vassert(file, line, valid_real_normal3d(&(*matrix).forward), csprintf(temporary, "%s had a bad forward (%f,%f,%f)", string, (*matrix).forward.i, (*matrix).forward.j, (*matrix).forward.k)); \
@@ -2331,9 +2338,15 @@ if (!valid_real_matrix4x3(matrix)) \
 	ocnm_parent_matrix_internal(file, line, matrix, string); \
 }
 
+#endif
+
 #ifdef HALO_N3DS
+#include "engine_object_reuse.inl"
+#include "engine_float_phase.h"
 static boolean native_distant_pose(long index,const struct object_datum *object)
 {
+ extern int n3ds_network_coop_active(void);
+ if(n3ds_network_coop_active())return FALSE;
  extern boolean cinematic_in_progress(void);extern int n3ds_input_platform_original_model(void);
  if(object->object.type!=_object_type_biped || object->object.parent_object_index!=NONE || cinematic_in_progress())return FALSE;
  const struct unit_datum *unit=(const struct unit_datum *)object;
@@ -2368,6 +2381,9 @@ void object_compute_node_matrices(
 	struct object_definition *object_definition = object_definition_get(object->definition_index);
 	
 	real_matrix4x3 *object_nodes = (real_matrix4x3 *)object_header_block_get(object_index, &object->object.node_matrices);
+#ifdef HALO_N3DS
+    if (native_stationary_pose_reuse(object_index, object, object_definition, object_nodes)) return;
+#endif
 	real_orientation *node_orientations =
 		TEST_FLAG(_object_mask_cannot_interpolate, object->object.type) ?
 		cannot_interpolate_node_orientations_storage :
@@ -2652,6 +2668,7 @@ void object_compute_node_matrices(
 					object_nodes[node_stack_index] = node_matrix;
 				}
 
+#ifndef HALO_N3DS_STRIP_DIAGNOSTICS
 				if (!valid_real_matrix4x3(&object_nodes[node_stack_index]))
 				{
 					real_matrix4x3 const *validated_root_node_matrix;
@@ -2752,6 +2769,7 @@ void object_compute_node_matrices(
 						validated_root_node_matrix,
 						"object_compute_node_matrices root node matrix");
 				}
+#endif
 			}
 			else
 			{
@@ -2765,6 +2783,7 @@ void object_compute_node_matrices(
 					&object_nodes[node_stack_index]);
 			}
 
+#ifndef HALO_N3DS_STRIP_DIAGNOSTICS
 			if (node_stack_index==0)
 			{
 				real_matrix4x3 *final_matrix = &object_nodes[node_stack_index];
@@ -2775,6 +2794,7 @@ void object_compute_node_matrices(
 					match_assert_valid_real_matrix4x3_internal("c:\\halo\\SOURCE\\objects\\objects.c", 2935, final_matrix, string);
 				}
 			}
+#endif
 
 			next_sibling_node_index = node->next_sibling_node_index;
 
@@ -3615,7 +3635,7 @@ boolean object_force_inside_bsp(
 	return result;
 }
 
-#ifdef HALO_N3DS
+#if defined(HALO_N3DS) && !defined(HALO_N3DS_STRIP_DIAGNOSTICS)
 extern long long n3ds_engine_ticks(void),n3ds_engine_tick_frequency(void);
 extern void n3ds_log(const char *);
 static int native_object_sample;
@@ -4198,7 +4218,7 @@ void objects_garbage_collection(
 void objects_update(
 	void)
 {
-#ifdef HALO_N3DS
+#if defined(HALO_N3DS) && !defined(HALO_N3DS_STRIP_DIAGNOSTICS)
     /* One sampled simulation tick per second; avoid timing every object on
      * every tick. No actor scheduling or simulation rate changes. */
     static unsigned int native_object_frames;
@@ -4317,7 +4337,7 @@ void objects_update(
 	}
 
 	objects_garbage_collection();
-#ifdef HALO_N3DS
+#if defined(HALO_N3DS) && !defined(HALO_N3DS_STRIP_DIAGNOSTICS)
     if(native_object_sample) {
         char message[220];double scale=1000./n3ds_engine_tick_frequency();
         snprintf(message,sizeof(message),"OBJECT TICK SAMPLE: frame=%u type_ms=%.3f damage_ms=%.3f nodes_ms=%.3f functions_lights_ms=%.3f",native_object_frames,
@@ -4337,7 +4357,20 @@ void objects_update(
             native_object_type_counts[1],native_object_type_ticks[1]*scale,
             native_object_type_counts[2],native_object_type_ticks[2]*scale,
             native_object_type_counts[5],native_object_type_ticks[5]*scale);
-        n3ds_log(message);memset(native_object_type_ticks,0,sizeof(native_object_type_ticks));memset(native_object_type_counts,0,sizeof(native_object_type_counts));
+        n3ds_log(message);
+#ifdef HALO_N3DS_AUDIO_TRACE
+        snprintf(message,sizeof(message),"OBJECT OTHER SAMPLE: equipment=%u/%.3f garbage=%u/%.3f scenery=%u/%.3f machine=%u/%.3f control=%u/%.3f light=%u/%.3f placeholder=%u/%.3f sound=%u/%.3f",
+            native_object_type_counts[3],native_object_type_ticks[3]*scale,
+            native_object_type_counts[4],native_object_type_ticks[4]*scale,
+            native_object_type_counts[6],native_object_type_ticks[6]*scale,
+            native_object_type_counts[7],native_object_type_ticks[7]*scale,
+            native_object_type_counts[8],native_object_type_ticks[8]*scale,
+            native_object_type_counts[9],native_object_type_ticks[9]*scale,
+            native_object_type_counts[10],native_object_type_ticks[10]*scale,
+            native_object_type_counts[11],native_object_type_ticks[11]*scale);
+        n3ds_log(message);
+#endif
+        memset(native_object_type_ticks,0,sizeof(native_object_type_ticks));memset(native_object_type_counts,0,sizeof(native_object_type_counts));
     }
 #endif
 	profile_exit(section);
@@ -4922,7 +4955,11 @@ static void object_compute_function_values(
 
 		if (function->step_count>1)
 		{
-			real floor_value = floor(function->step_count*value);
+			#ifdef HALO_N3DS
+            real floor_value = n3ds_float_floor(function->step_count*value);
+#else
+            real floor_value = floor(function->step_count*value);
+#endif
 			value = floor_value*function->runtime_reciprocal_step_count;
 		}
 
@@ -4986,7 +5023,11 @@ static void object_compute_function_values(
 
 		if (TEST_FLAG(function->flags, _object_function_clip_to_bounds_and_normalize))
 		{
-			output = fmod(output+object->object.outgoing_function_values[function_index], 1.f);
+			#ifdef HALO_N3DS
+            output = n3ds_float_fraction(output+object->object.outgoing_function_values[function_index]);
+#else
+            output = fmod(output+object->object.outgoing_function_values[function_index], 1.f);
+#endif
 		}
 
 		object->object.outgoing_function_values[function_index] = output;

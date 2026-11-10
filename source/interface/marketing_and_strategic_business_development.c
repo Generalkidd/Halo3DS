@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /*
 MARKETING_AND_STRATEGIC_BUSINESS_DEVELOPMENT.C
 */
@@ -18,9 +19,13 @@ MARKETING_AND_STRATEGIC_BUSINESS_DEVELOPMENT.C
 /* Neither Xbox executables nor its dashboard exist on this platform. Keep
  * these optional capabilities explicit without acquiring launch-only resources. */
 void n3ds_log(const char *message);
+void n3ds_engine_request_exit(void);
 boolean xbox_demos_available(void) { return FALSE; }
 void xbox_demos_launch(void) { n3ds_log("Xbox demo launch unavailable on Nintendo 3DS"); }
-void xbox_dashboard_launch(void) { n3ds_log("Xbox dashboard unavailable on Nintendo 3DS; use native application exit"); }
+void xbox_dashboard_launch(void) {
+	n3ds_log("EXIT: main menu requested application close");
+	n3ds_engine_request_exit();
+}
 #else
 
 static void clean_up_for_image_launch(void);

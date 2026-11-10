@@ -1126,6 +1126,14 @@ void player_ui_set_active_player_profile(
 		(profile != NULL));
 
 	player_ui_globals.local_players[local_player_index].active_profile_index = profile_index;
+#ifdef HALO_N3DS
+    /* Resolve the checkpoint directory during profile selection. Repeated
+     * saves must not reopen the on-card profile index on the frame thread. */
+    if(local_player_index==0) {
+        extern void n3ds_checkpoint_profile_changed(void);
+        n3ds_checkpoint_profile_changed();
+    }
+#endif
 	csmemcpy(
 		&player_ui_globals.local_players[local_player_index].profile,
 		profile,

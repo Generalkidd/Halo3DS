@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /*
 MAIN.C
 
@@ -392,6 +393,8 @@ symbols in this file:
 #include "tag_files/files.h"
 #ifdef HALO_N3DS
 #include "engine_cache.h"
+#include "engine_network.h"
+#include "engine_bots.h"
 #endif
 
 /* ---------- constants */
@@ -1117,6 +1120,7 @@ void main_menu_load(
 	void)
 {
 #ifdef HALO_N3DS
+	n3ds_bots_reset();
 	native_solo_multiplayer_active=FALSE;
 	native_solo_multiplayer_pending=FALSE;
 #endif
@@ -1465,7 +1469,14 @@ static void main_new_map(
 
 	if (!errors_handle())
 	{
+#ifdef HALO_N3DS
+		n3ds_bots_reset();
+#endif
 		create_local_players();
+#ifdef HALO_N3DS
+		if(native_solo_multiplayer_active && game_engine_running())
+			n3ds_bots_create(n3ds_bots_requested_count());
+#endif
 		game_time_start();
 	}
 	else
@@ -1892,6 +1903,15 @@ static void main_skip_cinematic_private(
 static void main_skip_private(
 	void)
 {
+#ifdef HALO_N3DS
+	/* Network time may only advance through shared action updates. */
+	if(n3ds_network_coop_active())
+	{
+		main_globals.skip_ticks=0;
+		main_globals.skip=FALSE;
+		return;
+	}
+#endif
 	if (main_globals.skip_ticks && cinematic_in_progress())
 	{
 		real saved_speed = game_time_get_speed();
@@ -2048,18 +2068,21 @@ void n3ds_main_frontend_initialize(void)
 }
 void n3ds_main_frontend_services(void)
 {
+	extern int n3ds_network_coop_active(void);
+	boolean coop = n3ds_network_coop_active();
+	n3ds_network_coop_frame();
 	main_globals.frame_start_milliseconds = system_milliseconds();
 	main_globals.seconds_elapsed = 1.f/30.f;
 	if(native_solo_multiplayer_pending) {n3ds_main_load_solo_multiplayer();return;}
-	if(main_globals.switch_to_structure_bsp_index!=NONE) main_switch_to_structure_bsp_private();
-	if(main_globals.lost_map) main_lost_map_private();
-	if(main_globals.won_map) main_won_map_private();
-	if(main_globals.respawn) main_respawn_private();
-	if(main_globals.save_map_completed) main_saving_map_private();
+	if(!coop && main_globals.switch_to_structure_bsp_index!=NONE) main_switch_to_structure_bsp_private();
+	if(!coop && main_globals.lost_map) main_lost_map_private();
+	if(!coop && main_globals.won_map) main_won_map_private();
+	if(!coop && main_globals.respawn) main_respawn_private();
+	if(!coop && main_globals.save_map_completed) main_saving_map_private();
 	if(main_globals.defer_map_change) main_change_map_name();
-	if(main_globals.revert_map) main_revert_map_private();
-	if(main_globals.skip_cinematic) main_skip_cinematic_private();
-	if(main_globals.reset_map) main_reset_map_private();
+	if(!coop && main_globals.revert_map) main_revert_map_private();
+	if(!coop && main_globals.skip_cinematic) main_skip_cinematic_private();
+	if(!coop && main_globals.reset_map) main_reset_map_private();
 	/* Developer memory-core dumps are not the normal checkpoint/save path;
 	 * their platform file services are not ported. Never report success. */
 	assert(!main_globals.save_core && !main_globals.load_core);
@@ -2100,6 +2123,31 @@ void n3ds_main_mission_save_step(boolean before_tick)
 	else if(!before_tick && main_globals.saving_map)
 	{
 		main_save_map_private();
+	}
+}
+/* A wireless client may simulate zero or several ticks in a rendered frame.
+ * Campaign requests that affect simulation must run once per shared tick. */
+void n3ds_main_coop_before_tick(void)
+{
+	if(main_globals.skip_cinematic) main_skip_cinematic_private();
+	if(main_globals.switch_to_structure_bsp_index!=NONE) main_switch_to_structure_bsp_private();
+	if(main_globals.lost_map) main_lost_map_private();
+	if(main_globals.revert_map) main_revert_map_private();
+	if(main_globals.respawn) main_respawn_private();
+	if(main_globals.save_map_completed) main_saving_map_private();
+}
+void n3ds_main_coop_after_tick(void)
+{
+	if(main_globals.saving_map) main_save_map_private();
+	if(main_globals.won_map)
+	{
+		main_globals.won_map=FALSE;
+		n3ds_network_coop_return_to_lobby(1);
+	}
+	if(main_globals.reset_map)
+	{
+		main_globals.reset_map=FALSE;
+		n3ds_network_coop_return_to_lobby(0);
 	}
 }
 #endif

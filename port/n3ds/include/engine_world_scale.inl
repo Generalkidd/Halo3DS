@@ -14,6 +14,7 @@ static const unsigned short scale_widths[]={400,320,256,200};
 static const unsigned short scale_heights[]={240,192,152,120};
 void n3ds_gpu_world_budget(int enabled)
 {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_STATE);
  if(world_budget_enabled!=!!enabled){
   world_budget_enabled=!!enabled;memset(&scale_policy,0,sizeof(scale_policy));
   world_scale=enabled && n3ds_input_platform_original_model()?1:0;
@@ -31,6 +32,8 @@ static void world_scale_feedback(float gpu,float prepare)
  if(!world_budget_enabled || diagnostic_mode)return;
  if(!scale_sample_ready)return;
  scale_sample_ready=0;
+ n3ds_engine_fog_feedback(scale_work_previous,gpu,scale_wait_previous,prepare,scale_policy.trial || scale_policy.cooldown>0);
+ if(n3ds_engine_fog_busy()){scale_policy.ready=0;return;}
  int next=resolution_policy_step_profile(&scale_policy,scale_work_previous,gpu,scale_wait_previous,prepare,n3ds_input_platform_original_model());
 #ifdef HALO_N3DS_WORLD_SCALE_TEST
  next=HALO_N3DS_WORLD_SCALE_TEST;
@@ -58,6 +61,7 @@ static void world_target_bind(void)
 }
 void n3ds_gpu_world_view_begin(void)
 {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_STATE);
  world_low_active=0;
  if((!world_budget_enabled || !world_scale) && !screen_effect_active || diagnostic_mode || world_scale_failed[eye_right])return;
  if(!scaled_target[eye_right]){
@@ -76,6 +80,7 @@ void n3ds_gpu_world_view_begin(void)
 }
 void n3ds_gpu_world_resolve(void)
 {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_STATE);
  if(!world_low_active)return;
  /* Commit the world segment with cache flush flags before sampling its color
   * attachment. FrameEnd starts the ordered queue; this never waits on it. */

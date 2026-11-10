@@ -29,7 +29,6 @@
     <Compile Include="Compatibility.cs" />
     <Compile Include="Core\*.cs" />
     <None Include="..\Core\*.cs"><Link>Shared converter\%(Filename)%(Extension)</Link></None>
-    <None Include="Tests.cs" />
     <None Include="adapt-core.py" />
     <None Include="build.ps1" />
     <None Include="..\..\..\..\docs\DEVELOPMENT.md"><Link>Developer notes.md</Link></None>

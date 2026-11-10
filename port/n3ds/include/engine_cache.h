@@ -8,6 +8,9 @@ long n3ds_engine_tags_load(const char *name);
 boolean n3ds_engine_map_available(const char *name);
 /* Lightweight installed-header check for lists; not full load validation. */
 boolean n3ds_engine_map_installed(const char *name);
+/* Prepared tag/header identity for local wireless; zero means unavailable.
+ * Full CRC validation still runs before a map is used. */
+unsigned long n3ds_engine_map_identity(const char *name);
 void n3ds_engine_tags_unload(void);
 boolean n3ds_engine_bsp_load(struct scenario_structure_bsp_reference *reference);
 void n3ds_engine_bsp_unload(struct scenario_structure_bsp_reference *reference);

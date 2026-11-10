@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /*
 COLLISION_MODELS.C
 */
@@ -54,6 +55,12 @@ void render_debug_collision_bsp(struct collision_bsp *bsp, const real_matrix4x3 
 
 /* ---------- globals */
 
+#ifdef HALO_N3DS
+#include "engine_collision_layout.inl"
+#else
+#define native_collision_inverse matrix4x3_inverse
+#endif
+
 /* ---------- public code */
 
 boolean collision_model_instance_new(
@@ -90,8 +97,17 @@ boolean collision_model_test_sphere(
 	real_point3d transformed_center;
 	real_matrix4x3 inverted_matrix;
 
-	for (node_index = 0; node_index < instance->model->nodes.count; ++node_index)
+	#ifdef HALO_N3DS
+    const struct native_collision_layout *layout=native_collision_layout_get(instance->model);
+    short slots=layout?layout->count:instance->model->nodes.count;
+    for(short slot=0;slot<slots;++slot)
+#else
+    for (node_index = 0; node_index < instance->model->nodes.count; ++node_index)
+#endif
 	{
+#ifdef HALO_N3DS
+        node_index=layout?layout->nodes[slot]:slot;
+#endif
 		collision_node = TAG_BLOCK_GET_ELEMENT(&instance->model->nodes, node_index, struct collision_node);
 
 		if (collision_node->region_index != NONE)
@@ -106,7 +122,7 @@ boolean collision_model_test_sphere(
 
 				if (collision_bsp->bsp3d.nodes.count > 0)
 				{
-					matrix4x3_inverse(&instance->matrices[node_index], &inverted_matrix);
+					native_collision_inverse(&instance->matrices[node_index], &inverted_matrix);
 					matrix4x3_transform_point(&inverted_matrix, center, &transformed_center);
 				}
 			}
@@ -126,8 +142,17 @@ boolean collision_model_test_point(
 	short perm;
 	real_point3d transformed_point;
 
-	for (i = 0; i < instance->model->nodes.count; i++)
+	#ifdef HALO_N3DS
+    const struct native_collision_layout *layout=native_collision_layout_get(instance->model);
+    short slots=layout?layout->count:instance->model->nodes.count;
+    for(short slot=0;slot<slots;++slot)
+#else
+    for (i = 0; i < instance->model->nodes.count; i++)
+#endif
 	{
+#ifdef HALO_N3DS
+        i=layout?layout->nodes[slot]:slot;
+#endif
 		collision_node = TAG_BLOCK_GET_ELEMENT(&instance->model->nodes, i, struct collision_node);
 
 		if (collision_node->region_index != NONE)
@@ -173,8 +198,17 @@ boolean collision_model_test_vector(
 
 	result->bsp_result.t = FLT_MAX;
 
-	for (node_index = 0; node_index < instance->model->nodes.count; ++node_index)
+	#ifdef HALO_N3DS
+    const struct native_collision_layout *layout=native_collision_layout_get(instance->model);
+    short slots=layout?layout->count:instance->model->nodes.count;
+    for(short slot=0;slot<slots;++slot)
+#else
+    for (node_index = 0; node_index < instance->model->nodes.count; ++node_index)
+#endif
 	{
+#ifdef HALO_N3DS
+        node_index=layout?layout->nodes[slot]:slot;
+#endif
 		struct collision_node const *collision_node = TAG_BLOCK_GET_ELEMENT(&instance->model->nodes, node_index, struct collision_node);
 
 		if (collision_node->region_index != NONE)
@@ -195,7 +229,7 @@ boolean collision_model_test_vector(
 					real_point3d transformed_point;
 					real_vector3d transformed_vector;
 
-					matrix4x3_inverse(&instance->matrices[node_index], &inverted_matrix);
+					native_collision_inverse(&instance->matrices[node_index], &inverted_matrix);
 					matrix4x3_transform_point(&inverted_matrix, point, &transformed_point);
 					matrix4x3_transform_vector(&inverted_matrix, vector, &transformed_vector);
 
@@ -238,8 +272,17 @@ boolean collision_model_test_pill(
 
 	return_val = FALSE;
 
-	for (i = 0; i < instance->model->nodes.count; i++)
+	#ifdef HALO_N3DS
+    const struct native_collision_layout *layout=native_collision_layout_get(instance->model);
+    short slots=layout?layout->count:instance->model->nodes.count;
+    for(short slot=0;slot<slots;++slot)
+#else
+    for (i = 0; i < instance->model->nodes.count; i++)
+#endif
 	{
+#ifdef HALO_N3DS
+        i=layout?layout->nodes[slot]:slot;
+#endif
 		collision_node = TAG_BLOCK_GET_ELEMENT(&instance->model->nodes, i, struct collision_node);
 
 		if (collision_node->region_index != NONE)
@@ -254,7 +297,7 @@ boolean collision_model_test_pill(
 
 				if (collision_bsp->bsp3d.nodes.count > 0)
 				{
-					matrix4x3_inverse(&instance->matrices[i], &inverted_matrix);
+					native_collision_inverse(&instance->matrices[i], &inverted_matrix);
 					matrix4x3_transform_point(&inverted_matrix, point, &transformed_point);
 					matrix4x3_transform_vector(&inverted_matrix, vector, &transformed_vector);
 
@@ -303,8 +346,17 @@ boolean collision_model_get_features_in_sphere(
 
 	return_val = FALSE;
 
-	for (i = 0; i < instance->model->nodes.count; i++)
+	#ifdef HALO_N3DS
+    const struct native_collision_layout *layout=native_collision_layout_get(instance->model);
+    short slots=layout?layout->count:instance->model->nodes.count;
+    for(short slot=0;slot<slots;++slot)
+#else
+    for (i = 0; i < instance->model->nodes.count; i++)
+#endif
 	{
+#ifdef HALO_N3DS
+        i=layout?layout->nodes[slot]:slot;
+#endif
 		collision_node = TAG_BLOCK_GET_ELEMENT(&instance->model->nodes, i, struct collision_node);
 
 		if (collision_node->region_index != NONE)
@@ -320,7 +372,7 @@ boolean collision_model_get_features_in_sphere(
 				if (collision_bsp->bsp3d.nodes.count > 0)
 				{
 					matrix = &instance->matrices[i];
-					matrix4x3_inverse(matrix, &inverted_matrix);
+					native_collision_inverse(matrix, &inverted_matrix);
 					matrix4x3_transform_point(&inverted_matrix, center, &transformed_center);
 
 					scaled_radius = inverted_matrix.scale * radius;
@@ -360,8 +412,17 @@ void render_debug_collision_model(
 	short i;
 	short perm;
 
-	for (i = 0; i < instance->model->nodes.count; i++)
+	#ifdef HALO_N3DS
+    const struct native_collision_layout *layout=native_collision_layout_get(instance->model);
+    short slots=layout?layout->count:instance->model->nodes.count;
+    for(short slot=0;slot<slots;++slot)
+#else
+    for (i = 0; i < instance->model->nodes.count; i++)
+#endif
 	{
+#ifdef HALO_N3DS
+        i=layout?layout->nodes[slot]:slot;
+#endif
 		collision_node = TAG_BLOCK_GET_ELEMENT(&instance->model->nodes, i, struct collision_node);
 
 		if (collision_node->region_index != NONE)

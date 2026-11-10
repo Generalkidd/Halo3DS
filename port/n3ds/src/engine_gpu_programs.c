@@ -1,4 +1,5 @@
 #include <3ds.h>
+#include "engine_render_commands.h"
 #include <citro3d.h>
 #include "engine_renderer.h"
 #include "texture_test_shader.h"
@@ -11,6 +12,7 @@ static shaderProgram_s parking;
 static int ready;
 int n3ds_gpu_programs_initialize(void)
 {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_STATE);
     shader=DVLB_ParseFile((u32 *)texture_test_shader, sizeof(texture_test_shader));
     if (!shader) return 0;
     shaderProgramInit(&parking);
@@ -21,11 +23,13 @@ int n3ds_gpu_programs_initialize(void)
 }
 void n3ds_gpu_program_park(void)
 {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_STATE);
     if (!ready) svcBreak(USERBREAK_PANIC);
     C3D_BindProgram(&parking);
 }
 void n3ds_gpu_programs_dispose(void)
 {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_LIFETIME);
     /* Only after C3D_Fini: the context must no longer refer to parking. */
     if (ready) { shaderProgramFree(&parking); DVLB_Free(shader); }
     shader=NULL; ready=0;

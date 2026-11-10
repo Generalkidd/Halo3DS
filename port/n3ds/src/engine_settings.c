@@ -3,7 +3,8 @@
 #include "engine_settings.h"
 int n3ds_engine_read_cfg_language(void);
 void n3ds_log(const char *message);
-static wchar_t machine_name[32]=L"New Nintendo 3DS";
+int n3ds_engine_read_cfg_model(void);
+static wchar_t machine_name[32];
 unsigned int n3ds_engine_language_from_cfg(int language)
 {
     switch(language) {
@@ -35,4 +36,16 @@ int n3ds_engine_machine_name_set(const wchar_t *name)
     return 1;
 }
 void n3ds_engine_machine_name_get(wchar_t *name)
-{ memcpy(name,machine_name,sizeof(machine_name)); }
+{
+    if(!machine_name[0])
+    {
+        static const wchar_t *const models[]={L"Nintendo 3DS",L"Nintendo 3DS XL",
+            L"New Nintendo 3DS",L"Nintendo 2DS",L"New Nintendo 3DS XL",L"New Nintendo 2DS XL"};
+        int model=n3ds_engine_read_cfg_model();
+        const wchar_t *label=model>=0 && model<6?models[model]:L"Nintendo 3DS family";
+        unsigned int i=0;
+        while(label[i] && i<31) {machine_name[i]=label[i];++i;}
+        machine_name[i]=0;
+    }
+    memcpy(name,machine_name,sizeof(machine_name));
+}

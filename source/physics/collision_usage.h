@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /*
 COLLISION_USAGE.H
 
@@ -91,6 +92,14 @@ void collision_log_continue_period(
 	short time_period);
 void collision_log_end_period(
 	void);
+
+#if defined(HALO_N3DS_STRIP_DIAGNOSTICS) && !defined(N3DS_COLLISION_USAGE_IMPLEMENTATION)
+/* Release callers omit diagnostic calls and their arguments entirely. The
+ * implementation keeps its ABI for diagnostic builds and explicit probes. */
+#define collision_log_start_time(...) ((void)0)
+#define collision_log_end_time(...) ((void)0)
+#define collision_log_usage(...) ((void)0)
+#endif
 
 /* ---------- globals */
 

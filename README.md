@@ -1,14 +1,16 @@
 # Halo3DS
 
 Halo 3DS is a port of Halo Combat Evolved from the OG Xbox using recently decompiled source code from the OpenCE project!
-It supports all models of the 3DS family including both the OG and New models as well as 2DS models. 
-This project also aims to support most of the 3DS's native features including 3D mode and 3DS wireless multiplayer!  
+It supports all models of the 3DS family including both the OG and New models as well as 2DS models.
+This project also aims to support most of the 3DS's native features including 3D mode and 3DS wireless multiplayer!
 
 ## Playing
 
 You will need a modded 3DS/2DS console, a FAT32 SD card with at least 4 GB of free space and your own game files.
-Currently only the 1.0 Halo CE ISO is supported but support for others is being looking into. PC/MCC
-maps are not supported.
+The current `dev` test build supports Xbox campaign and multiplayer, optional
+retail PC multiplayer maps, and local wireless multiplayer/co-op. PC maps are
+optional and do not replace the Xbox game data. Custom Edition and MCC maps
+are not supported.
 
 ## Setup
 
@@ -19,17 +21,22 @@ setup instructions follow.
 
 1. Download the setup tool for **Windows 10/11** or **Windows 7** from the
    [releases page](https://github.com/Generalkidd/Halo3DS/releases). Both include the game executable. The Windows 7 version is
-   also compatible with Wine on Linux and Mac OS. 
-3. Open the tool and select your **Xbox ISO/XISO** or **dumped maps folder**.
-4. Select your SD card's drive, such as `H:\`, and click **Prepare SD card**.
+   also compatible with Wine on Linux and Mac OS.
+2. Open the tool and select your **Xbox ISO/XISO** or **dumped maps folder**.
+3. Select your SD card's drive, such as `H:\`, and click **Prepare SD card**.
    Leave the card connected until setup finishes.
-5. Safely eject the card, put it back in your console, and launch **Halo3DS**
+4. Safely eject the card, put it back in your console, and launch **Halo3DS**
    from the Homebrew Launcher. The first load may take a while.
 
-Use the English North American retail Xbox release. If you're using a maps
+USA original, Rev 1 and Rev 2 Xbox discs are supported. Other recognizable
+Xbox releases can be tried with a compatibility warning. If you're using a maps
 folder, keep its matching `default.xbe` in the parent folder. If setup can't
 find it, select it under **Additional options > HUD compatibility file**.
 No debug executable is needed.
+
+Open **PC options (optional)** to add retail PC multiplayer maps. Choose the `maps` folder from your installed retail Halo PC game
+(not Custom Edition or MCC). To add it to an existing SD installation, leave
+the Xbox source empty. PC files are optional; Xbox-only setup still works.
 
 If setup asks you to dump DSP firmware for sound, do this once on your console:
 press **L + D-pad Down + SELECT**, then choose
@@ -37,13 +44,41 @@ press **L + D-pad Down + SELECT**, then choose
 
 ## Updating
 
-In the setup tool, select your SD card and choose **Update the launcher only**.
+In the updated setup tool, select your SD card and choose **Keep installed Xbox maps**
+(**Update the launcher only** in older tools). Leave the PC folder blank for a launcher-only update.
 You can select a newer `Halo3DS.3dsx` under **Additional options** if you want
 to keep using an older setup tool.
 
 You can also replace `3ds/Halo3DS/Halo3DS.3dsx` on the SD card yourself.
 These updates keep your maps and saved files. Unless a release says otherwise,
 you don't need to run the full setup again.
+
+## Local wireless multiplayer (experimental)
+
+Use the same wireless-test build and matching maps on every console, and turn
+wireless communication on. No router or internet connection is needed.
+
+1. Choose **Multiplayer > System Link** for competitive play, or
+   **Multiplayer > Co-op** for campaign, then select a player profile.
+2. On the host, choose **Create Game**, then select the map and game type.
+3. On the other consoles, select the host's game and join the lobby.
+4. Once everyone is listed, the host can start the match.
+
+Competitive multiplayer supports up to four consoles, with one player each.
+Co-Op is limited to just two players.
+
+## Circle Pad Pro (experimental)
+
+Turn on **Circle Pad Pro** in Controller
+Settings to use the accessory's stick for aiming. **Right-stick aim** adjusts
+its sensitivity. Touch aiming and the existing button layout still work.
+Press an accessory shoulder button to wake it if necessary.
+
+It was designed to fit the original **3DS or 3DS XL**. The option is also
+available experimentally on other models, but physical fit and infrared
+alignment are not guaranteed. On New models, the built-in C-stick remains
+available when there is no fresh accessory input. Accessory support still
+needs hardware testing.
 
 ## Reporting problems
 
@@ -62,6 +97,8 @@ Check logs before sharing them, and don't include game files or firmware.
 
 [Developer notes](docs/DEVELOPMENT.md) cover building the game and both setup
 tools, the code layout, testing, and details to watch out for when making changes.
+The [modding guide](port/n3ds/MODDING.md) points to gameplay, bot, renderer,
+cache and campaign extension code.
 For the setup tools, start with the [Visual Studio solution instructions](docs/DEVELOPMENT.md#visual-studio).
 
 ## Origin and notices
@@ -69,7 +106,8 @@ For the setup tools, start with the [Visual Studio solution instructions](docs/D
 Based on [bnunu/halo-1](https://github.com/bnunu/halo-1), revision
 `8d0c1ff46ef92511e4809fff422bacd94c3b7c67`.
 
-See [LICENSE.md](LICENSE.md), the [setup component notices](port/n3ds/setup/THIRD-PARTY.md),
+See the [license scope and credits](LICENSING.md), [upstream CC0 notice](LICENSE.md),
+the [Kevin Boggs MIT notice](LICENSE-KEVIN-MIT.md), and the [setup component notices](port/n3ds/setup/THIRD-PARTY.md),
 and the licenses for [LZ4](port/n3ds/vendor/lz4/LICENSE) and the
 [allocator](port/n3ds/vendor/libctru-allocator/LICENSE.txt).
 Original game assets, SDK files and Nintendo DSP firmware are not included.

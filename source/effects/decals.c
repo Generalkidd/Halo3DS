@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /*
 DECALS.C
 
@@ -465,6 +466,9 @@ static long decal_insert(
 extern struct data_array *global_decal_data;
 
 boolean decals_enabled= TRUE;
+#ifdef HALO_N3DS
+int n3ds_controls_decals(void);
+#endif
 static real_point2d decal_points2d_temp[2][12];
 static struct decal_globals *decal_globals;
 static struct decal_geometry decal_geometry = {0};
@@ -1797,9 +1801,15 @@ void decal_new_from_collision(
 
 		if (!permanent)
 		{
+			/* On the native port, a first impact must not disappear while its
+			 * decal bitmap is queued for asynchronous texture loading. */
 			if (!_texture_cache_bitmap_get_hardware_format(
 				TAG_BLOCK_GET_ELEMENT(&bitmap_group->bitmaps, bitmap_index, struct bitmap_data),
+				#ifdef HALO_N3DS
+				TRUE,
+				#else
 				FALSE,
+				#endif
 				TRUE))
 			{
 				return;
@@ -2265,7 +2275,11 @@ void decal_new(
 	short forced_sequence_index,
 	struct decal_editor_geometry *editor_geometry)
 {
-	if (decals_enabled)
+	if (decals_enabled
+#ifdef HALO_N3DS
+		&& n3ds_controls_decals()
+#endif
+	)
 	{
 		unsigned long *local_random_seed_address= get_global_local_random_seed_address();
 		unsigned long local_random_seed= 0;

@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /*
 CONTRAILS.C
 
@@ -67,6 +68,9 @@ symbols in this file:
 /* ---------- headers */
 
 #include "effects/contrails.h"
+#ifdef HALO_N3DS
+#include "engine_controls.h"
+#endif
 
 #include "bitmaps/bitmap_group.h"
 #include "cseries/errors.h"
@@ -575,9 +579,40 @@ static void contrail_update_points(
 		{
 			struct contrail_point_datum *contrail_point = contrail_point_get(contrail_point_index);
 
+#ifdef HALO_N3DS
+			/* Kevin Boggs: spread a sub-tick viewer tracer over three 3DS
+			 * renders. The authored assault-rifle transition is 0.01-0.0125 s;
+			 * its original lifetime expires before a 30 Hz display can show it. */
+			real point_step = dt;
+			if (contrail_point->state_index == 0 &&
+				definition->render_type == _contrail_render_type_viewer &&
+				definition->states.count >= 2)
+			{
+				const struct contrail_point_state *first = TAG_BLOCK_GET_ELEMENT(
+					&definition->states, 0, struct contrail_point_state);
+				boolean sub_tick = n3ds_controls_quality() && first->duration_upper_bound <= 0.0f &&
+					first->transition_duration_upper_bound > 0.0f &&
+					first->transition_duration_upper_bound < 1.0f/TICKS_PER_SECOND;
+				if (sub_tick)
+				{
+					if (TEST_FLAG(contrail_point->flags, _contrail_point_new_bit))
+						point_step = 0.0f;
+					else if (TEST_FLAG(contrail_point->flags, _contrail_point_transitioning_bit) &&
+						point_step > first->transition_duration_upper_bound / 3.0f)
+						point_step = first->transition_duration_upper_bound / 3.0f;
+				}
+			}
+#endif
+
 			if (!TEST_FLAG(contrail_point->flags, _contrail_point_expired_bit))
 			{
-				contrail_point->time = dt * contrail_point->delta + contrail_point->time;
+				contrail_point->time =
+#ifdef HALO_N3DS
+					point_step * contrail_point->delta +
+#else
+					dt * contrail_point->delta +
+#endif
+					contrail_point->time;
 
 				while (contrail_point->delta == 0.0f || contrail_point->time > 1.0f)
 				{

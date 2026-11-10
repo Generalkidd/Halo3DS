@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /*
 GAME_ENGINE_KING.C
 
@@ -242,6 +243,16 @@ extern real_rgb_color global_default_animation_colors[4];
 extern real global_default_animation_values[4];
 
 struct king_globals king_globals = { 0 };
+#ifdef HALO_N3DS
+/* Kevin Boggs: game_engine_king_active_hill_center - New3DS integration. */
+boolean game_engine_king_active_hill_center(real_point3d *position)
+{
+	if (!position || king_globals.hill_point_count <= 0)
+		return FALSE;
+	*position = king_globals.hill_center;
+	return TRUE;
+}
+#endif
 static short king_engine_hill_count = 0;
 static short king_engine_hills[MAXIMUM_HILLS] = { 0 };
 
@@ -606,7 +617,7 @@ boolean king_engine_display_score(
 				}
 				else
 					string = L"";
-				usnprintf(buffer, buffer_size, string, other_player->name, score);
+				usnprintf(buffer, buffer_size, string, player_display_name(other_player), score);
 			}
 			else if (message == king_message_enemy_on_the_hill)
 			{
@@ -619,7 +630,7 @@ boolean king_engine_display_score(
 				}
 				else
 					string = L"";
-				usnprintf(buffer, buffer_size, string, other_player->name, score);
+				usnprintf(buffer, buffer_size, string, player_display_name(other_player), score);
 			}
 			else
 			{

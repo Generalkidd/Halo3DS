@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /* Ordinary screen quads share the text shader; HUD mode2 meters use their
  * original combiner math and a separate native blend path. */
 #include "cseries.h"
@@ -87,7 +88,7 @@ void _rasterizer_psuedo_dynamic_screen_quad_draw(struct rasterizer_dynamic_scree
         }
         assert(rasterizer_set_texture_bitmap_data(0,parameters->map[0]));
         assert(n3ds_gpu_hud_meter(parameters->meter_parameters,v,r->x1-r->x0,r->y1-r->y0,parameters->point_sampled,parameters->map_wrapped[0]));
-        n3ds_gpu_world_state_restore();return;
+        n3ds_hud_restore_after_quad();return;
     }
     rasterizer_text_begin(parameters);
     rasterizer_text_draw_character(vertices);

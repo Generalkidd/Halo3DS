@@ -1788,7 +1788,7 @@ short actor_select_firing_position(
 			"c:\\halo\\SOURCE\\ai\\actor_firing_position.c",
 			1552,
 			!actor->input.vehicle_passenger);
-		ai_profile.meters[_ai_meter_firing_point].accumulator++;
+		AI_PROFILE_ONLY(ai_profile.meters[_ai_meter_firing_point].accumulator++);
 
 		encounter_build_firing_position_owner_actor_indices(actor->meta.encounter_index, owner_actor_indices);
 		if (actor->firing_positions.current_position_index!=NONE)

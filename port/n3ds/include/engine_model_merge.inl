@@ -4,7 +4,7 @@
 static struct merged_model {
     const struct triangle_buffer *source_tri[16];
     const struct vertex_buffer *source_vert[16];
-    unsigned int parts,bytes;
+    unsigned int parts,bytes;int lod_enabled;
     struct triangle_buffer triangles;
     struct vertex_buffer vertices;
 } merged_models[MERGED_MODELS];
@@ -20,24 +20,38 @@ static void merged_models_release(void)
 }
 static struct merged_model *merged_model_get(const struct triangle_buffer *const *tri,const struct vertex_buffer *const *vert,unsigned int parts,int map_owned)
 {
+    int lod_enabled=map_owned && native_lod_pack && !first_person_active && !(parameters.geometry_flags&(1u<<4));
     struct merged_model *slot=NULL;
     for(unsigned int k=0;k<MERGED_MODELS;++k) {
         struct merged_model *m=merged_models+k;
-        if(m->parts==parts && !memcmp(m->source_tri,tri,parts*sizeof(*tri)) && !memcmp(m->source_vert,vert,parts*sizeof(*vert)))return m->bytes?m:NULL;
+        if(m->lod_enabled==lod_enabled && m->parts==parts && !memcmp(m->source_tri,tri,parts*sizeof(*tri)) && !memcmp(m->source_vert,vert,parts*sizeof(*vert)))return m->bytes?m:NULL;
         if(!m->parts && !slot)slot=m;
     }
     if(!slot)return NULL;
     memcpy(slot->source_tri,tri,parts*sizeof(*tri));memcpy(slot->source_vert,vert,parts*sizeof(*vert));slot->parts=parts;
     const struct n3ds_cache_view *tags=n3ds_engine_cache_view(0);
+    const struct triangle_buffer *const *source_tri=tri;
+    const struct vertex_buffer *const *source_vert=vert;
+    const struct triangle_buffer *chosen_tri[16];const struct vertex_buffer *chosen_vert[16];
+    int lod_parts[16]={0};slot->lod_enabled=lod_enabled;
+    for(unsigned int p=0;p<parts;++p) {
+        chosen_tri[p]=tri[p];chosen_vert[p]=vert[p];
+        if(lod_enabled) {
+            if(n3ds_cache_resolve(tags,vert[p],sizeof(*vert[p]))!=vert[p] || n3ds_cache_resolve(tags,tri[p],sizeof(*tri[p]))!=tri[p])return NULL;
+            struct native_lod_mesh *lod=native_lod_get(vert[p],tri[p]);
+            if(lod){chosen_tri[p]=&lod->triangles;chosen_vert[p]=&lod->vertices;lod_parts[p]=1;}
+        }
+    }
+    tri=chosen_tri;vert=chosen_vert;
     unsigned int vertices=0,indices=0,bones=0;unsigned long long bone_mask=0;
     for(unsigned int p=0;p<parts;++p) {
-        if(map_owned && (n3ds_cache_resolve(tags,vert[p],sizeof(*vert[p]))!=vert[p] || n3ds_cache_resolve(tags,tri[p],sizeof(*tri[p]))!=tri[p]))return NULL;
+        if(map_owned && !lod_parts[p] && (n3ds_cache_resolve(tags,vert[p],sizeof(*vert[p]))!=vert[p] || n3ds_cache_resolve(tags,tri[p],sizeof(*tri[p]))!=tri[p]))return NULL;
         if(vert[p]->type!=5 || vert[p]->count<=0 || tri[p]->count<=0 || tri[p]->count>16384 || (tri[p]->type!=0 && tri[p]->type!=1))return NULL;
         vertices+=vert[p]->count;indices+=tri[p]->count*3;
         if(vertices>4096 || indices>49152)return NULL;
         const struct model_vertex_compressed *v=vert[p]->base_address;
         unsigned int bytes=(tri[p]->type?tri[p]->count+2:tri[p]->count*3)*2;
-        if(map_owned && (n3ds_cache_resolve(tags,v,vert[p]->count*sizeof(*v))!=v || n3ds_cache_resolve(tags,tri[p]->base_address,bytes)!=tri[p]->base_address))return NULL;
+        if(map_owned && !lod_parts[p] && (n3ds_cache_resolve(tags,v,vert[p]->count*sizeof(*v))!=v || n3ds_cache_resolve(tags,tri[p]->base_address,bytes)!=tri[p]->base_address))return NULL;
         for(unsigned int i=0;i<(unsigned int)vert[p]->count;++i) {
             struct model_vertex_uncompressed decoded;if(!n3ds_model_decode_vertex(v+i,&decoded))return NULL;
             for(int k=0;k<2;++k) if(decoded.node_weights[k]) {
@@ -72,7 +86,7 @@ static struct merged_model *merged_model_get(const struct triangle_buffer *const
     }
     assert(checked==used);n3ds_log("PASS: merged model preserves ordered triangle vertices and strip winding");
 #endif
-    memcpy(slot->source_tri,tri,parts*sizeof(*tri));memcpy(slot->source_vert,vert,parts*sizeof(*vert));
+    memcpy(slot->source_tri,source_tri,parts*sizeof(*tri));memcpy(slot->source_vert,source_vert,parts*sizeof(*vert));
     slot->parts=parts;slot->bytes=bytes;merged_bytes+=bytes;
     slot->vertices=(struct vertex_buffer){.type=5,.count=vertices,.base_address=data};
     slot->triangles=(struct triangle_buffer){.type=0,.count=used/3,.base_address=out};

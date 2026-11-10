@@ -197,6 +197,7 @@ symbols in this file:
 #include "input/input.h"
 #ifdef HALO_N3DS
 #include "engine_input.h"
+#include "engine_network.h"
 #endif
 #include "input/input_abstraction.h"
 #include "interface/player_ui.h"
@@ -1596,6 +1597,10 @@ static void player_control_action_test_check_reset_input_blob(
 
 	if (input->accept && cinematic_can_be_skipped())
 	{
+#ifdef HALO_N3DS
+		if(n3ds_network_coop_active()) n3ds_network_coop_request(N3DS_COOP_SKIP);
+		else
+#endif
 		main_skip_cinematic();
 	}
 

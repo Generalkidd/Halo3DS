@@ -1770,11 +1770,11 @@ boolean path_state_find(
 
 	if (state->destination_valid)
 	{
-		ai_profile.meters[_ai_meter_path_find].accumulator++;
+		AI_PROFILE_ONLY(ai_profile.meters[_ai_meter_path_find].accumulator++);
 	}
 	else
 	{
-		ai_profile.meters[_ai_meter_path_flood].accumulator++;
+		AI_PROFILE_ONLY(ai_profile.meters[_ai_meter_path_flood].accumulator++);
 	}
 
 	path_state_reset(state);

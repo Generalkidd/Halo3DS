@@ -83,7 +83,7 @@ boolean game_state_write_to_file(void)
     assert(state.arena);
     long long start=n3ds_engine_ticks();
     state.valid = FALSE;
-    void *snapshot=n3ds_save_snapshot_create(state.arena,state.bytes);
+    void *snapshot=n3ds_save_snapshot_create_reusing(state.arena,state.bytes,state.snapshot);
     if(snapshot) {
         n3ds_save_snapshot_release(state.snapshot);state.snapshot=snapshot;state.valid=TRUE;
         extern long long n3ds_engine_tick_frequency(void);char message[128];

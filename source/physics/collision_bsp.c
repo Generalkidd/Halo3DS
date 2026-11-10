@@ -175,10 +175,18 @@ struct collision_bsp_test_sphere_context
 	boolean projection_sign;
 	byte pad2;
 	real_point2d center2d;
+#ifdef HALO_N3DS
+	const struct native_query_tree *native_tree;
+	unsigned int native_surface_generation;
+#endif
 };
 
 typedef char collision_bsp_test_sphere_context_size_assert[
+#ifdef HALO_N3DS
+	sizeof(struct collision_bsp_test_sphere_context) == 0x230 ? 1 : -1];
+#else
 	sizeof(struct collision_bsp_test_sphere_context) == 0x228 ? 1 : -1];
+#endif
 typedef char collision_bsp_test_sphere_context_plane_stack_offset_assert[
 	offsetof(struct collision_bsp_test_sphere_context, plane_stack) == 0x1C ? 1 : -1];
 typedef char collision_bsp_test_sphere_context_projection_axis_offset_assert[
@@ -286,6 +294,10 @@ void render_debug_collision_edge(
 /* ---------- globals */
 
 static struct collision_bsp_usage_times collision_bsp_usage_times = { 0 };
+
+#ifdef HALO_N3DS
+#include "engine_collision_query.inl"
+#endif
 
 /* ---------- public code */
 
@@ -978,7 +990,14 @@ boolean collision_bsp_test_sphere(
 	result->edge_count = 0;
 	result->vertex_count = 0;
 
+#ifdef HALO_N3DS
+	context.native_surface_generation = native_surface_begin();
+	native_feature_begin();
+	context.native_tree = native_query_get(bsp, center, radius);
+	bsp3d_test_sphere_recursive(&context, context.native_tree ? context.native_tree->root : 0);
+#else
 	bsp3d_test_sphere_recursive(&context, 0);
+#endif
 	collision_log_end_time(
 		collision_function,
 		collision_bsp_usage_times.sphere.QuadPart);
@@ -1033,6 +1052,9 @@ static void add_feature(
 	long *indices,
 	long index)
 {
+#ifdef HALO_N3DS
+	native_feature_insert(count, indices, index);
+#else
 	short feature_index;
 
 	for (feature_index = 0; feature_index < *count; feature_index++)
@@ -1046,6 +1068,7 @@ static void add_feature(
 		indices[*count] = index;
 		(*count)++;
 	}
+#endif
 
 	return;
 }
@@ -1054,6 +1077,10 @@ static void collision_surface_test_sphere(
 	struct collision_bsp_test_sphere_context *data,
 	long surface_index)
 {
+#ifdef HALO_N3DS
+    if (native_surface_repeated(data->native_surface_generation, surface_index,
+        data->projection_axis, data->projection_sign, &data->center2d)) return;
+#endif
 	struct collision_surface const *surface = TAG_BLOCK_GET_ELEMENT(
 		&data->bsp->surfaces,
 		surface_index,
@@ -1106,34 +1133,30 @@ static void collision_surface_test_sphere(
 			hit_feature = TRUE;
 		}
 
-		edge_index = edge->edge_indices[reverse];
-	}
-	while (edge_index != surface->first_edge_index);
-
-	edge_index = surface->first_edge_index;
-	do
-	{
-		struct collision_edge const *edge = TAG_BLOCK_GET_ELEMENT(
-			&data->bsp->edges,
-			edge_index,
-			struct collision_edge);
-		boolean reverse = edge->surface_indices[1] == surface_index;
-		struct collision_vertex const *vertex0 = TAG_BLOCK_GET_ELEMENT(
-			&data->bsp->vertices,
-			edge->vertex_indices[reverse],
-			struct collision_vertex);
-		struct collision_vertex const *vertex1 = TAG_BLOCK_GET_ELEMENT(
-			&data->bsp->vertices,
-			edge->vertex_indices[!reverse],
-			struct collision_vertex);
+        struct collision_vertex const *vertex0 = vertex;
+        struct collision_vertex const *vertex1 = TAG_BLOCK_GET_ELEMENT(
+            &data->bsp->vertices, edge->vertex_indices[!reverse], struct collision_vertex);
 		real_vector3d edge_vector;
 
-		vector_from_points3d(&vertex0->point, &vertex1->point, &edge_vector);
-		if (fast_vector_intersects_sphere(
-			&vertex0->point,
-			&edge_vector,
-			data->center,
-			data->radius))
+        edge_vector.i=vertex1->point.x-vertex0->point.x;
+        edge_vector.j=vertex1->point.y-vertex0->point.y;
+        edge_vector.k=vertex1->point.z-vertex0->point.z;
+        /* Same arithmetic and branch boundaries as fast_vector_intersects_sphere.
+         * The vertex pass has already computed p and p.p for this endpoint. */
+        real c=distance_squared-radius_squared;
+        boolean intersects=c<0.f;
+        if(!intersects) {
+            real b=edge_vector.i*delta_x+edge_vector.j*delta_y+edge_vector.k*delta_z;
+            if(!(b>=0.f)) {
+                real a=edge_vector.i*edge_vector.i+edge_vector.j*edge_vector.j+edge_vector.k*edge_vector.k;
+                real disc=b*b-a*c;
+                if(!(disc<=0.f)) {
+                    real neg_a_minus_b=-a-b;
+                    intersects=neg_a_minus_b<0.f || neg_a_minus_b*neg_a_minus_b<disc;
+                }
+            }
+        }
+        if(intersects)
 		{
 			add_feature(
 				&data->result->edge_count,
@@ -1604,10 +1627,21 @@ static void bsp3d_test_sphere_recursive(
 {
 	while (!(node_index & LONG_MIN))
 	{
+#ifdef HALO_N3DS
+        const struct native_query_node *cached = data->native_tree ? &data->native_tree->nodes[node_index] : NULL;
+        long original_index = cached ? cached->original : node_index;
+#else
+        long original_index = node_index;
+#endif
 		struct bsp3d_node const *node = TAG_BLOCK_GET_ELEMENT(
 			&data->bsp->bsp3d.nodes,
-			node_index,
+			original_index,
 			struct bsp3d_node);
+#ifdef HALO_N3DS
+        const long *children = cached ? cached->children : node->children;
+#else
+        const long *children = node->children;
+#endif
 		real_plane3d const *plane = TAG_BLOCK_GET_ELEMENT(
 			&data->bsp->bsp3d.planes,
 			node->plane_designator,
@@ -1624,7 +1658,7 @@ static void bsp3d_test_sphere_recursive(
 				data->stack_depth>=0 && data->stack_depth<MAXIMUM_BSP3D_DEPTH);
 			data->plane_stack[data->stack_depth++] =
 				node->plane_designator | LONG_MIN;
-			bsp3d_test_sphere_recursive(data, node->children[0]);
+			bsp3d_test_sphere_recursive(data, children[0]);
 
 			data->stack_depth--;
 			match_assert(
@@ -1633,13 +1667,13 @@ static void bsp3d_test_sphere_recursive(
 				data->stack_depth>=0 && data->stack_depth<MAXIMUM_BSP3D_DEPTH);
 			data->plane_stack[data->stack_depth++] =
 				node->plane_designator & LONG_MAX;
-			bsp3d_test_sphere_recursive(data, node->children[1]);
+			bsp3d_test_sphere_recursive(data, children[1]);
 			data->stack_depth--;
 
 			return;
 		}
 
-		node_index = node->children[child_index];
+		node_index = children[child_index];
 	}
 
 	if (node_index != NONE)

@@ -1,10 +1,11 @@
-static float hologram_visibility(const float position[3],int sky)
+/* New3DS integration additions by Kevin Boggs. */
+static float hologram_visibility(const float position[3],int sky,const struct native_model_view *frame_view)
 {
-    const struct render_fog *f=&global_window_parameters.fog;
+    const struct render_fog *f=&frame_view->fog;
     float depth=0,plane=0,visible=1;
     if(sky) return 1;
     for(int c=0;c<3;++c) {
-        depth+=(position[c]-global_window_parameters.camera.position.n[c])*global_window_parameters.camera.forward.n[c];
+        depth+=(position[c]-frame_view->camera_position.n[c])*frame_view->camera_forward.n[c];
         plane+=f->plane.n.n[c]*position[c];
     }
     if(f->atmospheric_maximum_density>0) {
@@ -15,18 +16,18 @@ static float hologram_visibility(const float position[3],int sky)
         assert(f->planar_maximum_distance>0 && f->planar_maximum_depth>0);
         float x=PIN(1+(plane-f->plane.d)/f->planar_maximum_depth,0.f,1.f);
         float y=PIN(1-depth/f->planar_maximum_distance,0.f,1.f);
-        float cp=plane3d_distance_to_point(&f->plane,&global_window_parameters.camera.position);
+        float cp=plane3d_distance_to_point(&f->plane,&frame_view->camera_position);
         float q=1-MIN(1.f,x*x+y*y),r=1-y*y;
         visible*=1-(q*q+(r*r-q*q)*PIN(-cp/f->planar_maximum_depth,0.f,1.f))*PIN(f->planar_maximum_density,0.f,1.f);
     }
     return visible;
 }
-static void hologram_screen_rows(const struct native_generic_material *m,float rows[3][4],const float origin[3])
+static void hologram_screen_rows(const struct native_generic_material *m,float rows[3][4],const float origin[3],const struct native_model_view *frame_view)
 {
-    float basis[4][3];const real (*p)[4]=global_window_parameters.frustum.projection_matrix;
+    float basis[4][3];const real (*p)[4]=frame_view->projection;
     for(int i=0;i<4;++i) {
         real_point3d world,v;memcpy(world.n,origin,sizeof(world));if(i<3)world.n[i]+=1;
-        matrix4x3_transform_point(&global_window_parameters.frustum.world_to_view,&world,&v);
+        matrix4x3_transform_point(&frame_view->world_to_view,&world,&v);
         float x=v.x*p[0][0]+v.y*p[1][0]+v.z*p[2][0]+p[3][0];
         float y=v.x*p[0][1]+v.y*p[1][1]+v.z*p[2][1]+p[3][1];
         float q=v.x*p[0][3]+v.y*p[1][3]+v.z*p[2][3]+p[3][3];
@@ -39,7 +40,7 @@ static void hologram_screen_rows(const struct native_generic_material *m,float r
 }
 static int hologram_model_draw(int kind,const struct native_generic_material *bake,
     struct native_chicago_material native,struct native_chicago_vertex *vertices,
-    const struct native_render_vertex *posed,unsigned int count,const unsigned short *indices,unsigned int index_count)
+    const struct native_render_vertex *posed,unsigned int count,const unsigned short *indices,unsigned int index_count,const struct native_model_view *frame_view)
 {
     if(!kind || !posed) return 0;
     float bounds[4]={1e30f,1e30f,-1e30f,-1e30f};
@@ -63,7 +64,7 @@ static int hologram_model_draw(int kind,const struct native_generic_material *ba
     }
     float rows[3][4],tint[3]={1,1,1},relative_origin[3]={0};
     if(!native.sky)n3ds_gpu_camera_origin(relative_origin);
-    hologram_screen_rows(bake,rows,relative_origin);
+    hologram_screen_rows(bake,rows,relative_origin,frame_view);
     if(kind==2) memcpy(tint,bake->stage[1].constant[0],sizeof(tint));
     for(unsigned int i=0;i<count;++i) {
         struct native_chicago_vertex *v=vertices+i;memset(v,0,sizeof(*v));
@@ -72,7 +73,7 @@ static int hologram_model_draw(int kind,const struct native_generic_material *ba
             const float *r=bake->transform[1][a];v->uv[1][a]=r[0]*posed[i].uv[0]+r[1]*posed[i].uv[1]+r[3];
             v->uv[2][a]=(posed[i].uv[a]-bounds[a])/(bounds[a+2]-bounds[a]);
         }
-        float visibility=hologram_visibility(v->position,native.sky)*native.fade;
+        float visibility=hologram_visibility(v->position,native.sky,frame_view)*native.fade;
         for(int c=0;c<3;++c)v->position[c]-=relative_origin[c];
         for(int c=0;c<4;++c) v->color[c]=visibility;
     }

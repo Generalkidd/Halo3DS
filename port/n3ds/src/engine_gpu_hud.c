@@ -1,4 +1,5 @@
 #include <3ds.h>
+#include "engine_render_commands.h"
 #include <citro3d.h>
 #include <math.h>
 #include <string.h>
@@ -184,6 +185,7 @@ static void sample(const C3D_Tex *t,float u,float v,float border_alpha,float out
 }
 int n3ds_gpu_hud_icon_bounds(void *texture,float bounds[4])
 {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_STATE);
     const C3D_Tex *t=texture;if(!t || !t->data) return 0;
     static struct {unsigned int id;float input[4],output[4];int valid;} cache[4];
     static unsigned int next;
@@ -280,7 +282,8 @@ static C3D_Tex *acquire(unsigned int width,unsigned int height)
     ++used;if(count<used) count=used;
     return t;
 }
-void n3ds_gpu_hud_frame_begin(void) { used=0; }
+void n3ds_gpu_hud_frame_begin(void) {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_STATE); used=0; }
 static float quad_value(float a,float b,float c,float d,float u,float v)
 { return (a+(b-a)*u)*(1-v)+(d+(c-d)*u)*v; }
 static int plasma_wrap(int x,int size,int wrap)
@@ -302,6 +305,7 @@ static void plasma_sample(const C3D_Tex *t,float u,float v,int point,int wrap,fl
 }
 int n3ds_gpu_screen_multiply(const struct native_menu_plasma *p,const struct native_text_vertex vertices[4],float width,float height)
 {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_STATE);
     if(!p || !p->textures[0] || !p->textures[1] || p->textures[2]) return 0;
     C3D_Tex *a=p->textures[0],*b=p->textures[1];
     unsigned int sx=8,sy=8;
@@ -337,6 +341,7 @@ int n3ds_gpu_screen_multiply(const struct native_menu_plasma *p,const struct nat
 }
 int n3ds_gpu_menu_plasma(const struct native_menu_plasma *p,const struct native_text_vertex vertices[4],float width,float height)
 {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_STATE);
     static int tested;
     if(!tested) {
         if(!n3ds_menu_plasma_tests()) return 0;
@@ -487,6 +492,7 @@ done:
 
 void n3ds_gpu_hud_dispose(void)
 {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_LIFETIME);
     extern void n3ds_log(const char *);char message[128];unsigned int bytes=0;
     for(unsigned int i=0;i<SLOTS;++i) {bytes+=meter_cache[i].bytes;free(meter_cache[i].pixels);}
     snprintf(message,sizeof(message),"HUD BAKE CACHE: hits=%u misses=%u source_bytes=%u",cache_hits,cache_misses,bytes);n3ds_log(message);
@@ -503,6 +509,7 @@ void n3ds_gpu_hud_dispose(void)
 }
 int n3ds_gpu_hud_meter(const struct native_hud_meter *m,const struct native_text_vertex v[4],float width,float height,int point,int wrapped)
 {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_STATE);
     long long stamp=n3ds_engine_ticks();
     C3D_Tex *source=n3ds_gpu_texture_bound(0);
     if(!source || !m || !m->mode2 || m->gradient!=1) return 0;
@@ -621,6 +628,7 @@ static void sensor_gpu_dispose(void)
 }
 void n3ds_gpu_sensor_begin(void)
 {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_STATE);
     extern int n3ds_input_platform_original_model(void);
     sensor_size=SENSOR_GPU;
     sensor_native=n3ds_gpu_frame_active() && sensor_gpu_begin();
@@ -708,6 +716,7 @@ int n3ds_gpu_sensor_profile_tests(void)
 }
 int n3ds_gpu_sensor_blip(void *texture,float px,float py,float size,const float color[3])
 {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_STATE);
     long long stamp=n3ds_engine_ticks();
     if(!texture || !isfinite(px) || !isfinite(py) || !isfinite(size) || size<0) return 0;
     if(size==0) return 1;
@@ -718,6 +727,7 @@ int n3ds_gpu_sensor_blip(void *texture,float px,float py,float size,const float 
 }
 int n3ds_gpu_sensor_end(void *sweep,void *mask,float scale,float cx,float cy,float radius,float width,float height)
 {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_STATE);
     long long stamp=n3ds_engine_ticks();
     if(!sweep || !mask || !isfinite(scale)) return 0;
     C3D_Tex *t;

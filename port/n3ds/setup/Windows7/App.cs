@@ -37,7 +37,7 @@ namespace HaloSetup.Windows7
 
     internal sealed class SetupForm : Form, IProgress<SetupProgress>
     {
-        readonly TextBox source = new TextBox(), destination = new TextBox(), extra = new TextBox(), build = new TextBox();
+        readonly TextBox pcSource = new TextBox(), source = new TextBox(), destination = new TextBox(), extra = new TextBox(), build = new TextBox();
         readonly CheckBox updateOnly = new CheckBox();
         readonly Label status = new Label();
         readonly ProgressBar progress = new ProgressBar();
@@ -85,11 +85,19 @@ namespace HaloSetup.Windows7
             page.Controls.Add(inputs,0,2);
             AddPath(inputs, "1. Your Xbox game files", source,
                 new[] { "Choose XISO...", "Choose folder..." }, new Action[] { delegate { PickFile(source,"Xbox disc image|*.iso;*.xiso|All files|*.*"); }, delegate { PickFolder(source); } });
-            inputs.Controls.Add(new Label { Text = "Use your English North American retail Xbox copy of Halo: Combat Evolved.\r\nChoose an XISO, a full game folder, or a maps folder. PC / MCC files are not supported.", AutoSize=true, Margin=new Padding(0,0,0,12) });
+            inputs.Controls.Add(new Label { Text = "USA original, Rev 1 and Rev 2 are supported. Other Xbox discs are untested.\r\nChoose an XISO, a full game folder, or a maps folder.", AutoSize=true, Margin=new Padding(0,0,0,12) });
+            var pcToggle = new CheckBox { Text = "PC options (optional)", AutoSize = true };
+            var pcOptions = new TableLayoutPanel { AutoSize = true, Dock = DockStyle.Top, ColumnCount = 1, Visible = false };
+            pcOptions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            pcToggle.CheckedChanged += delegate { pcOptions.Visible = pcToggle.Checked; };
+            inputs.Controls.Add(pcToggle); inputs.Controls.Add(pcOptions);
+            AddPath(pcOptions, "PC multiplayer maps", pcSource,
+                new[] { "Choose PC folder...", "Clear" }, new Action[] { delegate { PickFolder(pcSource); }, delegate { pcSource.Text=""; } });
+            pcOptions.Controls.Add(new Label { Text = "Choose your installed retail Halo PC maps folder. Not Custom Edition or MCC.\r\nTo add PC maps to an existing installation, leave the Xbox source empty.", AutoSize=true, Margin=new Padding(0,0,0,12) });
             AddPath(inputs, "2. SD card root or output folder", destination,
                 new[] { "Choose folder..." }, new Action[] { delegate { PickFolder(destination); } });
             inputs.Controls.Add(new Label { Text = "For example H:\\. The card must be FAT32. Setup does not format or erase it.", AutoSize=true, Margin=new Padding(0,0,0,8) });
-            updateOnly.Text = "Update the launcher only (game files already installed)"; updateOnly.AutoSize = true;
+            updateOnly.Text = "Keep installed Xbox maps (update launcher / add PC maps)"; updateOnly.AutoSize = true;
             updateOnly.CheckedChanged += delegate { source.Enabled = !updateOnly.Checked; };
             inputs.Controls.Add(updateOnly);
             var advanced = new GroupBox { Text = "Additional options (usually unnecessary)", AutoSize = true, Dock=DockStyle.Top, Padding=new Padding(10), Margin=new Padding(0,12,0,8) };
@@ -151,12 +159,12 @@ namespace HaloSetup.Windows7
             {
                 string target=Installer.NormalizeDestination(destination.Text);
                 Data.Require(Directory.Exists(target),"Choose an existing SD card root or output folder.");
-                Data.Require(updateOnly.Checked || source.Text.Trim().Length>0,"Choose your Xbox XISO or dumped maps folder first.");
+                Data.Require(updateOnly.Checked || source.Text.Trim().Length>0 || pcSource.Text.Trim().Length>0,"Choose your Xbox XISO or dumped maps folder first.");
                 Directory.CreateDirectory(logDirectory);
                 logPath=Path.Combine(logDirectory,"windows7-"+DateTime.Now.ToString("yyyyMMdd-HHmmss")+"-"+Guid.NewGuid().ToString("N")+".txt");
-                log=new StreamWriter(logPath);log.AutoFlush=true;log.WriteLine("Halo3DS Setup Windows 7 1.18.0 | OS: "+Environment.OSVersion+" | CLR: "+Environment.Version);
+                log=new StreamWriter(logPath);log.AutoFlush=true;log.WriteLine("Halo3DS Setup Windows 7 1.20.1 | OS: "+Environment.OSVersion+" | CLR: "+Environment.Version);
                 cancellation=new CancellationTokenSource(); progress.Value=0; SetBusy(true);
-                worker.RunWorkerAsync(new SetupOptions(source.Text.Trim(),target,build.Text.Trim(),extra.Text.Trim(),updateOnly.Checked));
+                worker.RunWorkerAsync(new SetupOptions(source.Text.Trim(),target,build.Text.Trim(),extra.Text.Trim(),updateOnly.Checked || source.Text.Trim().Length==0,pcSource.Text.Trim()));
             }
             catch(Exception error){if(log!=null){log.Dispose();log=null;}SetBusy(false);if(smokeReport!=null){File.WriteAllText(smokeReport,error.ToString());Environment.ExitCode=1;Close();}else ShowError(error.Message);}
         }
@@ -194,10 +202,11 @@ namespace HaloSetup.Windows7
             }
             var result=(SetupResult)e.Result;log.WriteLine("Completed: "+result.Destination);log.Dispose();log=null;
             progress.Value=100;status.Text="Ready! Safely eject the SD card, then open Halo3DS in the Homebrew Launcher.";
-            string message="Your Halo3DS launcher is ready."+(result.Maps>0 ? "\r\nMaps prepared: "+result.Prepared+". Already up to date: "+result.AlreadyCorrect+"." : "")+"\r\n\r\nSafely eject the card, then open Halo3DS in the Homebrew Launcher.";
+            string message="Your Halo3DS launcher is ready."+(result.PcFiles>0 ? "\r\nPC files ready: "+result.PcFiles+"." : "")+(result.Maps>0 ? "\r\nMaps prepared: "+result.Prepared+". Already up to date: "+result.AlreadyCorrect+"." : "")+"\r\n\r\nSafely eject the card, then open Halo3DS in the Homebrew Launcher.";
+            if(result.CompatibilityWarning.Length>0)message+="\r\n\r\n"+result.CompatibilityWarning;
             if(!result.DspPresent)message+="\r\n\r\nFor sound, dump DSP firmware once on your console: press L + D-pad Down + SELECT, then Miscellaneous options > Dump DSP firmware.";
             if(smokeReport!=null){File.WriteAllText(smokeReport,"PASS UI install; prepared="+result.Prepared+"; CLR="+Environment.Version+"; bundled launcher="+Data.HashFile(Path.Combine(result.Destination,"3ds\\Halo3DS\\Halo3DS.3dsx")));Close();return;}
-            MessageBox.Show(this,message,"Ready to play",MessageBoxButtons.OK,MessageBoxIcon.Information);
+            MessageBox.Show(this,message,"Ready to play",MessageBoxButtons.OK,result.CompatibilityWarning.Length>0?MessageBoxIcon.Warning:MessageBoxIcon.Information);
         }
     }
 }

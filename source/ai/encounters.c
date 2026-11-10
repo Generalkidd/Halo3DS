@@ -2287,7 +2287,7 @@ void encounters_update(
 	{
 		short encounter_phase = DATUM_INDEX_TO_ABSOLUTE_INDEX(iterator.index) % ENCOUNTER_UPDATE_INTERVAL;
 
-		ai_profile.meters[_ai_meter_encounters_updated].accumulator++;
+		AI_PROFILE_ONLY(ai_profile.meters[_ai_meter_encounters_updated].accumulator++);
 		if (encounter_phase == phase)
 		{
 			encounter_update_status(iterator.index);

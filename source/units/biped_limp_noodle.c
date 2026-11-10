@@ -33,6 +33,9 @@ symbols in this file:
 /* ---------- headers */
 
 #include "cseries.h"
+#ifdef HALO_N3DS
+#include "engine_network.h"
+#endif
 #include "math/real_math.h"
 #include "models/model_animation_definitions.h"
 #include "models/model_definitions.h"
@@ -720,7 +723,10 @@ boolean biped_limp_noodle_relax_nodes_onto_environment(
         /* Cosmetic corpse settling only. Keep every solver iteration, spread
          * bodies by datum slot, and finish the same bounded relaxation over
          * more ticks. Alive movement, damage and AI never use this path. */
-        unsigned int stride=n3ds_input_platform_original_model()?4:2;
+        /* Networked campaign peers must settle the same bones on the same
+         * ticks, including a mixed Original/New pair. */
+        unsigned int stride=(n3ds_network_coop_active() ||
+            n3ds_input_platform_original_model())?4:2;
         if(((unsigned int)game_time_get()+(unsigned short)biped_index)%stride) return FALSE;
 #endif
 		long node_index;

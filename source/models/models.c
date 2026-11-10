@@ -796,6 +796,56 @@ void model_node_matrices_from_orientations(
 	return;
 }
 
+#ifdef HALO_N3DS
+/* New3DS integration additions by Kevin Boggs.
+ * Tag marker/node names are immutable until the cache generation changes.
+ * Cache indices only: animation matrices and attachments remain live. */
+struct native_model_name_entry {
+    unsigned int generation;
+    long model;
+    short result;
+    unsigned char length,kind;
+    char name[32];
+};
+static struct native_model_name_entry native_model_names[64][2];
+static unsigned char native_model_name_recent[64];
+static unsigned int native_model_name_hits,native_model_name_misses;
+/* Kevin Boggs: native_model_name_lookup */
+static short native_model_name_lookup(long model,const char *name,unsigned int kind,
+    short (*find)(long,const char *))
+{
+    extern unsigned int n3ds_engine_cache_generation(void);
+    if(model==NONE || !name || !*name)return find(model,name);
+    unsigned int length=0;
+    while(length<32 && name[length])++length;
+    if(length==32)return find(model,name);
+    unsigned int generation=n3ds_engine_cache_generation();
+    unsigned int set=((unsigned int)model ^ (unsigned char)name[0]*7u ^ length*13u ^ kind*31u)&63u;
+    for(unsigned int way=0;way<2;++way) {
+        struct native_model_name_entry *entry=&native_model_names[set][way];
+        if(entry->length==length && entry->generation==generation && entry->model==model &&
+           entry->kind==kind && !memcmp(entry->name,name,length)) {
+            ++native_model_name_hits;native_model_name_recent[set]=way;return entry->result;
+        }
+    }
+    ++native_model_name_misses;
+    unsigned int way=1u-native_model_name_recent[set];
+    struct native_model_name_entry *entry=&native_model_names[set][way];
+    short result=find(model,name);
+    entry->generation=generation;entry->model=model;entry->result=result;entry->kind=kind;
+    entry->length=length;memcpy(entry->name,name,length+1);native_model_name_recent[set]=way;
+    return result;
+}
+/* Kevin Boggs: n3ds_model_name_cache_report */
+void n3ds_model_name_cache_report(void)
+{
+    extern void n3ds_log(const char *);char message[96];
+    snprintf(message,sizeof(message),"MODEL NAME REUSE: hits=%u misses=%u",native_model_name_hits,native_model_name_misses);
+    n3ds_log(message);native_model_name_hits=native_model_name_misses=0;
+}
+#define model_find_marker native_model_find_marker_uncached
+#define model_find_node native_model_find_node_uncached
+#endif
 short model_find_marker(
 	long model_index,
 	char const *name)
@@ -864,6 +914,15 @@ short model_find_node(
 
 	return NONE;
 }
+
+#ifdef HALO_N3DS
+#undef model_find_marker
+#undef model_find_node
+short model_find_marker(long model,const char *name)
+{return native_model_name_lookup(model,name,0,native_model_find_marker_uncached);}
+short model_find_node(long model,const char *name)
+{return native_model_name_lookup(model,name,1,native_model_find_node_uncached);}
+#endif
 
 #ifdef HALO_N3DS
 extern unsigned int n3ds_engine_cache_generation(void);

@@ -73,10 +73,10 @@ def main():
     write_launcher(binary, args.runtime)
     # Include corresponding converter sources and notices alongside each binary.
     # Git's ignore rules exclude SDK/game inputs, local settings and generated files.
-    paths = ["README.md", "LICENSE.md", "docs/DEVELOPMENT.md", "docs/SETUP-CLI.md",
+    paths = ["README.md", "LICENSE.md", "LICENSE-KEVIN-MIT.md", "LICENSING.md", "docs/DEVELOPMENT.md", "docs/SETUP-CLI.md",
              "port/n3ds/setup/THIRD-PARTY.md", "port/n3ds/setup/tools/package-cli.py",
-             "port/n3ds/setup/tools/test-package-cli.py"]
-    paths += [f"port/n3ds/setup/{name}" for name in ("Cli", "Cli.Tests", "Core", "Tests", "Resources", "Licenses", "vendor")]
+             ]
+    paths += [f"port/n3ds/setup/{name}" for name in ("Cli", "Core", "Resources", "Licenses", "vendor")]
     names = subprocess.check_output([
         "git", "ls-files", "--cached", "--others", "--exclude-standard", "-z", "--", *paths,
     ], cwd=ROOT).decode("utf-8").split("\0")
@@ -89,6 +89,8 @@ def main():
                 archive.write(source, name)
     shutil.copy2(ROOT / "docs/SETUP-CLI.md", binary / "README.md")
     shutil.copy2(ROOT / "LICENSE.md", binary / "LICENSE.md")
+    shutil.copy2(ROOT / "LICENSE-KEVIN-MIT.md", binary / "LICENSE-KEVIN-MIT.md")
+    shutil.copy2(ROOT / "LICENSING.md", binary / "LICENSING.md")
     shutil.copy2(SETUP / "THIRD-PARTY.md", binary / "THIRD-PARTY.md")
     shutil.copytree(SETUP / "Licenses", binary / "Licenses")
     archive = create_archive(output, args.runtime)

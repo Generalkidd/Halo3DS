@@ -9,6 +9,9 @@ static struct world_feature_cache {
 static unsigned int world_feature_bytes,world_feature_hits,world_feature_misses,world_feature_verified,world_feature_stamp;
 void n3ds_collision_cache_clear(void)
 {
+ extern void n3ds_collision_layout_clear(void);n3ds_collision_layout_clear();
+ extern void n3ds_collision_query_clear(void);n3ds_collision_query_clear();
+ extern void n3ds_stationary_pose_clear(void);n3ds_stationary_pose_clear();
  for(unsigned int i=0;i<COLLISION_CACHE_SLOTS;++i)free(world_feature_cache[i].data);
  memset(world_feature_cache,0,sizeof(world_feature_cache));world_feature_bytes=0;
 }
@@ -66,6 +69,9 @@ static void world_feature_store(const struct collision_bsp *bsp,const unsigned i
 }
 void n3ds_collision_cache_report(void)
 {
+ extern void n3ds_collision_query_report(void);n3ds_collision_query_report();
+ extern void n3ds_stationary_pose_report(void);n3ds_stationary_pose_report();
+ extern void n3ds_model_name_cache_report(void);n3ds_model_name_cache_report();
  extern void n3ds_log(const char *);char message[128];
  snprintf(message,sizeof(message),"WORLD COLLISION REUSE: hits=%u misses=%u verified=%u bytes=%u",world_feature_hits,world_feature_misses,world_feature_verified,world_feature_bytes);n3ds_log(message);
  world_feature_hits=world_feature_misses=world_feature_verified=0;

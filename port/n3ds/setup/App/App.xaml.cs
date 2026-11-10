@@ -18,11 +18,12 @@ public sealed class SetupWindow : Window
 {
     [System.Runtime.InteropServices.DllImport("user32.dll")]
     static extern uint GetDpiForWindow(nint hwnd);
-    readonly TextBox source = new() { Header = "1. Your Halo game files", PlaceholderText = "Choose an Xbox XISO or dumped maps folder" };
+    readonly TextBox source = new() { Header = "1. Xbox game files", PlaceholderText = "Choose an Xbox XISO or dumped maps folder" };
+    readonly TextBox pcSource = new() { Header = "PC multiplayer maps (optional)", PlaceholderText = "Choose your installed Halo PC maps folder" };
     readonly TextBox destination = new() { Header = "2. SD card or output folder", PlaceholderText = "Choose the root of your SD card" };
     readonly TextBox build = new() { Header = "Game build (.3dsx)" };
     readonly TextBox compatibility = new() { Header = "HUD compatibility file (only if requested)", PlaceholderText = "Automatically found in most full game dumps" };
-    readonly CheckBox updateOnly = new() { Content = "Update the launcher only (keep installed maps)" };
+    readonly CheckBox updateOnly = new() { Content = "Keep installed Xbox maps (update launcher / add PC maps)" };
     readonly ProgressBar progress = new() { Minimum = 0, Maximum = 100, Value = 0 };
     readonly TextBlock status = new() { Text = "Choose your game files and destination to begin.", TextWrapping = TextWrapping.Wrap };
     readonly InfoBar message = new() { IsOpen = false, IsClosable = true };
@@ -47,7 +48,7 @@ public sealed class SetupWindow : Window
     public SetupWindow()
     {
         Title = "Halo 3DS Setup";
-        inputs.AddRange([source, destination, build, compatibility]);
+        inputs.AddRange([source, pcSource, destination, build, compatibility]);
         double scale = GetDpiForWindow(WindowNative.GetWindowHandle(this)) / 96.0;
         var area = Microsoft.UI.Windowing.DisplayArea.GetFromWindowId(AppWindow.Id,
             Microsoft.UI.Windowing.DisplayAreaFallback.Primary).WorkArea;
@@ -60,8 +61,13 @@ public sealed class SetupWindow : Window
         card.Children.Add(source);
         card.Children.Add(Row(Button("Choose XISO…", async () => await PickFile(source, ".iso", ".xiso")),
             Button("Choose maps folder…", async () => await PickFolder(source))));
-        card.Children.Add(Text("Requires Halo: Combat Evolved for the original Xbox — English North American retail release. No prototype or debug version needed. PC/MCC maps are not supported."));
+        card.Children.Add(Text("Use your Halo: Combat Evolved Xbox disc dump. USA original, Rev 1 and Rev 2 are supported; other discs are untested."));
         layout.Children.Add(card);
+        var pc = new StackPanel { Spacing = 10 };
+        pc.Children.Add(pcSource);
+        pc.Children.Add(Row(Button("Choose PC folder...", async () => await PickFolder(pcSource)), Button("Clear PC folder", () => pcSource.Text = "")));
+        pc.Children.Add(Text("Optional: add retail Halo PC multiplayer maps. Custom Edition and MCC are not supported. To add PC maps to an existing installation, leave the Xbox source empty."));
+        layout.Children.Add(new Expander { Header = "PC options (optional)", Content = pc, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch });
         var target = new StackPanel { Spacing = 10 };
         target.Children.Add(destination); target.Children.Add(Button("Choose destination…", async () => await PickFolder(destination)));
         target.Children.Add(Text("Installs the game and checks its files. Existing saves and other apps are kept. No formatting."));
@@ -121,9 +127,9 @@ public sealed class SetupWindow : Window
     async Task Run()
     {
         if (busy) return;
-        if (string.IsNullOrEmpty(destination.Text) || (updateOnly.IsChecked != true && string.IsNullOrEmpty(source.Text)))
+        if (string.IsNullOrEmpty(destination.Text) || (updateOnly.IsChecked != true && string.IsNullOrWhiteSpace(source.Text) && string.IsNullOrWhiteSpace(pcSource.Text)))
         { ShowError("Choose your game files and destination first."); return; }
-        var options = new SetupOptions(source.Text, destination.Text, build.Text, compatibility.Text, updateOnly.IsChecked == true);
+        var options = new SetupOptions(source.Text, destination.Text, build.Text, compatibility.Text, updateOnly.IsChecked == true || string.IsNullOrWhiteSpace(source.Text), pcSource.Text);
         busy = true; start.IsEnabled = false; cancel.IsEnabled = true; message.IsOpen = false;
         foreach (var control in inputs) control.IsEnabled = false;
         cancellation = new(); progress.Value = 0;
@@ -138,9 +144,9 @@ public sealed class SetupWindow : Window
                 var result = await Task.Run(() => Installer.Run(options, reports, cancellation.Token));
                 File.AppendAllText(log, System.Text.Json.JsonSerializer.Serialize(result) + "\nPASS\n");
                 message.Title = "Your files are ready";
-                message.Severity = result.DspPresent ? InfoBarSeverity.Success : InfoBarSeverity.Warning;
+                message.Severity = result.DspPresent && result.CompatibilityWarning.Length == 0 ? InfoBarSeverity.Success : InfoBarSeverity.Warning;
                 string done = options.LauncherOnly ? "Launcher updated. " : $"{result.Maps} maps ready ({result.AlreadyCorrect} already correct). ";
-                message.Message = done + "Safely eject the SD card, insert it in your Nintendo 3DS or 2DS, then open Halo3DS in the Homebrew Launcher." +
+                message.Message = (result.CompatibilityWarning.Length > 0 ? result.CompatibilityWarning + "\n\n" : "") + done + (result.PcFiles > 0 ? $"{result.PcFiles} PC files ready. " : "") + "Safely eject the SD card, insert it in your Nintendo 3DS or 2DS, then open Halo3DS in the Homebrew Launcher." +
                     (result.DspPresent ? "" : "\n\nAudio needs one console step: open Rosalina with L + D-pad Down + SELECT → Miscellaneous options → Dump DSP firmware. Setup does not include Nintendo firmware.");
                 message.IsOpen = true;
             }

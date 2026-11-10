@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /* Native sorted queue consumption: model materials, original widget callbacks
  * and primary-map dynamic unlit effects. Unsupported variants fail explicitly. */
 #include "cseries.h"
@@ -283,7 +284,9 @@ static void effect_draw(const struct transparent_geometry_group *group)
         (!rasterizer_debug_options.zsprites || (group->geometry_flags&(1u<<7)));
     boolean secondary=shader->secondary_map.index!=NONE && !inactive_depth_map;
     boolean supported_secondary_blend=shader->framebuffer_blend_function==NATIVE_BLEND_ADD ||
-        shader->framebuffer_blend_function==NATIVE_BLEND_SUBTRACT || shader->framebuffer_blend_function==NATIVE_BLEND_MAX;
+        shader->framebuffer_blend_function==NATIVE_BLEND_SUBTRACT ||
+        shader->framebuffer_blend_function==NATIVE_BLEND_MAX ||
+        shader->framebuffer_blend_function==NATIVE_BLEND_PREMULTIPLIED_ALPHA;
     if(secondary && (shader->secondary_map_anchor<0 || shader->secondary_map_anchor>1 || !supported_secondary_blend || (shader->flags&2))) {
         char message[192];snprintf(message,sizeof(message),"NATIVE EFFECT SECONDARY: bitmap=%08lx anchor=%d sampler=%04x blend=%d shader_flags=%04x geometry=%08lx",
             shader->secondary_map.index,shader->secondary_map_anchor,shader->secondary_map_flags,shader->framebuffer_blend_function,shader->flags,group->geometry_flags);n3ds_log(message);
@@ -373,7 +376,7 @@ void rasterizer_transparent_geometry_dispose_aux_buffer(void)
         n3ds_log(message);
         snprintf(message,sizeof(message),"EFFECT VERTEX REUSE: converted=%u reused=%u indexed=%u",effect_converted,effect_reused,effect_index_reused);n3ds_log(message);
         snprintf(message,sizeof(message),"EFFECT GPU OFFLOAD: duplicate_vertices_avoided=%u",packed_vertices_saved);n3ds_log(message);
-        rasterizer_memory_pool_dispose();
+        n3ds_model_transparent_reset();rasterizer_memory_pool_dispose();
         rasterizer_debug_options.zsprites=saved_zsprites;
     }
     initialized=FALSE;
@@ -381,8 +384,16 @@ void rasterizer_transparent_geometry_dispose_aux_buffer(void)
 void n3ds_transparent_begin_view(void)
 {
     assert(initialized && !drawing);
-    rasterizer_memory_pool_begin();
+    n3ds_model_transparent_reset();rasterizer_memory_pool_begin();
     rasterizer_transparent_geometry_begin();
+#ifdef HALO_N3DS_TRANSPARENT_OWNERSHIP_TESTS
+    static int ownership_tested;
+    if(!ownership_tested) {
+        ownership_tested=1;
+        if(!n3ds_model_transparent_tests()) {n3ds_log("RESULT: FAIL transparent pose ownership");abort();}
+        rasterizer_memory_pool_begin();rasterizer_transparent_geometry_begin();
+    }
+#endif
 }
 void rasterizer_transparent_geometry_groups_begin(void)
 {

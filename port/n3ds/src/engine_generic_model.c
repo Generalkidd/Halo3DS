@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /* Reduced-resolution UV-domain shading for vertex-independent generic stages.
  * Preserve all maps, animated transforms and stage arithmetic. This trades fine
  * texture detail for a bounded low-resolution bake, not material or object visibility. */
@@ -29,13 +30,11 @@ struct generic_shader {
 _Static_assert(sizeof(struct generic_stage)==112,"Generic stage ABI");
 _Static_assert(sizeof(struct generic_map)==100,"Generic map ABI");
 _Static_assert(offsetof(struct generic_shader,stages)==96,"Generic shader ABI");
-extern struct rasterizer_frame_begin_parameters global_frame_parameters;
-extern struct rasterizer_window_begin_parameters global_window_parameters;
 boolean rasterizer_set_texture_direct(short stage,long bitmap,short index);
 point2d *rasterizer_set_texture(short stage,short type,short usage,long bitmap,short index);
 void n3ds_log(const char *message);
 static float angular_fade(const struct model_vertex_uncompressed *v,
-    const struct rasterizer_model_skinning *skin,const float position[3],int mode)
+    const struct rasterizer_model_skinning *skin,const float position[3],int mode,const struct native_model_view *frame_view)
 {
     real_vector3d normal={0},eye;real n2=0,e2=0,dot=0;
     for(int i=0;i<2;++i) if(v->node_weights[i]) {
@@ -44,7 +43,7 @@ static float angular_fade(const struct model_vertex_uncompressed *v,
         for(int j=0;j<3;++j) normal.n[j]+=n.n[j]*v->node_weights[i];
     }
     for(int j=0;j<3;++j) {
-        eye.n[j]=global_window_parameters.camera.position.n[j]-position[j];
+        eye.n[j]=frame_view->camera_position.n[j]-position[j];
         n2+=normal.n[j]*normal.n[j];e2+=eye.n[j]*eye.n[j];dot+=normal.n[j]*eye.n[j];
     }
     float facing=n2*e2>1e-12f?PIN(fabsf(dot)/sqrtf(n2*e2),0.f,1.f):0;
@@ -55,10 +54,10 @@ static float angular_fade(const struct model_vertex_uncompressed *v,
  * positional eye vector instead. These are intentionally different vectors. */
 static void generic_view(const struct model_vertex_uncompressed *v,
     const struct rasterizer_model_skinning *skin,const float position[3],
-    float vertex[2][4],float reflected[3],int sky)
+    float vertex[2][4],float reflected[3],int sky,const struct native_model_view *frame_view)
 {
     real_vector3d normal={0};float n2=0,dot=0,facing=0,depth=0,plane=0;
-    const struct render_fog *fog=&global_window_parameters.fog;
+    const struct render_fog *fog=&frame_view->fog;
     for(int k=0;k<2;++k) if(v->node_weights[k]) {
         real_vector3d n;matrix4x3_transform_vector(skin->node_matrices+v->nodes[k],&v->normal,&n);
         for(int c=0;c<3;++c) normal.n[c]+=n.n[c]*v->node_weights[k];
@@ -67,10 +66,10 @@ static void generic_view(const struct model_vertex_uncompressed *v,
     assert(n2>1e-12f);
     for(int c=0;c<3;++c) {
         normal.n[c]/=sqrtf(n2);
-        reflected[c]=global_window_parameters.camera.position.n[c]-position[c];
+        reflected[c]=frame_view->camera_position.n[c]-position[c];
         dot+=normal.n[c]*reflected[c];
-        facing-=normal.n[c]*global_window_parameters.camera.forward.n[c];
-        depth-=reflected[c]*global_window_parameters.camera.forward.n[c];
+        facing-=normal.n[c]*frame_view->camera_forward.n[c];
+        depth-=reflected[c]*frame_view->camera_forward.n[c];
         plane+=fog->plane.n.n[c]*position[c];
     }
     for(int c=0;c<3;++c) reflected[c]=2*dot*normal.n[c]-reflected[c];
@@ -84,7 +83,7 @@ static void generic_view(const struct model_vertex_uncompressed *v,
         assert(fog->planar_maximum_distance>0 && fog->planar_maximum_depth>0);
         float x=PIN(1+(plane-fog->plane.d)/fog->planar_maximum_depth,0.f,1.f);
         float y=PIN(1-depth/fog->planar_maximum_distance,0.f,1.f);
-        float camera_plane=plane3d_distance_to_point(&fog->plane,&global_window_parameters.camera.position);
+        float camera_plane=plane3d_distance_to_point(&fog->plane,&frame_view->camera_position);
         float q=1-MIN(1.f,x*x+y*y),r=1-y*y;
         float density=q*q+(r*r-q*q)*PIN(-camera_plane/fog->planar_maximum_depth,0.f,1.f);
         visible*=1-density*PIN(fog->planar_maximum_density,0.f,1.f);
@@ -95,9 +94,47 @@ static void generic_view(const struct model_vertex_uncompressed *v,
     vertex[1][3]=(1-facing)*visible;
 }
 #include "engine_hologram_model.inl"
+/* Kevin Boggs: n3ds_model_view_tests */
+int n3ds_model_view_tests(void)
+{
+    /* Two independent views of one pose must not consume whichever global
+     * camera was most recently installed by the engine. */
+    real_matrix4x3 bone={.scale=1,.forward={1,0,0},.left={0,1,0},.up={0,0,1}};
+    struct rasterizer_model_skinning skin={.node_matrix_count=1,.node_matrices=&bone};
+    struct model_vertex_uncompressed vertex={.normal={0,0,1},.nodes={0,0},.node_weights={1,0}};
+    struct native_model_view a={.camera_forward={0,0,-1}},b={.camera_forward={0,1,0}};
+    a.fog.atmospheric_maximum_density=.5f;a.fog.atmospheric_maximum_distance=8;
+    const float position[3]={0,0,-4};float inputs[2][4],reflected[3];
+    for(int pass=0;pass<4;++pass) {
+        const struct native_model_view *v=pass&1?&b:&a;
+        generic_view(&vertex,&skin,position,inputs,reflected,0,v);
+        float visibility=pass&1?1.f:.75f,facing=pass&1?0.f:1.f;
+        if(fabsf(inputs[0][3]-visibility)>1e-6f ||
+           fabsf(inputs[1][3]-(1-facing)*visibility)>1e-6f ||
+           fabsf(hologram_visibility(position,0,v)-visibility)>1e-6f)return 0;
+        for(int c=0;c<3;++c)if(fabsf(inputs[1][c]-facing*visibility)>1e-6f)return 0;
+        if(reflected[0]!=0 || reflected[1]!=0 || reflected[2]!=4)return 0;
+    }
+    a.world_to_view=b.world_to_view=bone;
+    a.projection[0][0]=a.projection[1][1]=a.projection[3][3]=1;
+    memcpy(b.projection,a.projection,sizeof(b.projection));
+    b.projection[0][0]=2;b.world_to_view.position.x=2;
+    struct native_generic_material material={0};
+    material.transform[0][0][0]=material.transform[0][1][1]=1;
+    const float origin[3]={10,20,30};float rows[3][4];
+    const float expected[2][3][4]={{{1,0,0,10},{0,1,0,20},{0,0,0,1}},
+        {{2,0,0,24},{0,1,0,20},{0,0,0,1}}};
+    for(int pass=0;pass<4;++pass) {
+        hologram_screen_rows(&material,rows,origin,pass&1?&b:&a);
+        for(int i=0;i<3;++i)for(int j=0;j<4;++j)
+            if(fabsf(rows[i][j]-expected[pass&1][i][j])>1e-6f)return 0;
+    }
+    n3ds_log("RESULT: PASS independent model views: generic lighting, reflection, hologram fog and projection");
+    return 1;
+}
 void n3ds_generic_model_draw(const struct shader *shader,short permutation,
     const struct rasterizer_model_begin_parameters *parameters,const void *data,
-    unsigned int count,short type,const unsigned short *indices,unsigned int index_count)
+    unsigned int count,short type,const unsigned short *indices,unsigned int index_count,const struct native_model_view *frame_view)
 {
     const struct n3ds_cache_view *view=n3ds_engine_cache_view(0);
     const struct generic_shader *g=(const void *)shader;
@@ -113,7 +150,7 @@ void n3ds_generic_model_draw(const struct shader *shader,short permutation,
         for(long t=0;t<view->tag_header->tag_count;++t) if(view->instances[t].base_address==shader) {
             snprintf(message,sizeof(message),"GENERIC GEOMETRY REJECT: tag=%08lx type=%d flags=%02x layers=%ld maps=%ld stages=%ld name=%.140s",view->instances[t].tag_index,g->type,g->flags,g->layers.count,g->maps.count,g->stages.count,view->instances[t].name);n3ds_log(message);break;
         }
-        snprintf(message,sizeof(message),"GENERIC VIEW: position=%.6f,%.6f,%.6f forward=%.6f,%.6f,%.6f",global_window_parameters.camera.position.x,global_window_parameters.camera.position.y,global_window_parameters.camera.position.z,global_window_parameters.camera.forward.i,global_window_parameters.camera.forward.j,global_window_parameters.camera.forward.k);n3ds_log(message);
+        snprintf(message,sizeof(message),"GENERIC VIEW: position=%.6f,%.6f,%.6f forward=%.6f,%.6f,%.6f",frame_view->camera_position.x,frame_view->camera_position.y,frame_view->camera_position.z,frame_view->camera_forward.i,frame_view->camera_forward.j,frame_view->camera_forward.k);n3ds_log(message);
     }
     assert(g->type>=0 && g->type<=1 && !(g->flags&(1<<7)));
     assert(g->type==0 || !(g->flags&((1<<3)|(1<<6))));
@@ -125,7 +162,7 @@ void n3ds_generic_model_draw(const struct shader *shader,short permutation,
         assert(n3ds_cache_resolve(view,ref,sizeof(*ref))==ref);
         const struct shader *layer=shader_definition_get(ref->index);
         assert(layer && layer->base.type==5);
-        n3ds_generic_model_draw(layer,permutation,parameters,data,count,type,indices,index_count);
+        n3ds_generic_model_draw(layer,permutation,parameters,data,count,type,indices,index_count,frame_view);
     }
     --layer_depth;
     assert(g->fade_mode>=0 && g->fade_mode<=2 && g->fade_source>=0 && g->fade_source<=4);
@@ -161,12 +198,12 @@ void n3ds_generic_model_draw(const struct shader *shader,short permutation,
         float u=m->u,v=m->v;
         if(i || !(g->flags&8)) {u*=parameters->base_map_scale.i;v*=parameters->base_map_scale.j;}
         if(!i && (g->flags&64)) {
-            real_vector3d relative;vector_from_points3d(&global_window_parameters.camera.position,&parameters->centroid,&relative);
-            float distance=dot_product3d(&relative,&global_window_parameters.camera.forward);u*=distance;v*=distance;
+            real_vector3d relative;vector_from_points3d(&frame_view->camera_position,&parameters->centroid,&relative);
+            float distance=dot_product3d(&relative,&frame_view->camera_forward);u*=distance;v*=distance;
         }
         shader_texture_animation_evaluate(&m->animation,&parameters->animation,
             u,v,m->x,m->y,m->rotation,
-            global_frame_parameters.game_time_sec,&transform[0],&transform[1]);
+            frame_view->game_time,&transform[0],&transform[1]);
         memcpy(bake.transform[i],transform,sizeof(transform));
     }
     for(int i=0;i<bake.stages;++i) {
@@ -175,7 +212,7 @@ void n3ds_generic_model_draw(const struct shader *shader,short permutation,
         assert(n3ds_cache_resolve(view,s,sizeof(*s))==s && s->period!=0);
         out->flags=s->flags;
         float f=(s->flags&4) && parameters->animation.values?parameters->animation.values[0]:
-            periodic_function_evaluate(s->wave,global_frame_parameters.game_time_sec/s->period);
+            periodic_function_evaluate(s->wave,frame_view->game_time/s->period);
         for(int c=0;c<4;++c) {
             int argb=c==3?0:c+1;
             float value=s->lower.n[argb]+f*(s->upper.n[argb]-s->lower.n[argb]);
@@ -216,13 +253,13 @@ void n3ds_generic_model_draw(const struct shader *shader,short permutation,
     const struct native_render_vertex *posed=n3ds_model_skin_stream(cached,count,&parameters->skinning,&scale,parameters->unique_identifier);
     int hologram=g->type==0 && (g->flags&8) && !(g->flags&1) && g->blend==3 && !g->fade_mode?
         n3ds_generic_hologram(&bake):0;
-    if(hologram_model_draw(hologram,&bake,native,vertices,posed,count,indices,index_count)) return;
+    if(hologram_model_draw(hologram,&bake,native,vertices,posed,count,indices,index_count,frame_view)) return;
     float relative_origin[3]={0};if(!native.sky)n3ds_gpu_camera_origin(relative_origin);
     /* Cinematic screen-mapped holograms: keep every posed vertex and triangle,
      * but evaluate the expensive four-map combiner once per 8x8 UV cell each
      * draw. All animation uniforms and the camera are resampled every frame.
      * Cube materials and ordinary gameplay retain full per-vertex evaluation. */
-    int coarse=per_vertex && !cube && (g->flags&8) && cached && count>=128 && cinematic_in_progress();
+    int coarse=per_vertex && !cube && (g->flags&8) && cached && count>=128 && frame_view->cinematic;
     float shade_bounds[4]={1e30f,1e30f,-1e30f,-1e30f},shade_colors[64][4];byte shade_valid[64]={0};
     unsigned int shade_evaluations=0;
     if(coarse) {
@@ -244,7 +281,7 @@ void n3ds_generic_model_draw(const struct shader *shader,short permutation,
             float uv=vertices[i].uv[0][axis]=skinned->uv[axis];
             bounds[axis]=MIN(bounds[axis],uv);bounds[axis+2]=MAX(bounds[axis+2],uv);
         }
-        vertices[i].uv[2][0]=g->fade_mode?angular_fade(vertex,&parameters->skinning,skinned->position,g->fade_mode):1;
+        vertices[i].uv[2][0]=g->fade_mode?angular_fade(vertex,&parameters->skinning,skinned->position,g->fade_mode,frame_view):1;
         if(per_vertex) {
             unsigned int shade_cell=0;
             if(coarse) {
@@ -254,7 +291,7 @@ void n3ds_generic_model_draw(const struct shader *shader,short permutation,
                 if(shade_valid[shade_cell]) {memcpy(vertices[i].color,shade_colors[shade_cell],sizeof(vertices[i].color));continue;}
             }
             float inputs[2][4],reflected[3],samples[4][4]={{0}};
-            generic_view(vertex,&parameters->skinning,skinned->position,inputs,reflected,native.sky);
+            generic_view(vertex,&parameters->skinning,skinned->position,inputs,reflected,native.sky,frame_view);
             /* Generic vertex0 is diffuse model lighting. Use the same bounded
              * lighting approximation as opaque models; keep its alpha as the
              * original fog visibility, rather than inventing a white input. */
@@ -276,8 +313,8 @@ void n3ds_generic_model_draw(const struct shader *shader,short permutation,
                      * that coordinate at posed vertices, within the existing
                      * low-detail vertex-shading profile used for view inputs. */
                     real_point3d world,point;memcpy(world.n,skinned->position,sizeof(world));
-                    matrix4x3_transform_point(&global_window_parameters.frustum.world_to_view,&world,&point);
-                    const real (*p)[4]=global_window_parameters.frustum.projection_matrix;
+                    matrix4x3_transform_point(&frame_view->world_to_view,&world,&point);
+                    const real (*p)[4]=frame_view->projection;
                     float q=point.x*p[0][3]+point.y*p[1][3]+point.z*p[2][3]+p[3][3];
                     if(fabsf(q)<1e-6f) q=q<0?-1e-6f:1e-6f;
                     float u=(point.x*p[0][0]+point.y*p[1][0]+point.z*p[2][0]+p[3][0])/q;

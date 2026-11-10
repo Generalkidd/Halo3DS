@@ -1,11 +1,13 @@
+/* New3DS integration additions by Kevin Boggs. */
 /* Native encoded-sample cache, preserving original ready/reference semantics.
- * Playback and codec conversion belong to the future native sound device. */
+ * PC samples may come from sounds.map, while Xbox samples stay in the map. */
 #include "cseries.h"
 #include "cache/sound_cache.h"
 #include "sound/sound_definitions.h"
 #include "cache_reader.h"
 #include "engine_cache.h"
 #include "engine_sounds.h"
+#include "../pc/engine_pc_runtime.h"
 
 enum { SOUND_SLOTS=512, SOUND_BUDGET=4*1024*1024 };
 struct sound_entry {
@@ -17,6 +19,23 @@ struct sound_entry {
 static struct sound_entry entries[SOUND_SLOTS];
 static unsigned int used_bytes,used_slots,sequence,generation;
 static boolean initialized,opened;
+static struct sound_entry *pending;
+static byte *pending_data;
+extern const char *n3ds_engine_sound_read_path(void);
+extern int n3ds_sound_read_begin(const char *,void *,unsigned int,unsigned int);
+extern int n3ds_sound_read_collect(int);
+extern void n3ds_sound_read_shutdown(void);
+/* Kevin Boggs: sound_read_collect */
+static void sound_read_collect(void)
+{
+    if(!pending) return;
+    int ready=n3ds_sound_read_collect(0);
+    if(!ready) return;
+    if(ready>0) {pending->data=pending_data;pending->sound->unknown1=(unsigned long)pending_data;}
+    else {used_bytes-=pending->bytes;pending->bytes=0;free(pending_data);}
+    pending=NULL;pending_data=NULL;
+}
+
 unsigned int n3ds_engine_sound_count(void) { return used_slots; }
 unsigned int n3ds_engine_sound_bytes(void) { return used_bytes; }
 
@@ -61,6 +80,7 @@ static struct sound_entry *lookup(const struct sound_permutation *sound)
 static void release(struct sound_entry *entry)
 {
     assert(entry->sound && !entry->software && !entry->hardware);
+    if(entry==pending) {n3ds_sound_read_shutdown();free(pending_data);used_bytes-=entry->bytes;entry->bytes=0;pending=NULL;pending_data=NULL;}
     entry->sound->unknown0=NONE; entry->sound->unknown1=0;
     if (entry->data) { used_bytes-=entry->bytes; free(entry->data); }
     memset(entry,0,sizeof(*entry)); --used_slots;
@@ -96,13 +116,16 @@ static struct sound_entry *oldest_unused(void)
 {
     struct sound_entry *oldest=NULL;
     for(unsigned int i=0;i<SOUND_SLOTS;++i)
-        if(entries[i].data && !entries[i].software && !entries[i].hardware &&
+        if(entries+i!=pending && entries[i].data && !entries[i].software && !entries[i].hardware &&
            (!oldest || (unsigned int)(sequence-entries[i].age)>(unsigned int)(sequence-oldest->age)))
             oldest=entries+i;
     return oldest;
 }
 static boolean load(struct sound_entry *entry)
 {
+    sound_read_collect();
+    if(entry->data) return TRUE;
+    if(pending) return FALSE;
     byte *data;
     unsigned int size=entry->sound->samples.size;
     unsigned int reclaim=0,i;
@@ -120,6 +143,10 @@ static boolean load(struct sound_entry *entry)
         if(!oldest) { release(entry); return FALSE; }
         release(oldest);
     }
+    const char *path=n3ds_engine_sound_read_path();
+    if(path && n3ds_sound_read_begin(path,data,entry->sound->samples.file_offset,size)) {
+        pending=entry;pending_data=data;entry->bytes=size;used_bytes+=size;return FALSE;
+    }
     if (!n3ds_engine_cache_read(entry->sound->samples.file_offset,size,data)) { free(data); release(entry); return FALSE; }
     entry->data=data; entry->bytes=size; used_bytes+=size;
     entry->sound->unknown1=(unsigned long)data;
@@ -129,6 +156,7 @@ void sound_cache_idle(void)
 {
     unsigned int i;
     assert(initialized);
+    sound_read_collect();
     for (i=0;i<SOUND_SLOTS;++i) if (entries[i].sound && !entries[i].data) { load(entries+i); break; }
 }
 boolean _sound_cache_sound_request(struct sound_permutation *sound, boolean block, boolean fetch, boolean reference)
@@ -138,17 +166,22 @@ boolean _sound_cache_sound_request(struct sound_permutation *sound, boolean bloc
     unsigned int i;
     assert(fetch || (!block && !reference));
     if (!initialized || !opened) return FALSE;
+    sound_read_collect();
     entry=lookup(sound);
     if (!entry && (!owns_sound(sound) || sound->unknown0!=NONE)) return FALSE;
     if (!entry) {
         unsigned long offset=sound->samples.file_offset;
         long size=sound->samples.size;
-        if (!fetch || size<=0 || size>SOUND_BUDGET || offset<2048 || offset>(unsigned long)view->header.file_length ||
+        if (!fetch || size<=0 || size>SOUND_BUDGET || offset<2048) return FALSE;
+        if (n3ds_pc_tags_active() || (n3ds_pc_tags_loaded() && offset >= 0x40000000UL)) {
+            if (offset>=0x40000000UL && offset<0x60000000UL) return FALSE;
+            if (!n3ds_pc_cache_range_valid(offset,(unsigned long)size)) return FALSE;
+        } else if (offset>(unsigned long)view->header.file_length ||
             (unsigned long)size>(unsigned long)view->header.file_length-offset) return FALSE;
         for (i=0;i<SOUND_SLOTS;++i) if (!entries[i].sound) break;
         if (i==SOUND_SLOTS) {
             struct sound_entry *oldest=NULL;
-            for (i=0;i<SOUND_SLOTS;++i) if (!entries[i].software && !entries[i].hardware &&
+            for (i=0;i<SOUND_SLOTS;++i) if (entries+i!=pending && !entries[i].software && !entries[i].hardware &&
                 (!oldest || (unsigned int)(sequence-entries[i].age)>(unsigned int)(sequence-oldest->age))) oldest=entries+i;
             if (!oldest) return FALSE;
             i=oldest-entries; release(oldest);

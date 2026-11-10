@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /*
 PLAYER_QUEUES_NEW.C
 
@@ -110,11 +111,17 @@ symbols in this file:
 #include "game/game.h"
 #include "game/player_queues_new.h"
 #include "game/players.h"
+#ifdef HALO_N3DS
+#include "engine_network.h"
+#endif
 #include "interface/ui_widget.h"
 #include "main/main.h"
 #include "memory/data.h"
 #include "networking/network_game_globals.h"
 #include "units/units.h"
+#ifdef HALO_N3DS
+#include "engine_bots.h"
+#endif
 
 /* ---------- constants */
 
@@ -348,6 +355,11 @@ void update_server_next_update(
 			&update->update.actions[queue_index],
 			&queue->current_action,
 			sizeof(struct player_action));
+#ifdef HALO_N3DS
+		if(game_connection()==_game_connection_local || game_connection()==_game_connection_network_server)
+			n3ds_bots_fill_action(queue_index, queue->identifier,
+				&update->update.actions[queue_index]);
+#endif
 		update->update.action_count += 1;
 	}
 	update_client_handle_server_update(&update->update, update_number);
@@ -483,6 +495,11 @@ void update_client_queue(
 {
 	update_client_globals.saved_action_collection.actions[
 		update_client_globals.current_local_player] = *action;
+#ifdef HALO_N3DS
+	if(n3ds_network_coop_active())
+		update_client_globals.saved_action_collection.actions[
+			update_client_globals.current_local_player].control_flags |= n3ds_network_coop_pending();
+#endif
 	++update_client_globals.current_local_player;
 
 	return;
@@ -528,6 +545,11 @@ boolean update_client_dequeue(
 			struct player_action *action = &update->update.actions[queue_index];
 
 			queue->control_flags = action->control_flags;
+#ifdef HALO_N3DS
+			if(n3ds_network_coop_active())
+				queue->control_flags=n3ds_network_coop_consume(queue_index,queue->control_flags,
+					player_get(queue_index)->local_player_index!=NONE);
+#endif
 			queue->desired_facing = action->desired_facing;
 			queue->throttle = action->throttle;
 			queue->primary_trigger = action->primary_trigger;
@@ -603,8 +625,22 @@ long update_client_get_maximum_possible_server_time(
 		update_number += 1;
 	}
 
+#ifdef HALO_N3DS
+	{ extern int n3ds_network_coop_active(void);
+	  if(n3ds_network_coop_active())
+		/* A checkpoint rewinds campaign time, not reliable packet numbers. */
+		return game_time_get() + update_number - update_client_globals.next_update_number_to_dequeue;
+	}
+#endif
 	return update_number;
 }
+
+#ifdef HALO_N3DS
+long n3ds_network_simulation_update_number(void)
+{
+	return update_client_globals.next_update_number_to_dequeue;
+}
+#endif
 
 void update_client_local_ticks(
 	short ticks)
@@ -724,6 +760,13 @@ void update_client_handle_server_update(
 void update_queues_reset_and_fill_with_lies(
 	void)
 {
+#ifdef HALO_N3DS
+	{ extern int n3ds_network_coop_active(void);
+	  /* Each peer restores its own synchronized checkpoint. Queued network
+	   * inputs and their monotonic sequence numbers are outside that snapshot. */
+	  if(n3ds_network_coop_active()) return;
+	}
+#endif
 	if (update_server_globals.initialized)
 	{
 		update_server_globals.next_update_number_to_build = 0;

@@ -366,6 +366,9 @@ symbols in this file:
 /* ---------- headers */
 
 #include "cseries.h"
+#ifdef HALO_N3DS
+#include "engine_cache.h"
+#endif
 #include "bungie_net/common/message_header.h"
 #include "bungie_net/network/transport.h"
 #include "bungie_net/network/transport_address_constants.h"
@@ -1036,7 +1039,7 @@ void network_game_client_game_shutdown(
 struct network_machine *network_game_client_get_machine(
 	struct network_game_client *client)
 {
-	if (client && client->machine_index < MAXIMUM_NETWORK_MACHINE_COUNT)
+	if (client && client->machine_index >= 0 && client->machine_index < MAXIMUM_NETWORK_MACHINE_COUNT)
 		return &client->game.machines[client->machine_index];
 
 	return NULL;
@@ -1230,6 +1233,19 @@ boolean network_game_client_game_settings_updated(
 	struct network_game_client *client,
 	struct network_game *message_packet)
 {
+#ifdef HALO_N3DS
+	/* Check before passing a peer-supplied map name to the menu/loader. */
+	if (!memchr(message_packet->map.name,0,sizeof(message_packet->map.name)) ||
+		!message_packet->map.__unknown0 ||
+		(message_packet->map.__unknown0 != client->game.map.__unknown0 ||
+		 strcmp(message_packet->map.name,client->game.map.name)) &&
+		(unsigned long)message_packet->map.__unknown0 != n3ds_engine_map_identity(message_packet->map.name))
+	{
+		extern void n3ds_log(const char *);
+		n3ds_log("WIRELESS: map missing or prepared data differs from host; install matching map data");
+		return FALSE;
+	}
+#endif
 	match_assert(
 		"c:\\halo\\SOURCE\\networking\\network_client_manager.c",
 		0x375,
@@ -1660,8 +1676,14 @@ boolean network_game_client_handle_game_update(
 	}
 	else if (!global_network_game_server_get())
 	{
-		if (game_time_get() == message_packet->update_number &&
-			message_packet->game_time != game_time_get())
+		long simulation_time=game_time_get();
+#ifdef HALO_N3DS
+		{ extern int n3ds_network_coop_active(void);
+		  extern long n3ds_network_simulation_update_number(void);
+		  if(n3ds_network_coop_active()) simulation_time=n3ds_network_simulation_update_number(); }
+#endif
+		if (simulation_time == message_packet->update_number &&
+			message_packet->game_time != simulation_time)
 		{
 			network_event(
 				"not a bug, but update %d time %d our time %d",
@@ -1670,7 +1692,7 @@ boolean network_game_client_handle_game_update(
 				game_time_get());
 		}
 
-		if (game_time_get() == message_packet->game_time)
+		if (simulation_time == message_packet->game_time)
 		{
 			if (message_packet->random_seed != get_random_seed())
 			{
@@ -1689,7 +1711,7 @@ boolean network_game_client_handle_game_update(
 		{
 			network_event(
 				"client is lagging behind the server by #%d game ticks",
-				message_packet->update_number - game_time_get());
+				message_packet->update_number - simulation_time);
 		}
 	}
 
@@ -1730,6 +1752,7 @@ boolean network_game_client_game_has_started(
 			if (client->game.players[network_player_index].machine_index == client->machine_index)
 			{
 				for (;
+					network_player_index < MAXIMUM_NUMBER_OF_PLAYERS &&
 					client->game.players[network_player_index].machine_index == client->machine_index &&
 					network_player_is_valid(&client->game.players[network_player_index]);
 					network_player_index++)
@@ -2496,7 +2519,15 @@ static void network_game_client_update_precache_status(
 
 	if (now > client->last_precache_time + 1000)
 	{
+#ifdef HALO_N3DS
+		/* Joining precedes the first validated settings packet. Checking the
+		 * menu's stale/empty map here can enter the damaged-media fatal loop
+		 * before the settings packet gets a chance to be processed. */
+		if(!client->game.map.__unknown0 || !client->game.map.name[0]) return;
+		char *map_name = client->game.map.name;
+#else
 		char *map_name = main_get_multiplayer_map_name();
+#endif
 
 		client->last_precache_time = now;
 
@@ -2755,7 +2786,13 @@ static boolean network_game_client_idle_pregame(
 		{
 			network_game_client_update_precache_status(client);
 
-			if (!(success = network_connection_idle(client->connection, 15000, NULL)))
+			if (!(success = network_connection_idle(client->connection,
+#ifdef HALO_N3DS
+				180000,
+#else
+				15000,
+#endif
+				NULL)))
 			{
 				network_event("network_connection_idle() failed in network_game_client_idle_pregame()");
 			}
@@ -2828,7 +2865,13 @@ static boolean network_game_client_idle_ingame(
 
 	if (success == TRUE)
 	{
-		success = network_connection_idle(client->connection, 15000, NULL);
+		success = network_connection_idle(client->connection,
+#ifdef HALO_N3DS
+			network_game_client_server_has_started_game(client) ? 15000 : 180000,
+#else
+			15000,
+#endif
+			NULL);
 
 		if (success)
 		{

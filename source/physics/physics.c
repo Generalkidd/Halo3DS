@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /*
 PHYSICS.C
 
@@ -273,6 +274,17 @@ static void rotate_vectors3d_by_angular_velocity(
 	real_vector3d const *angular_velocity,
 	real_vector3d *rotated_forward,
 	real_vector3d *rotated_up);
+
+/* New3DS integration additions by Kevin Boggs.
+ * Two-tick vehicle integration adapted from JackTulli/halo-64 b629d0a.
+ * Collision impulses already accumulated across ticks must be applied once. */
+#ifdef HALO_N3DS_PHYSICS_15HZ
+static real n3ds_physics_step = 1.f;
+/* Kevin Boggs: n3ds_vehicle_physics_step */
+real n3ds_vehicle_physics_step(void) { return n3ds_physics_step; }
+/* Kevin Boggs: n3ds_vehicle_physics_set_step */
+void n3ds_vehicle_physics_set_step(real step) { n3ds_physics_step = step; }
+#endif
 
 /* ---------- globals */
 
@@ -1338,9 +1350,15 @@ void physics_update_new(
 		994,
 		&linear_velocity);
 
+#ifdef HALO_N3DS_PHYSICS_15HZ
+	position.x = vehicle->object.position.x + linear_velocity.i * n3ds_physics_step;
+	position.y = vehicle->object.position.y + linear_velocity.j * n3ds_physics_step;
+	position.z = vehicle->object.position.z + linear_velocity.k * n3ds_physics_step;
+#else
 	position.x = vehicle->object.position.x + linear_velocity.i;
 	position.y = vehicle->object.position.y + linear_velocity.j;
 	position.z = vehicle->object.position.z + linear_velocity.k;
+#endif
 
 	{
 		real_matrix3x3 frame;
@@ -1378,12 +1396,26 @@ void physics_update_new(
 		1012,
 		&angular_velocity);
 
+#ifdef HALO_N3DS_PHYSICS_15HZ
+	{
+		real_vector3d turn;
+
+		scale_vector3d(&angular_velocity, n3ds_physics_step, &turn);
+		rotate_vectors3d_by_angular_velocity(
+			&vehicle->object.forward,
+			&vehicle->object.up,
+			&turn,
+			&forward,
+			&up);
+	}
+#else
 	rotate_vectors3d_by_angular_velocity(
 		&vehicle->object.forward,
 		&vehicle->object.up,
 		&angular_velocity,
 		&forward,
 		&up);
+#endif
 
 	vehicle->object.translational_velocity = linear_velocity;
 	vehicle->object.angular_velocity = angular_velocity;
@@ -1473,19 +1505,34 @@ void physics_update_new(
 						(t - 1.0f)*normal_dot_velocity,
 						&linear_velocity);
 					vehicle->object.translational_velocity = linear_velocity;
+#ifdef HALO_N3DS_PHYSICS_15HZ
+                    /* Contact retries cover the same elapsed time as the
+                     * original prediction, not a fresh one-tick movement. */
+                    position.x = vehicle->object.position.x + linear_velocity.i * n3ds_physics_step;
+                    position.y = vehicle->object.position.y + linear_velocity.j * n3ds_physics_step;
+                    position.z = vehicle->object.position.z + linear_velocity.k * n3ds_physics_step;
+#else
 					position.x = vehicle->object.position.x + linear_velocity.i;
 					position.y = vehicle->object.position.y + linear_velocity.j;
 					position.z = vehicle->object.position.z + linear_velocity.k;
+#endif
 				}
 
 				scale_vector3d(&angular_velocity, t, &angular_velocity);
 				vehicle->object.angular_velocity = angular_velocity;
+#ifdef HALO_N3DS_PHYSICS_15HZ
+                real_vector3d turn;
+                scale_vector3d(&angular_velocity, n3ds_physics_step, &turn);
+                rotate_vectors3d_by_angular_velocity(
+                    &vehicle->object.forward, &vehicle->object.up, &turn, &forward, &up);
+#else
 				rotate_vectors3d_by_angular_velocity(
 					&vehicle->object.forward,
 					&vehicle->object.up,
 					&angular_velocity,
 					&forward,
 					&up);
+#endif
 			}
 		}
 
@@ -2010,18 +2057,42 @@ static void physics_update_old(
 		"c:\\halo\\SOURCE\\physics\\physics.c",
 		1539,
 		&translational_acceleration);
+#ifdef HALO_N3DS_PHYSICS_15HZ
+	{
+		real_vector3d impulse;
+
+		scale_vector3d(&translational_acceleration, n3ds_physics_step, &impulse);
+		add_vectors3d(
+			&object->object.translational_velocity,
+			&impulse,
+			&object->object.translational_velocity);
+	}
+#else
 	add_vectors3d(
 		&object->object.translational_velocity,
 		&translational_acceleration,
 		&object->object.translational_velocity);
+#endif
 	match_assert_valid_real_vector3d(
 		"c:\\halo\\SOURCE\\physics\\physics.c",
 		1543,
 		&angular_acceleration);
+#ifdef HALO_N3DS_PHYSICS_15HZ
+	{
+		real_vector3d impulse;
+
+		scale_vector3d(&angular_acceleration, n3ds_physics_step, &impulse);
+		add_vectors3d(
+			&object->object.angular_velocity,
+			&impulse,
+			&object->object.angular_velocity);
+	}
+#else
 	add_vectors3d(
 		&object->object.angular_velocity,
 		&angular_acceleration,
 		&object->object.angular_velocity);
+#endif
 
 	{
 		real_point3d new_position;
@@ -2029,9 +2100,15 @@ static void physics_update_old(
 		real_vector3d rotation_axis;
 		real angular_speed;
 
+#ifdef HALO_N3DS_PHYSICS_15HZ
+		new_position.x = object->object.position.x + object->object.translational_velocity.i * n3ds_physics_step;
+		new_position.y = object->object.position.y + object->object.translational_velocity.j * n3ds_physics_step;
+		new_position.z = object->object.position.z + object->object.translational_velocity.k * n3ds_physics_step;
+#else
 		new_position.x = object->object.position.x + object->object.translational_velocity.i;
 		new_position.y = object->object.position.y + object->object.translational_velocity.j;
 		new_position.z = object->object.position.z + object->object.translational_velocity.k;
+#endif
 		scenario_location_from_line(
 			&new_location,
 			&object->object.location,
@@ -2041,6 +2118,9 @@ static void physics_update_old(
 
 		rotation_axis = object->object.angular_velocity;
 		angular_speed = normalize3d(&rotation_axis);
+#ifdef HALO_N3DS_PHYSICS_15HZ
+        angular_speed *= n3ds_physics_step;
+#endif
 		if (angular_speed != 0.0f)
 		{
 			real sine_value = sine(angular_speed);
@@ -2144,6 +2224,10 @@ void physics_update(
 		mass_points,
 		&total_force,
 		&total_torque);
+#ifdef HALO_N3DS_PHYSICS_15HZ
+    scale_vector3d(&total_force, n3ds_physics_step, &total_force);
+    scale_vector3d(&total_torque, n3ds_physics_step, &total_torque);
+#endif
 
 	{
 		struct vehicle_datum *vehicle = vehicle_datum_get(object_index);
@@ -2168,9 +2252,15 @@ void physics_update(
 			"c:\\halo\\SOURCE\\physics\\physics.c",
 			270,
 			magic_force);
+#ifdef HALO_N3DS_PHYSICS_15HZ
+		total_force.i += magic_force->i * n3ds_physics_step;
+		total_force.j += magic_force->j * n3ds_physics_step;
+		total_force.k += magic_force->k * n3ds_physics_step;
+#else
 		total_force.i += magic_force->i;
 		total_force.j += magic_force->j;
 		total_force.k += magic_force->k;
+#endif
 	}
 	if (magic_torque)
 	{
@@ -2178,9 +2268,15 @@ void physics_update(
 			"c:\\halo\\SOURCE\\physics\\physics.c",
 			276,
 			magic_torque);
+#ifdef HALO_N3DS_PHYSICS_15HZ
+		total_torque.i += magic_torque->i * n3ds_physics_step;
+		total_torque.j += magic_torque->j * n3ds_physics_step;
+		total_torque.k += magic_torque->k * n3ds_physics_step;
+#else
 		total_torque.i += magic_torque->i;
 		total_torque.j += magic_torque->j;
 		total_torque.k += magic_torque->k;
+#endif
 	}
 
 	physics_update_new(

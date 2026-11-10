@@ -463,7 +463,7 @@ static boolean action_vehicle_find_destination(
 	struct unit_definition *vehicle_definition =
 		unit_definition_get(vehicle->definition_index);
 	struct actor_debug_info *debug =
-		&actor_debug_array[DATUM_INDEX_TO_ABSOLUTE_INDEX(actor_index)];
+		AI_DEBUG_RECORD(DATUM_INDEX_TO_ABSOLUTE_INDEX(actor_index));
 	real_point3d modified_destination = *entry_point;
 	boolean success = FALSE;
 	boolean ignore_hint =
@@ -535,13 +535,13 @@ static boolean action_vehicle_find_destination(
 			}
 		}
 
-		debug->last_vehicle_avoidance_time = game_time_get();
-		debug->field_C8 = actor->input.position.body_position;
-		debug->field_D4 = vehicle_center;
-		debug->field_E0 = vehicle_radius;
-		debug->field_E4 = target_point;
-		debug->field_F0 = REAL_MAX;
-		debug->field_F4 = FALSE;
+		AI_DEBUG_ONLY(debug->last_vehicle_avoidance_time = game_time_get());
+		AI_DEBUG_ONLY(debug->field_C8 = actor->input.position.body_position);
+		AI_DEBUG_ONLY(debug->field_D4 = vehicle_center);
+		AI_DEBUG_ONLY(debug->field_E0 = vehicle_radius);
+		AI_DEBUG_ONLY(debug->field_E4 = target_point);
+		AI_DEBUG_ONLY(debug->field_F0 = REAL_MAX);
+		AI_DEBUG_ONLY(debug->field_F4 = FALSE);
 
 		actor_to_target_point_distance_squared =
 			magnitude_squared2d(&actor_to_target_point);
@@ -553,7 +553,7 @@ static boolean action_vehicle_find_destination(
 			real_vector2d avoid_vehicle_direction;
 			boolean avoid_vehicle = FALSE;
 
-			debug->field_F0 = t;
+			AI_DEBUG_ONLY(debug->field_F0 = t);
 			if (t > 0.0f && t < 1.2f)
 			{
 				perpendicular2d(&actor_to_target_point, &avoid_vehicle_direction);
@@ -611,8 +611,8 @@ static boolean action_vehicle_find_destination(
 					}
 				}
 
-				debug->field_F4 = TRUE;
-				debug->field_F8 = modified_destination;
+				AI_DEBUG_ONLY(debug->field_F4 = TRUE);
+				AI_DEBUG_ONLY(debug->field_F8 = modified_destination);
 			}
 		}
 	}

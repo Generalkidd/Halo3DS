@@ -1,3 +1,4 @@
+// New3DS integration additions by Kevin Boggs.
 using System.Buffers.Binary;
 using System.Security.Cryptography;
 using System.Text.Json;
@@ -8,12 +9,34 @@ public sealed class SetupException(string message) : Exception(message);
 public sealed record MapInfo(string Title, long Bytes, string Sha256, long SourceBytes,
     string SourceSha256, Dictionary<string, string> Sidecars);
 public sealed record SetupProgress(string Message, double Percent);
-public sealed record SetupResult(int Maps, int Prepared, int AlreadyCorrect, bool DspPresent, string Destination);
+public sealed record SetupResult(int Maps, int Prepared, int AlreadyCorrect, bool DspPresent, string Destination, int PcFiles = 0, string CompatibilityWarning = "");
 
 public static class Data
 {
     public const string Build = "01.10.12.2276";
     public const int Chunk = 1024 * 1024;
+    // Kevin Boggs: DiscWarning - recognize the three supported USA disc images by content.
+    public static string DiscWarning(string source, CancellationToken ct, Action<string> report)
+    {
+        if (Directory.Exists(source)) return "Dumped folder: the original disc revision cannot be verified. Compatibility depends on the supplied files.";
+        var supported = new Dictionary<long, string> {
+            [3546677248L] = "dbf613567abf003fa0775ffa9679c044b92c0e5e",
+            [3625713664L] = "bf3e1071bf8b7f0080cae86adc32b44233dbe8aa",
+            [3728867328L] = "3accdedac9385bedc8020c8f07bd101ccf043d41"
+        };
+        using var file = File.OpenRead(source);
+        if (supported.TryGetValue(file.Length, out string? expected)) {
+            using var hash = SHA1.Create();
+            byte[] buffer = new byte[Chunk]; int read; long last = 0;
+            while ((read = file.Read(buffer, 0, buffer.Length)) > 0) {
+                ct.ThrowIfCancellationRequested(); hash.TransformBlock(buffer, 0, read, buffer, 0);
+                if (Environment.TickCount64 - last > 200) { report($"Identifying Xbox disc... {100 * file.Position / file.Length}%"); last = Environment.TickCount64; }
+            }
+            hash.TransformFinalBlock(new byte[0], 0, 0);
+            if (Convert.ToHexStringLower(hash.Hash!) == expected) return "";
+        }
+        return "Untested Xbox disc revision. Setup will try these files, but gameplay compatibility is not guaranteed. Official support covers the USA original, Rev 1 and Rev 2 images.";
+    }
     public static T Resource<T>(string name)
     {
         var assembly = typeof(Data).Assembly;

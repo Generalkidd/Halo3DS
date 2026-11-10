@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /*
 ATTRACT_MODE.C
 */
@@ -44,7 +45,12 @@ short data_002e4c84 = NONE;
 boolean attract_mode_should_start(
 	void)
 {
-	boolean should_start = FALSE;
+	#ifdef HALO_N3DS
+    /* Xbox Bink attract movies are unavailable on the native port. Do not
+     * fade menu music for a movie that cannot play. */
+    return FALSE;
+#endif
+    boolean should_start = FALSE;
 	real progress;
 
 	if (cache_files_precache_in_progress() &&

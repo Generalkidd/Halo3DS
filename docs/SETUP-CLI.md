@@ -1,8 +1,10 @@
 # Cross-platform command-line setup
 
 The CLI prepares Halo3DS game data on Windows, Linux and macOS using the same
-converter as the Windows setup apps. It accepts the English North American
-original Xbox release, build `01.10.12.2276`. PC/MCC data is unsupported.
+converter as the Windows setup apps. It accepts original Xbox ISO/XISO files and extracted maps. US retail, Rev 1
+and Rev 2 are supported; other recognizable Xbox releases receive a compatibility
+warning. PC/MCC data cannot replace the Xbox base installation. Use the Windows
+GUI's optional PC section to add retail PC maps.
 It does not compile the engine. Bring a `Halo3DS.3dsx` from a release or your build.
 
 ## Easy setup (no programming tools needed)
@@ -31,7 +33,7 @@ computer running setup**, not for the 3DS:
 | Linux PC with an Intel/AMD processor | `halo3ds-setup-linux-x64.tar.gz` |
 | Linux on ARM64 | `halo3ds-setup-linux-arm64.tar.gz` |
 
-On Mac, **Apple menu → About This Mac** shows the chip or processor. Current
+On Mac, **Apple menu â†’ About This Mac** shows the chip or processor. Current
 packages are unsigned. Native system dependencies still apply; Linux packages
 need a glibc-based distribution.
 
@@ -47,12 +49,12 @@ need a glibc-based distribution.
 4. With a complete Xbox ISO or extracted dump, press Enter to skip the optional
    compatibility-file question. Maps-only dumps need the matching `default.xbe`.
 5. Read the displayed choices. Type **Y** and press Enter to begin. Wait for
-   **Ready to play** and **Prepared … Destination: …**. The window stays open
+   **Ready to play** and **Prepared â€¦ Destination: â€¦**. The window stays open
    so you can read the result, any audio instructions, or an error.
 
 If macOS blocks the unsigned tool, follow
 [Apple's instructions for opening a trusted downloaded app](https://support.apple.com/102445).
-The approval is in **System Settings → Privacy & Security → Open Anyway**
+The approval is in **System Settings â†’ Privacy & Security â†’ Open Anyway**
 after an attempted launch. Only approve a download whose source you trust;
 there is no need to turn off macOS security globally. Public releases should
 be signed and notarized before distributing them to a wider audience.
@@ -80,10 +82,11 @@ saves and unrelated files are retained.
 | --- | --- |
 | File or folder was not found | Drag it from Finder/File Explorer again. Select the file itself, rather than its containing folder. |
 | Choose a Halo3DS.3dsx file | Download `Halo3DS.3dsx` from the release; a ZIP or Windows EXE is not the game file. |
-| Unsupported Xbox release / PC/MCC | Use the English North American original Xbox retail dump, build `01.10.12.2276`. |
+| PC/MCC source rejected | Select the original Xbox game as the base source. |
+| Compatibility warning | This Xbox release is unverified. Setup can continue, but gameplay compatibility is not guaranteed. |
 | Missing compatibility/HUD data | Use the full Xbox ISO, or select its matching `default.xbe` when asked. |
 | Not enough destination space | Free the stated space or choose another output folder, then rerun. |
-| Sound needs DSP firmware | On your console, open Rosalina with **L + D-pad Down + SELECT**, then **Miscellaneous options → Dump DSP firmware**. |
+| Sound needs DSP firmware | On your console, open Rosalina with **L + D-pad Down + SELECT**, then **Miscellaneous options â†’ Dump DSP firmware**. |
 
 ## Commands for experienced users and scripts
 
@@ -102,6 +105,9 @@ PowerShell example:
 ```powershell
 ./halo3ds-setup.exe prepare --source 'C:\Games\Halo Xbox.iso' --destination 'H:\' --game 'C:\Builds\Halo3DS.3dsx'
 ```
+
+`verify` checks against the original retail map hash catalog. A revised disc can
+therefore fail that strict comparison even when `prepare` accepts it.
 
 `prepare` also accepts an extracted Xbox game folder or maps folder. If its
 matching `default.xbe` is not alongside the maps, add
@@ -126,7 +132,7 @@ Exit codes: **0** success, **1** input/setup failure, **2** invalid arguments,
 
 If you prepared a normal folder, copy its `3ds` and `halo-source` folders to
 the root of a FAT32 SD card. For audio, dump DSP firmware on your console via
-Rosalina: **L + D-pad Down + SELECT → Miscellaneous options → Dump DSP firmware**.
+Rosalina: **L + D-pad Down + SELECT â†’ Miscellaneous options â†’ Dump DSP firmware**.
 
 ## Developing and packaging
 
@@ -134,14 +140,9 @@ Install .NET SDK 10. From the repository root:
 
 ```sh
 dotnet run --project port/n3ds/setup/Cli -- --help
-dotnet run --project port/n3ds/setup/Tests
-dotnet run --project port/n3ds/setup/Cli.Tests
 ```
 
-The tests use synthetic data. The CLI tests cover guided input and path retries,
-confirmation/cancellation without writes, argument errors, launcher updates,
-save preservation, progress, corrupt input and redirected destination rejection. Full conversion testing needs your supported Xbox data
-and game executable; see `docs/DEVELOPMENT.md` for integration checks.
+Full conversion testing needs your supported Xbox data and game executable.
 
 With Python 3.10+, Git and .NET SDK 10, publish a self-contained package:
 

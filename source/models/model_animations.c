@@ -148,6 +148,14 @@ symbols in this file:
 /* ---------- headers */
 
 #include "cseries.h"
+#ifdef HALO_N3DS
+#include "engine_float_phase.h"
+#define NATIVE_ANIMATION_FRACTION(x) n3ds_float_fraction(x)
+#define NATIVE_ANIMATION_FLOOR(x) n3ds_float_floor(x)
+#else
+#define NATIVE_ANIMATION_FRACTION(x) ((real)fmod((double)(x), 1.0))
+#define NATIVE_ANIMATION_FLOOR(x) floor(x)
+#endif
 #include "cseries/errors.h"
 #include "models/model_animations.h"
 #include "models/models.h"
@@ -959,6 +967,10 @@ void n3ds_animation_sample_distant(const struct model *model,const struct animat
  const real_orientation *a=native_animation_sample(model,animation,frame-1);
  if(!a){animation_get_node_orientations(model,animation,frame,out);return;}
  memcpy(out,a,animation->node_count*sizeof(*out));
+ /* Original models hold the preceding base pose for distant, off-axis actors.
+  * The caller excludes players, cinematics, firing and co-op. Root transforms,
+  * animation events and aiming overlays continue at the original tick rate. */
+ if(n3ds_input_platform_original_model())return;
  const real_orientation *b=native_animation_sample(model,animation,frame+1);
  if(!b){animation_get_node_orientations(model,animation,frame,out);return;}
  for(short i=0;i<animation->node_count;++i){
@@ -1251,8 +1263,8 @@ void overlay_animation_apply_continuous(
 	real fraction;
 	short frame_index;
 
-	fraction = (real)fmod((double)real_frame_index, 1.0);
-	frame_index = (short)fast_ftol((real)floor(fabs(real_frame_index)));
+	fraction = NATIVE_ANIMATION_FRACTION(real_frame_index);
+	frame_index = (short)fast_ftol((real)NATIVE_ANIMATION_FLOOR((real)fabs(real_frame_index)));
 
 	if (real_frame_index < 0.0f || real_frame_index > (real)animation->frame_count)
 	{
@@ -1508,8 +1520,8 @@ void overlay_animation_apply_continuous_scaled(
 	struct real_orientation *node_orientations)
 {
 	real inverse_animation_scale = 1.0f-animation_scale;
-	real fraction = (real)fmod((double)real_frame_index, 1.0);
-	short frame_index = (short)fast_ftol((real)floor(real_frame_index));
+	real fraction = NATIVE_ANIMATION_FRACTION(real_frame_index);
+	short frame_index = (short)fast_ftol((real)NATIVE_ANIMATION_FLOOR(real_frame_index));
 
 	if (real_frame_index<0.0f || real_frame_index>(real)animation->frame_count)
 	{
@@ -1725,7 +1737,7 @@ void aiming_screen_apply(
 		aiming_screen_bounds->positive_yaw_delta;
 	yaw_frame = yaw_delta==0.0f ? 0.0f : yaw/yaw_delta;
 	yaw_frame_index = (short)yaw_frame;
-	yaw_fraction = (real)fmod((double)yaw_frame, 1.0);
+	yaw_fraction = NATIVE_ANIMATION_FRACTION(yaw_frame);
 	if (yaw_fraction<0.0f)
 	{
 		yaw_fraction += 1.0f;
@@ -1759,7 +1771,7 @@ void aiming_screen_apply(
 		aiming_screen_bounds->positive_pitch_delta;
 	pitch_frame = pitch_delta==0.0f ? 0.0f : pitch/pitch_delta;
 	pitch_frame_index = (short)pitch_frame;
-	pitch_fraction = (real)fmod((double)pitch_frame, 1.0);
+	pitch_fraction = NATIVE_ANIMATION_FRACTION(pitch_frame);
 	if (pitch_fraction<0.0f)
 	{
 		pitch_fraction += 1.0f;
@@ -2087,7 +2099,7 @@ static void animation_get_keyframe_rotation(
 
 	keyframe_rotations = (struct compressed_quaternion_6byte const *)(data+header->rotation_keyframes_offset)+first_keyframe_index;
 	keyframe_frame_indices = (word const *)(data+header->rotation_keyframe_frame_indices_offset)+first_keyframe_index;
-	frame_index = (short)fast_ftol(floor(real_frame_index));
+	frame_index = (short)fast_ftol(NATIVE_ANIMATION_FLOOR(real_frame_index));
 
 	match_assert(
 		"c:\\halo\\SOURCE\\models\\model_animations.c",
@@ -2190,7 +2202,7 @@ static void animation_get_keyframe_translation(
 	{
 		real_point3d const *keyframe_translations = (real_point3d const *)(data+header->translation_keyframes_offset)+first_keyframe_index;
 		word const *keyframe_frame_indices = (word const *)(data+header->translation_keyframe_frame_indices_offset)+first_keyframe_index;
-		short frame_index = (short)fast_ftol(floor(real_frame_index));
+		short frame_index = (short)fast_ftol(NATIVE_ANIMATION_FLOOR(real_frame_index));
 		real_point3d const *this_keyframe;
 		real_point3d const *next_keyframe;
 		short this_keyframe_frame_index;
@@ -2297,7 +2309,7 @@ static void animation_get_keyframe_scale(
 	{
 		real const *keyframe_scales = (real const *)(data+header->scale_keyframes_offset)+first_keyframe_index;
 		word const *keyframe_frame_indices = (word const *)(data+header->scale_keyframe_frame_indices_offset)+first_keyframe_index;
-		short frame_index = (short)fast_ftol(floor(real_frame_index));
+		short frame_index = (short)fast_ftol(NATIVE_ANIMATION_FLOOR(real_frame_index));
 		real this_keyframe_scale;
 		real next_keyframe_scale;
 		short this_keyframe_frame_index;

@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /*
 UI_WIDGET.C
 
@@ -653,6 +654,9 @@ struct widget_instance;
 #include "interface/progress_bar.h"
 #include "interface/ui_widget_game_data_input_functions.h"
 #include "interface/ui_widget_event_handler_functions.h"
+#ifdef HALO_N3DS
+#include "engine_controls.h"
+#endif
 #include "interface/ui_widget_text_search_and_replace_functions.h"
 #include "interface/virtual_keyboard.h"
 #include "main/main.h"
@@ -677,6 +681,9 @@ struct widget_instance;
 #include "text/text_group.h"
 #include "text/unicode.h"
 #include "ui_widget.h"
+#ifdef HALO_N3DS
+#include "engine_network.h"
+#endif
 
 /* ---------- constants */
 
@@ -2074,6 +2081,62 @@ boolean ui_widgets_active(
 	return result;
 }
 
+#ifdef HALO_N3DS
+/* Kevin Boggs: n3ds_ui_local_match_profile - only the local Splitscreen carousel. */
+long n3ds_ui_local_match_profile(void)
+{
+    if(!widget_globals.initialized || !we_are_at_the_main_menu)return NONE;
+    struct widget_instance *widget=widget_globals.active_widgets[0];
+    int local=0;
+    for(int depth=0;widget && depth<32;++depth,widget=widget->focused_child){
+        if(!widget->visible)return NONE;
+        const char *path=tag_get_name(widget->definition_tag_index);
+        if(path && strstr(path,"\\split_screen\\gametype_select_screen_wrapper"))local=1;
+        if(local && path && widget->type==_ui_widget_type_spinner_list &&
+           strstr(path,"\\gametype_select\\gametype_select_list") &&
+           widget->parameters.list.list_items && widget->parameters.list.selected_index>=0 &&
+           widget->parameters.list.selected_index<widget->parameters.list.number_of_items)
+            return ((const long *)widget->parameters.list.list_items)[widget->parameters.list.selected_index];
+    }
+    return NONE;
+}
+/* Kevin Boggs: n3ds_ui_map_browser_selection - follow only the active focus chain. */
+int n3ds_ui_map_browser_selection(void)
+{
+    extern short n3ds_ui_multiplayer_map_original_index(short);
+    if(!widget_globals.initialized || !we_are_at_the_main_menu)return -1;
+    struct widget_instance *widget=widget_globals.active_widgets[0];
+    for(int depth=0;widget && depth<32;++depth,widget=widget->focused_child){
+        if(!widget->visible)return -1;
+        const char *path=tag_get_name(widget->definition_tag_index);
+        if(widget->type==_ui_widget_type_spinner_list && path &&
+           strstr(path,"\\mp_map_select\\mp_map_select_list") &&
+           widget->parameters.list.selected_index>=0 &&
+           widget->parameters.list.selected_index<widget->parameters.list.number_of_items)
+            return n3ds_ui_multiplayer_map_original_index((short)widget->parameters.list.selected_index);
+    }
+    return -1;
+}
+/* Kevin Boggs: n3ds_ui_map_browser_slot - the carousel can focus any of its three visible cards. */
+int n3ds_ui_map_browser_slot(void)
+{
+    if(!widget_globals.initialized || !we_are_at_the_main_menu)return -1;
+    struct widget_instance *widget=widget_globals.active_widgets[0];
+    for(int depth=0;widget && depth<32;++depth,widget=widget->focused_child){
+        if(!widget->visible)return -1;
+        const char *path=tag_get_name(widget->definition_tag_index);
+        if(widget->type==_ui_widget_type_spinner_list && path &&
+           strstr(path,"\\mp_map_select\\mp_map_select_list")){
+            struct widget_instance *item=widget->child;
+            for(int slot=0;item && slot<3;++slot,item=item->next)
+                if(item==widget->focused_child)return slot;
+            return -1;
+        }
+    }
+    return -1;
+}
+#endif
+
 boolean main_menu_screen_is_active(
 	void)
 {
@@ -2847,6 +2910,31 @@ int n3ds_ui_pause_menu_active(void)
         !strcmp(name,"ui\\shell\\solo_game\\pause_game\\pause_game_split_screen") ||
         !strcmp(name,"ui\\shell\\multiplayer_game\\pause_game\\1p_pause_game"));
 }
+/* Kevin Boggs: n3ds_ui_wireless_lobby_active - restrict bot controls to the host lobby. */
+int n3ds_ui_wireless_lobby_active(void)
+{
+    struct widget_instance *root=widget_globals.active_widgets[0];
+    if(!root || root->widget_is_error_dialog || root->definition_tag_index==NONE)return 0;
+    const char *name=tag_get_name(root->definition_tag_index);
+    return name && !strcmp(name,"ui\\shell\\main_menu\\multiplayer_type_select\\connected\\pregame\\connected_pregame_screen");
+}
+/* Kevin Boggs: n3ds_ui_campaign_menu_active */
+int n3ds_ui_campaign_menu_active(void)
+{
+    struct widget_instance *root=widget_globals.active_widgets[0];
+    if(!root || root->widget_is_error_dialog || root->definition_tag_index==NONE)return 0;
+    const char *name=tag_get_name(root->definition_tag_index);
+    return name && (!strcmp(name,"ui\\shell\\main_menu\\menu_load_campaign") ||
+        !strcmp(name,"ui\\shell\\main_menu\\solo_level_select\\solo_level_select_screen"));
+}
+/* Kevin Boggs: n3ds_ui_difficulty_menu_active - New3DS integration. */
+int n3ds_ui_difficulty_menu_active(void)
+{
+    struct widget_instance *root=widget_globals.active_widgets[0];
+    if(!root || root->widget_is_error_dialog || root->definition_tag_index==NONE)return 0;
+    const char *name=tag_get_name(root->definition_tag_index);
+    return name && !strcmp(name,"ui\\shell\\main_menu\\difficulty_select\\difficulty_select_list_screen");
+}
 #endif
 void ui_widgets_pop_stack(
 	short local_player_index)
@@ -3162,6 +3250,9 @@ static void event_handler_dispatch(
 	struct ui_widget_event_handler_reference *handler,
 	boolean *calling_widget_deleted)
 {
+#ifdef HALO_N3DS
+	int local_options_were_open=n3ds_local_match_menu_active();
+#endif
 	boolean widget_deleted = FALSE;
 	boolean success = TRUE;
 	boolean function_failed = FALSE;
@@ -3189,6 +3280,13 @@ static void event_handler_dispatch(
 	}
 	else
 	{
+#ifdef HALO_N3DS
+		/* A native match modal replaces this event's Xbox pregame transition.
+		 * Keep the calling widgets alive for Back; no fake deletion flag. */
+		if(!local_options_were_open && n3ds_local_match_menu_active()) {
+			*calling_widget_deleted=widget_deleted;return;
+		}
+#endif
 		if (TEST_FLAG(handler->flags, _event_handler_give_focus_to_widget_bit) &&
 			!widget_deleted)
 		{
@@ -3616,6 +3714,11 @@ static void widget_instance_initialize(
 	widget->render_regardless_of_controller_index =
 		TEST_FLAG(definition->flags, _widget_render_regardless_of_controller_index_bit);
 	widget->pause_game_time = TEST_FLAG(definition->flags, _widget_pause_game_time_bit);
+#ifdef HALO_N3DS
+	/* Set this before incrementing the pause counter. Clearing it on deletion
+	 * would leave both the counter and the shared simulation paused. */
+	if(n3ds_network_coop_active()) widget->pause_game_time=FALSE;
+#endif
 	widget->creation_time = widget_globals.current_system_milliseconds;
 	widget->milliseconds_to_auto_close = MAX(definition->milliseconds_to_auto_close, 0);
 	widget->auto_close_fade_time = MAX(definition->auto_close_fade_time, 0);
@@ -3707,6 +3810,14 @@ struct widget_instance *ui_widget_load_by_name_or_tag(
 		(widget_stack>=0) && (widget_stack<MAXIMUM_GAMEPADS));
 	if (tag_index == NONE)
 		tag_index = tag_loaded(UI_WIDGET_DEFINITION_TAG, name);
+#ifdef HALO_N3DS
+	/* Co-op uses one local profile per wireless console, not the Xbox's
+	 * second-controller sign-in. Preserve the calling menu's normal history. */
+	if(tag_index!=NONE && !strcmp(tag_get_name(tag_index),
+		"ui\\shell\\main_menu\\multiplayer_type_select\\coop\\player1_profile_select_screen"))
+		tag_index=tag_loaded(UI_WIDGET_DEFINITION_TAG,
+			"ui\\shell\\main_menu\\multiplayer_type_select\\connected\\4way_profile_select\\4way_start2join_screen");
+#endif
 	if (tag_index != NONE)
 	{
 		definition = ui_widget_definition_get(tag_index);
@@ -4297,6 +4408,9 @@ void display_error(
 				if (!widget->pause_game_time)
 				{
 					widget->pause_game_time = pause_game_time;
+#ifdef HALO_N3DS
+					if(n3ds_network_coop_active()) widget->pause_game_time=FALSE;
+#endif
 					if (widget->pause_game_time == TRUE)
 					{
 						match_vassert(
@@ -4902,7 +5016,11 @@ static void widget_instance_render_text_box(
 	rectangle2d bounds;
 	rectangle2d clip;
 
-	if (definition->text_label_string_list.index != NONE)
+	if (definition->text_label_string_list.index != NONE
+#ifdef HALO_N3DS
+		&& widget->parameters.text_box.string_list_index != -2
+#endif
+	)
 	{
 		short string_list_index;
 		wchar_t *string;
@@ -5268,8 +5386,29 @@ static void widget_instance_render_recursive(
 	}
 	if (!widget->visible)
 		return;
+	long background_bitmap_index = definition->background_bitmap.index;
+#ifdef HALO_N3DS
+	if(background_bitmap_index!=NONE && n3ds_network_coop_menu() &&
+		!strcmp(tag_get_name(background_bitmap_index),"ui\\shell\\bitmaps\\mp_map_grafix"))
+	{
+		long campaign_images=tag_loaded(BITMAP_GROUP_TAG,"ui\\shell\\bitmaps\\sp_levels");
+		if(campaign_images!=NONE) background_bitmap_index=campaign_images;
+	}
+	/* The heading is bitmap artwork. Reuse the campaign difficulty heading
+	 * already present in ui.map, without changing the map or widget data. */
+	{ extern int n3ds_network_coop_selected(void);
+	  if(background_bitmap_index!=NONE && n3ds_network_coop_selected() &&
+		 !strcmp(tag_get_name(background_bitmap_index),
+			"ui\\shell\\main_menu\\gametype_select\\header_select_gametype"))
+	  {
+		long heading=tag_loaded(BITMAP_GROUP_TAG,
+			"ui\\shell\\main_menu\\difficulty_select\\header_choose_difficulty");
+		if(heading!=NONE) background_bitmap_index=heading;
+	  }
+	}
+#endif
 	bitmap = bitmap_group_get_bitmap_from_sequence(
-		definition->background_bitmap.index,
+		background_bitmap_index,
 		0,
 		widget->animation.current_frame_index);
 	if (bitmap)
@@ -5280,7 +5419,7 @@ static void widget_instance_render_recursive(
 		rectangle2d clipped;
 		struct rasterizer_dynamic_screen_geometry_parameters parameters;
 		struct bitmap_group *bitmap_group =
-			bitmap_group_get(definition->background_bitmap.index);
+			bitmap_group_get(background_bitmap_index);
 		struct bitmap_group_sequence *sequence = TAG_BLOCK_GET_ELEMENT(
 			&bitmap_group->sequences,
 			0,
@@ -6286,7 +6425,17 @@ static boolean ui_check_for_pause_game(
 					local_player_count++;
 				}
 #ifdef HALO_N3DS
-				if(n3ds_main_is_solo_multiplayer())
+				if(n3ds_network_coop_active())
+				{
+					/* Campaign maps contain the campaign menu, not the competitive
+					 * network menu. Keep the shared simulation running behind it. */
+					if(widget_globals.active_widgets[controller_index])
+						ui_widgets_close_all();
+					else if(!ui_widget_load_by_name_or_tag("ui\\shell\\solo_game\\pause_game\\pause_game",
+						NONE,NULL,controller_index,NONE,NONE,NONE))
+						error(_error_silent,"failed to load campaign co-op pause menu");
+				}
+				else if(n3ds_main_is_solo_multiplayer())
 				{
 					/* Use the multiplayer map's own Resume/Quit menu, without
 					 * asking for a network client or campaign-only widget tags. */

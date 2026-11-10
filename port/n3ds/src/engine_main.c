@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 #include <3ds.h>
 #include <citro3d.h>
 #include <stdio.h>
@@ -35,6 +36,10 @@ static void flush_console(void)
 }
 void n3ds_log(const char *message)
 {
+#ifdef HALO_N3DS_STRIP_DIAGNOSTICS
+    if(!strstr(message,"FATAL:") && !strstr(message,"FAIL") &&
+       !strstr(message,"ERROR") && !strstr(message,"ASSERT")) return;
+#endif
     /* Keep the original failure even if the next launch replaces its session
      * log. Fatal paths are rare; close immediately to commit to the SD card. */
     if(strstr(message,"FATAL:") || strstr(message,"FAIL:") || !strcmp(message,"RESULT: FAIL")) {
@@ -71,12 +76,17 @@ int main(void)
     log_file = fopen("sdmc:/halo-source-engine.log", "w");
     if(log_file) setvbuf(log_file,log_buffer,_IOFBF,sizeof(log_buffer));
     n3ds_log("Halo native engine bootstrap");
-    n3ds_log("BUILD: Halo3DS Original-model adaptive rendering 2026-10-05");
+    n3ds_log("BUILD: Halo3DS local wireless test 2026-10-06");
 #ifdef HALO_N3DS_LOW_MEMORY_TEST
     n3ds_log("LOW MEMORY FIXTURE: 24 MiB application heap + 32 MiB linear heap");
 #endif
     bool new_model=false;APT_CheckNew3DS(&new_model);
     n3ds_log(new_model?"MODEL: New 3DS family; high-speed CPU and L2 cache requested":"MODEL: original 3DS/2DS family; standard CPU speed");
+#ifdef HALO_N3DS_PC_PROBE_MAP
+    extern int n3ds_pc_cache_probe(const char *);
+    int probe_result = n3ds_pc_cache_probe(HALO_N3DS_PC_PROBE_MAP == 0 ? "ui" : "bloodgulch");
+    if (probe_result) n3ds_log("PC PROBE: continuing normal startup after diagnostic failure");
+#endif
     /* Retain capacity for two A10 corridor views and their effects, while
      * keeping every draw and the live command-capacity checks. */
     n3ds_parallel_initialize();
@@ -85,10 +95,14 @@ int main(void)
     int programs_ready = gpu_ready && n3ds_gpu_programs_initialize();
     int textures_ready = programs_ready && n3ds_gpu_textures_initialize();
     extern void n3ds_stall_watch_start(void),n3ds_stall_watch_stop(void);
+#ifndef HALO_N3DS_STRIP_DIAGNOSTICS
     n3ds_stall_watch_start();
+#endif
     int result = textures_ready ? halo_engine_boot() : 1;
     extern void n3ds_prefetch_shutdown(void);
     n3ds_prefetch_shutdown();
+    extern void n3ds_wireless_stop(void);n3ds_wireless_stop();
+    extern void n3ds_cpp_dispose(void);n3ds_cpp_dispose();
     n3ds_stall_watch_stop();
     if (textures_ready) n3ds_gpu_textures_dispose();
     if (gpu_ready) C3D_Fini();

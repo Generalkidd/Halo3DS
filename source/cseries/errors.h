@@ -61,6 +61,14 @@ void write_to_error_file(
 	char *string,
 	boolean date);
 
+#ifdef HALO_N3DS_STRIP_DIAGNOSTICS
+#define error(priority, ...) do { \
+    short release_error_priority = (priority); \
+    if (release_error_priority <= _error_delayed) \
+        (error)(release_error_priority, __VA_ARGS__); \
+} while (0)
+#endif
+
 /* ---------- globals */
 
 extern struct error_global_data error_globals;

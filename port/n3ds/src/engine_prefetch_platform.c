@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /* Speculative read-only scenery I/O. No engine pointers, stdio, allocation or
  * GPU operations on the worker. The owner retains the destination until the
  * captured kernel thread handle signals completion. */
@@ -79,3 +80,5 @@ int n3ds_prefetch_tests(void)
     extern void n3ds_log(const char *);
     n3ds_log("PASS: scenery prefetch: four exact cross-chunk reads, guards, cancel/restart and invalid ranges");return 1;
 }
+
+#include "engine_sound_reader.inl"

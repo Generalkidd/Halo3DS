@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 #include "cseries.h"
 #include "cache_reader.h"
 #include "cache_build_compatibility.h"
@@ -63,10 +64,20 @@ void *n3ds_cache_resolve(const struct n3ds_cache_view *view, const void *xbox_ad
 {
     unsigned long address = (unsigned long)xbox_address;
     unsigned long offset;
-    if (!view->tags || address < view->xbox_base) return NULL;
-    offset = address - view->xbox_base;
-    if (offset > view->tag_bytes || bytes > view->tag_bytes - offset) return NULL;
-    return view->tags + offset;
+    if (!view || !view->tags) return NULL;
+    if (address >= view->xbox_base) {
+        offset = address - view->xbox_base;
+        if (offset <= view->tag_bytes && bytes <= view->tag_bytes - offset)
+            return view->tags + offset;
+    }
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_UI
+    extern int n3ds_pc_overlay_contains(const void *, unsigned long);
+    extern void *n3ds_pc_model_resolve_external(const struct n3ds_cache_view *, const void *, unsigned long);
+    if (n3ds_pc_overlay_contains(xbox_address, bytes)) return (void *)xbox_address;
+    return n3ds_pc_model_resolve_external(view, xbox_address, bytes);
+#else
+    return NULL;
+#endif
 }
 
 void n3ds_cache_close(struct n3ds_cache_view *view)

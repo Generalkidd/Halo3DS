@@ -487,6 +487,12 @@ void game_time_update(
 					struct network_game_server *server = global_network_game_server_get();
 					long oldest_client_update = network_game_server_get_oldest_client_update_received(server);
 					long game_time = game_time_get();
+#ifdef HALO_N3DS
+					{ extern int n3ds_network_coop_active(void);
+					  extern long n3ds_network_simulation_update_number(void);
+					  if(n3ds_network_coop_active()) game_time=n3ds_network_simulation_update_number();
+					}
+#endif
 
 					match_vassert("c:\\halo\\SOURCE\\game\\game_time.c", 243,
 						(unsigned long)(game_time - oldest_client_update) <= 128,

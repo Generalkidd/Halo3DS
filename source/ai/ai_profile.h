@@ -10,6 +10,12 @@ header included in hcex build.
 
 #include "cseries/cseries.h"
 
+#ifdef HALO_N3DS_STRIP_DIAGNOSTICS
+#define AI_PROFILE_ONLY(...) ((void)0)
+#else
+#define AI_PROFILE_ONLY(...) ((void)(__VA_ARGS__))
+#endif
+
 /* ---------- constants */
 
 enum

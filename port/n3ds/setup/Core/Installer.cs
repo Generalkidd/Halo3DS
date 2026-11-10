@@ -1,3 +1,4 @@
+// New3DS integration additions by Kevin Boggs.
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
@@ -6,7 +7,7 @@ using System.Text.Json;
 namespace HaloSetup;
 
 public sealed record SetupOptions(string Source, string Destination, string Executable, string? CompatibilityFile = null,
-    bool LauncherOnly = false);
+    bool LauncherOnly = false, string? PcMapsFolder = null);
 
 public static class Installer
 {
@@ -59,6 +60,9 @@ public static class Installer
             }
             catch (FileNotFoundException) { } // Setup will create this child.
             catch (DirectoryNotFoundException) { }
+            // A disconnected card reader may retain its drive letter. The
+            // caller checks Directory.Exists(root) before any installation.
+            catch (IOException) when (!Directory.Exists(Path.GetPathRoot(current)!)) { }
         }
         return result;
     }
@@ -68,13 +72,13 @@ public static class Installer
         byte[] header = entry.Head(2048);
         Data.Require(header.Length == 2048 && header.AsSpan(0, 4).SequenceEqual("daeh"u8) &&
             header.AsSpan(2044, 4).SequenceEqual("toof"u8) && Data.U32(header, 4) == 5,
-            $"{name}.map is not an original Xbox Halo map. PC/MCC maps are not supported.");
-        string build = Encoding.ASCII.GetString(header, 64, 32).Split('\0')[0];
-        Data.Require(build == Data.Build, $"{name}.map is from an unsupported release. Use the English North American retail release of Halo: Combat Evolved for the original Xbox. No prototype or debug version is needed. Technical details: found build {build}; supported build {Data.Build}.");
-        Data.Require(Encoding.ASCII.GetString(header, 32, 32).Split('\0')[0] == name && Data.U32(header, 8) == expected.Bytes,
-            $"{name}.map does not match its supported name or size.");
-        Data.Require(entry.Length == expected.Bytes || entry.Length == expected.SourceBytes,
-            $"{name}.map is incomplete or modified. Use an unchanged game dump.");
+            $"{name}.map is not an original Xbox Halo map. Select PC maps in the optional PC folder field instead. MCC is not supported.");
+        uint bytes = Data.U32(header, 8), tags = Data.U32(header, 16), tagBytes = Data.U32(header, 20);
+        Data.Require(Encoding.ASCII.GetString(header, 32, 32).Split('\0')[0] == name,
+            $"{name}.map has a different internal map name.");
+        Data.Require(bytes >= 2048 && bytes <= 0x11600000 && tags >= 2048 && tagBytes >= 40 &&
+            tagBytes <= 0x1600000 && (long)tags + tagBytes <= bytes && entry.Length >= 2048 && entry.Length <= 0x11600000,
+            $"{name}.map has invalid or incomplete map regions.");
         return header;
     }
 
@@ -83,15 +87,7 @@ public static class Installer
     {
         byte[] header = CheckMap(entry, name, expected);
         using var source = entry.Open();
-        using (var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256))
-        {
-            byte[] buffer = new byte[Data.Chunk]; int read;
-            while ((read = source.Read(buffer)) > 0)
-            { ct.ThrowIfCancellationRequested(); hash.AppendData(buffer, 0, read); progress(source.Position / (double)source.Length * .2); }
-            string actual = Convert.ToHexStringLower(hash.GetHashAndReset());
-            Data.Require(actual == (entry.Length == expected.Bytes ? expected.Sha256 : expected.SourceSha256),
-                $"{name}.map failed its integrity check. It is damaged, modified, or from an unsupported release.");
-        }
+        long expectedBytes = Data.U32(header, 8);
         source.Position = 0;
         using var output = new FileStream(target, FileMode.CreateNew, FileAccess.Write, FileShare.None, Data.Chunk);
         using var expandedHash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
@@ -100,16 +96,16 @@ public static class Installer
         {
             ct.ThrowIfCancellationRequested();
             written += length;
-            Data.Require(written <= expected.Bytes, $"{name}.map expands beyond its expected size.");
+            Data.Require(written <= expectedBytes, $"{name}.map expands beyond its expected size.");
             output.Write(data, 0, length); expandedHash.AppendData(data, 0, length);
-            progress(.2 + written / (double)expected.Bytes * .8);
+            progress(.2 + written / (double)expectedBytes * .8);
         }
         void Copy(Stream input)
         {
             byte[] buffer = new byte[Data.Chunk]; int n;
             while ((n = input.Read(buffer)) > 0) Write(buffer, n);
         }
-        if (entry.Length == expected.Bytes) Copy(source);
+        if (entry.Length == expectedBytes) Copy(source);
         else
         {
             Write(header, header.Length); source.Position = 2048;
@@ -117,7 +113,10 @@ public static class Installer
             catch (InvalidDataException error) { throw new SetupException($"{name}.map could not be decompressed: {error.Message}"); }
         }
         output.Flush(true);
-        Data.Require(written == expected.Bytes && Convert.ToHexStringLower(expandedHash.GetHashAndReset()) == expected.Sha256,
+        string expandedDigest = Convert.ToHexStringLower(expandedHash.GetHashAndReset());
+        output.Dispose();
+        Data.Require(Data.HashFile(target, ct) == expandedDigest, "Destination read-back failed. Check the SD card and try again.");
+        Data.Require(written == expectedBytes && (expected.Sha256.Length == 0 || expandedDigest == expected.Sha256),
             $"{name}.map failed verification after preparation.");
     }
 
@@ -184,17 +183,33 @@ public static class Installer
         string lockPath = SafePath(destination, "halo-source/.setup.lock");
         Dictionary<string, SourceEntry>? files = null;
         List<string> names = [];
+        var catalog = new Dictionary<string, MapInfo>();
         byte[]? hud = null, loading = null;
+        string compatibilityWarning = "";
         string loadingPath = SafePath(destination, "halo-source/" + Loading.Name);
         if (!options.LauncherOnly)
         {
             Report("Checking game files…", 0);
             files = Sources.Discover(options.Source);
+            compatibilityWarning = Data.DiscWarning(options.Source, ct, text => Report(text, 0));
+            if (compatibilityWarning.Length > 0) Report(compatibilityWarning, 0);
             names = Data.Catalog.Keys.Where(n => files.ContainsKey(n + ".map")).ToList();
             Data.Require(names.Contains("ui") && names.Count >= 2, "The folder needs ui.map and at least one campaign or multiplayer map.");
             foreach (string name in names)
             {
-                ct.ThrowIfCancellationRequested(); CheckMap(files[name + ".map"], name, Data.Catalog[name]);
+                ct.ThrowIfCancellationRequested();
+                var entry = files[name + ".map"];
+                var known = Data.Catalog[name];
+                byte[] header = CheckMap(entry, name, known);
+                // Recognized releases retain their byte-exact reference checks.
+                // Other revisions are prepared using their own bounded tag data.
+                using var input = entry.Open();
+                using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+                byte[] block = new byte[Data.Chunk]; int count;
+                while ((count = input.Read(block)) > 0) { ct.ThrowIfCancellationRequested(); hash.AppendData(block, 0, count); }
+                string sourceHash = Convert.ToHexStringLower(hash.GetHashAndReset());
+                catalog[name] = sourceHash == known.Sha256 || sourceHash == known.SourceSha256 ? known :
+                    new MapInfo(known.Title, Data.U32(header, 8), "", entry.Length, sourceHash, new Dictionary<string, string>());
                 string target = SafePath(destination, "halo-source/" + name + ".map");
                 Data.Require(!files[name + ".map"].Path.Equals(target, StringComparison.OrdinalIgnoreCase),
                     "Source and destination maps are the same folder. Choose your original dump or a different output folder.");
@@ -206,8 +221,9 @@ public static class Installer
         else
         {
             Data.Require(File.Exists(Path.Combine(game, "ui.map")) && File.Exists(hudPath),
-                "Prepare the game files first. Launcher-only updates need an existing installation.");
+                "Prepare the Xbox game files first. Updating the launcher or adding PC maps requires an existing Xbox installation.");
         }
+        var pcFiles = PcMaps.Inspect(options.PcMapsFolder, destination, ct, text => Report(text, 0));
         Directory.CreateDirectory(game);
         // Only one setup process may alter this output at once.
         using var destinationLock = new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None, 1, FileOptions.DeleteOnClose);
@@ -216,17 +232,21 @@ public static class Installer
         {
             ct.ThrowIfCancellationRequested();
             Report($"Checking existing {Data.Catalog[name].Title}…", 1);
-            var expected = new Dictionary<string, string>(Data.Catalog[name].Sidecars) { [name + ".map"] = Data.Catalog[name].Sha256 };
+            var expected = new Dictionary<string, string>(catalog[name].Sidecars) { [name + ".map"] = catalog[name].Sha256 };
             bool good = expected.All(pair => File.Exists(Path.Combine(game, pair.Key)) && Data.HashFile(Path.Combine(game, pair.Key), ct) == pair.Value);
             if (!good) pending.Add(name);
         }
         // Conservative space check retains existing data until each replacement is verified.
-        long required = pending.Sum(n => Data.Catalog[n].Bytes) + 128 * (long)Data.Chunk;
+        long required = pending.Sum(n => catalog[n].Bytes) + 128 * (long)Data.Chunk;
+        required += pcFiles.Where(f => !File.Exists(SafePath(destination, "halo-source/pc-retail/" + f.Name))).Sum(f => f.Bytes);
         // Every texture archive in the hash-verified 24-map catalog is below
         // 64 MiB. Reserve a complete replacement while retaining the old file.
         var texturePending = names.Where(n => pending.Contains(n) || !Textures.Current(
             SafePath(game, n + ".map"), SafePath(game, n + ".ntx"), ct)).ToList();
         required += texturePending.Count * 64 * (long)Data.Chunk;
+        var modelPending = names.Where(n => n != "ui" && (pending.Contains(n) || !ModelLods.Current(
+            SafePath(game, n + ".map"), SafePath(game, n + ".hld"), ct))).ToList();
+        required += modelPending.Count * (long)ModelLods.MaximumBytes;
         // On Unix, stat the destination filesystem, including a mounted SD card,
         // rather than the filesystem containing '/'. Windows uses the drive root.
         string spacePath = OperatingSystem.IsWindows() ? Path.GetPathRoot(destination)! : destination;
@@ -235,7 +255,7 @@ public static class Installer
         for (int index = 0; index < pending.Count; index++)
         {
             ct.ThrowIfCancellationRequested();
-            string name = pending[index]; var row = Data.Catalog[name];
+            string name = pending[index]; var row = catalog[name];
             string stage = SafePath(game, ".halo-setup-" + Guid.NewGuid().ToString("N")); Directory.CreateDirectory(stage);
             bool safeToRemove = true;
             try
@@ -249,14 +269,15 @@ public static class Installer
                     { Report($"Preparing {row.Title} ({index + 1}/{pending.Count})…", 3 + 92 * (index + fraction * .8) / pending.Count); lastReport = now; }
                 });
                 Report($"Checking {row.Title} for the 3DS…", 3 + 92 * (index + .8) / pending.Count);
+                string preparedHash = Data.HashFile(map, ct);
                 Relocation.Generate(map, stage, name, ct);
                 foreach (var (filename, hash) in row.Sidecars)
                     Data.Require(File.Exists(Path.Combine(stage, filename)) && Data.HashFile(Path.Combine(stage, filename), ct) == hash,
                         $"{name}: generated compatibility data did not pass verification.");
-                Data.Require(Data.HashFile(map, ct) == row.Sha256, "Destination read-back failed. Check the SD card and try again.");
+                Data.Require(Data.HashFile(map, ct) == preparedHash, "Destination read-back failed. Check the SD card and try again.");
                 ct.ThrowIfCancellationRequested();
                 safeToRemove = false; // Retain backups if the media disappears during rollback.
-                Commit(stage, game, row.Sidecars.Keys.Append(name + ".map"));
+                Commit(stage, game, Directory.EnumerateFiles(stage).Where(f => f.EndsWith(".nrl", StringComparison.OrdinalIgnoreCase)).Select(f => Path.GetFileName(f)).Append(name + ".map").ToArray());
                 safeToRemove = true;
             }
             finally
@@ -288,6 +309,25 @@ public static class Installer
         }
         ct.ThrowIfCancellationRequested();
         Report("Installing the game launcher…", 97);
+        // Derived Original-model meshes can be added without replacing maps,
+        // saves or settings. A launcher-only update keeps its existing packs.
+        foreach (string name in modelPending)
+        {
+            ct.ThrowIfCancellationRequested();
+            Report($"Preparing Original 3DS models for {Data.Catalog[name].Title}…", 97);
+            string stage = SafePath(game, ".halo-setup-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(stage); bool safeToRemove = true;
+            try
+            {
+                string map = SafePath(game, name + ".map"), temporary = Path.Combine(stage, name + ".hld");
+                ModelLods.Generate(map, temporary, ct);
+                Data.Require(ModelLods.Current(map, temporary, ct), "Model preparation did not pass verification. Please check the SD card.");
+                ct.ThrowIfCancellationRequested(); safeToRemove = false;
+                Commit(stage, game, new[] { name + ".hld" }); safeToRemove = true;
+            }
+            finally { if (safeToRemove && Directory.Exists(stage)) Directory.Delete(stage, true); }
+        }
+        PcMaps.Install(pcFiles, destination, ct, text => Report(text, 97));
         if (hud != null) AtomicWrite(hudPath, hud);
         if (loading != null) AtomicWrite(loadingPath, loading);
         AtomicWrite(launcher, executable);
@@ -295,9 +335,9 @@ public static class Installer
         string dsp = Path.Combine(destination, "3ds", "dspfirm.cdc");
         bool dspPresent = File.Exists(dsp) && new FileInfo(dsp).Length > 0;
         if (!options.LauncherOnly)
-            AtomicWrite(manifestPath, JsonSerializer.SerializeToUtf8Bytes(new { SetupVersion = 1, MapBuild = Data.Build,
+            AtomicWrite(manifestPath, JsonSerializer.SerializeToUtf8Bytes(new { SetupVersion = 1, MapBuild = "source revision",
                 Maps = names, LauncherSha256 = Data.Hash(executable), DspPresent = dspPresent }, new JsonSerializerOptions { WriteIndented = true }));
         Report("Ready to play", 100);
-        return new(names.Count, pending.Count, names.Count - pending.Count, dspPresent, destination);
+        return new(names.Count, pending.Count, names.Count - pending.Count, dspPresent, destination, pcFiles.Count, compatibilityWarning);
     }
 }

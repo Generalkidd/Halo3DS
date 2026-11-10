@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /*
 GAME_ENGINE_KING.H
 */
@@ -157,5 +158,8 @@ void render_dynamic_quad(
 
 extern struct game_engine king_engine;
 extern struct king_globals king_globals;
+#ifdef HALO_N3DS
+boolean game_engine_king_active_hill_center(real_point3d *position);
+#endif
 
 #endif // __GAME_ENGINE_KING_H

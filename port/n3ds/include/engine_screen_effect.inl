@@ -11,6 +11,7 @@ static unsigned int screen_color(float r,float g,float b,float a)
 {return (unsigned int)(screen_clamp(r)*255+.5f)|((unsigned int)(screen_clamp(g)*255+.5f)<<8)|((unsigned int)(screen_clamp(b)*255+.5f)<<16)|((unsigned int)(screen_clamp(a)*255+.5f)<<24);}
 void n3ds_gpu_screen_effect(const struct native_screen_effect *effect)
 {
+    N3DS_RENDER_FENCE(N3DS_RENDER_FENCE_STATE);
  ++screen_video_phase;
  if(effect)screen_effect=*effect;else memset(&screen_effect,0,sizeof(screen_effect));
  screen_effect.enhancement=screen_clamp(screen_effect.enhancement);

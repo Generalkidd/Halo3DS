@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /*
 ACTORS.C
 
@@ -324,6 +325,7 @@ symbols in this file:
 enum
 {
 	_actor_mode_braindead = 0,
+	_actor_mode_asleep = 1,
 	_actor_mode_alert = 2,
 	_actor_mode_combat,
 	_actor_fire_target_none = 0,
@@ -1738,10 +1740,10 @@ static void actor_input_update(
 			}
 		}
 
-		if (actor->meta.encounter_index != NONE)
+		if (AI_DIAGNOSTICS_ENABLED && actor->meta.encounter_index != NONE)
 		{
 			struct actor_debug_info *actor_debug_info =
-				&actor_debug_array[DATUM_INDEX_TO_ABSOLUTE_INDEX(actor_index)];
+				AI_DEBUG_RECORD(DATUM_INDEX_TO_ABSOLUTE_INDEX(actor_index));
 			struct encounter_definition *encounter_definition =
 				TAG_BLOCK_GET_ELEMENT(
 					&global_scenario_get()->ai_encounters,
@@ -1765,7 +1767,7 @@ static void actor_input_update(
 			{
 				if (actor_debug_info->firing_position_type_mismatch_ticks < 150)
 				{
-					actor_debug_info->firing_position_type_mismatch_ticks++;
+					AI_DEBUG_ONLY(actor_debug_info->firing_position_type_mismatch_ticks++);
 					if (actor_debug_info->firing_position_type_mismatch_ticks == 150)
 					{
 						if (actor->state.flying)
@@ -1789,7 +1791,7 @@ static void actor_input_update(
 			}
 			else
 			{
-				actor_debug_info->firing_position_type_mismatch_ticks = 0;
+				AI_DEBUG_ONLY(actor_debug_info->firing_position_type_mismatch_ticks = 0);
 			}
 		}
 
@@ -2362,18 +2364,18 @@ long actor_new(
 				actor->firing_positions.pursuit_prop_index = NONE;
 
 				actor_debug_info =
-					&actor_debug_array[DATUM_INDEX_TO_ABSOLUTE_INDEX(actor_index)];
-				csmemset(actor_debug_info, 0, sizeof(*actor_debug_info));
-				actor_debug_info->last_path_refresh = NONE;
-				actor_debug_info->last_projectile_aiming_time = NONE;
-				actor_debug_info->last_vehicle_avoidance_time = NONE;
-				actor_debug_info->last_melee_time = NONE;
-				actor_debug_info->grenade_eval_time = NONE;
-				actor_debug_info->danger_avoidance_time = NONE;
-				actor_debug_info->charge_last_time = NONE;
-				actor_debug_info->field_19C = NONE;
-				actor_debug_info->vision_last_time = NONE;
-				actor_debug_info->num_debug_evaluations = NONE;
+					AI_DEBUG_RECORD(DATUM_INDEX_TO_ABSOLUTE_INDEX(actor_index));
+				AI_DEBUG_ONLY(csmemset(actor_debug_info, 0, sizeof(*actor_debug_info)));
+				AI_DEBUG_ONLY(actor_debug_info->last_path_refresh = NONE);
+				AI_DEBUG_ONLY(actor_debug_info->last_projectile_aiming_time = NONE);
+				AI_DEBUG_ONLY(actor_debug_info->last_vehicle_avoidance_time = NONE);
+				AI_DEBUG_ONLY(actor_debug_info->last_melee_time = NONE);
+				AI_DEBUG_ONLY(actor_debug_info->grenade_eval_time = NONE);
+				AI_DEBUG_ONLY(actor_debug_info->danger_avoidance_time = NONE);
+				AI_DEBUG_ONLY(actor_debug_info->charge_last_time = NONE);
+				AI_DEBUG_ONLY(actor_debug_info->field_19C = NONE);
+				AI_DEBUG_ONLY(actor_debug_info->vision_last_time = NONE);
+				AI_DEBUG_ONLY(actor_debug_info->num_debug_evaluations = NONE);
 
 				actor_type_initialize(actor_index);
 			}
@@ -3893,26 +3895,26 @@ static boolean actor_general_update(
 	struct actor_datum *actor = actor_get(actor_index);
 	boolean result = TRUE;
 
-	ai_profile.meters[_ai_meter_actors_updated].accumulator++;
+	AI_PROFILE_ONLY(ai_profile.meters[_ai_meter_actors_updated].accumulator++);
 	if (!actor->meta.dormant)
 	{
-		ai_profile.meters[_ai_meter_actors_active].accumulator++;
+		AI_PROFILE_ONLY(ai_profile.meters[_ai_meter_actors_active].accumulator++);
 	}
 
 	if (actor->meta.swarm)
 	{
-		ai_profile.meters[_ai_meter_units_updated].accumulator += actor->meta.swarm_unit_count;
+		AI_PROFILE_ONLY(ai_profile.meters[_ai_meter_units_updated].accumulator += actor->meta.swarm_unit_count);
 		if (!actor->meta.dormant)
 		{
-			ai_profile.meters[_ai_meter_units_active].accumulator += actor->meta.swarm_unit_count;
+			AI_PROFILE_ONLY(ai_profile.meters[_ai_meter_units_active].accumulator += actor->meta.swarm_unit_count);
 		}
 	}
 	else
 	{
-		ai_profile.meters[_ai_meter_units_updated].accumulator++;
+		AI_PROFILE_ONLY(ai_profile.meters[_ai_meter_units_updated].accumulator++);
 		if (!actor->meta.dormant)
 		{
-			ai_profile.meters[_ai_meter_units_active].accumulator++;
+			AI_PROFILE_ONLY(ai_profile.meters[_ai_meter_units_active].accumulator++);
 		}
 	}
 
@@ -4200,8 +4202,39 @@ static long long native_actor_cost[7];
 #endif
 #ifdef HALO_N3DS
 static unsigned int native_decisions_deferred;
+/* The post-baseline idle policy is retained for attribution, but is not used
+ * by the pre-fog scheduler below. */
+/* Kevin Boggs: native_idle_decision_interval
+ * Only decision selection is budgeted. Perception, action timers, movement,
+ * danger and combat still run every tick. Never use visibility/fog as an AI
+ * activation boundary: an invisible actor may still matter to the mission. */
+static unsigned int native_idle_decision_interval(const struct actor_datum *a,
+ real distance_squared, boolean hostile, int original)
+{
+ if(!hostile || a->meta.force_active ||
+    (a->state.mode!=_actor_mode_alert && a->state.mode!=_actor_mode_asleep) ||
+    a->state.been_in_combat || a->state.searching || a->state.flying ||
+    a->state.command_list_delay_timer>0 || a->situation.area_fighting_friends ||
+    a->situation.visible_fighting_friends || a->external_orders.playfighting ||
+    a->input.melee_attacker_attached || a->input.delayed_attached_projectile_index!=NONE ||
+    a->output.analog_primary_trigger>0.f || a->output.throttle.i!=0.f ||
+    a->output.throttle.j!=0.f || a->output.throttle.k!=0.f ||
+    a->input.position.velocity.i!=0.f || a->input.position.velocity.j!=0.f ||
+    a->input.position.velocity.k!=0.f)return 2;
+ if(a->state.action!=_actor_action_sleep && a->state.action!=_actor_action_alert &&
+    a->state.action!=_actor_action_guard)return 2;
+ if(a->meta.encounter_index!=NONE && encounter_get(a->meta.encounter_index)->force_active)return 2;
+ real near=original?40.f:50.f, far=original?65.f:80.f;
+ if(distance_squared>=far*far)return 6;
+ if(distance_squared>=near*near)return 4;
+ return 2;
+}
+
+/* Kevin Boggs: native_decision_due */
 static boolean native_decision_due(long index,const struct actor_datum *a)
 {
+ extern int n3ds_network_coop_active(void);
+ if(n3ds_network_coop_active())return TRUE;
  static const struct actor_stimulus_data no_stimuli={0};
  extern boolean cinematic_in_progress(void);
  if(!((game_time_get()+DATUM_INDEX_TO_ABSOLUTE_INDEX(index))&1) || cinematic_in_progress() ||

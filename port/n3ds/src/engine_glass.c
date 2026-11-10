@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /* Native constant-tint glass combines tint/reflection with filtered cube
  * sampling on PICA, then preserves diffuse alpha and intermediate saturation.
  * Textured/extended-range tints retain the CPU sampled fallback.
@@ -6,6 +7,7 @@
 #include "engine_glass.h"
 #include "engine_models.h"
 #include "engine_cache.h"
+#include "../pc/engine_pc_runtime.h"
 #include "cache_reader.h"
 #include "engine_textures.h"
 #include "engine_bitmaps.h"
@@ -25,13 +27,12 @@ struct glass_shader {
 };
 _Static_assert(offsetof(struct glass_shader,reflection_type)==138,"Glass ABI");
 _Static_assert(offsetof(struct glass_shader,detail_map)==364,"Glass detail ABI");
-extern struct rasterizer_window_begin_parameters global_window_parameters;
 boolean rasterizer_set_texture_direct(short,long,short);
 void n3ds_log(const char *);
 #define CUBE_SIZE 32
 #define CUBE_COUNT 8
 static struct { const struct bitmap_data *bitmap; byte rgba[6*CUBE_SIZE*CUBE_SIZE*4]; } cubes[CUBE_COUNT];
-static unsigned int cube_generation,cube_count;
+static unsigned int cube_generation,cube_count,cube_replacement,cube_log_count;
 int n3ds_cube_coordinates(const float r[3],int *face,float uv[2])
 {
     float x=r[0],y=r[1],z=r[2],a=fabsf(x),b=fabsf(y),c=fabsf(z),u,v,major;
@@ -48,22 +49,29 @@ const byte *n3ds_cube_load(long tag,short permutation)
     assert(group && permutation>=0 && group->bitmaps.count>0);
     struct bitmap_data *b=bitmap_group_try_and_get_bitmap(tag,permutation%group->bitmaps.count);
     if(cube_generation!=n3ds_engine_cache_generation()) {
-        memset(cubes,0,sizeof(cubes));cube_count=0;cube_generation=n3ds_engine_cache_generation();
+        memset(cubes,0,sizeof(cubes));cube_count=cube_replacement=cube_log_count=0;
+        cube_generation=n3ds_engine_cache_generation();
     }
     for(unsigned int i=0;i<cube_count;++i) if(cubes[i].bitmap==b) return cubes[i].rgba;
-    assert(cube_count<CUBE_COUNT && n3ds_cache_resolve(view,b,sizeof(*b))==b);
+    assert(n3ds_cache_resolve(view,b,sizeof(*b))==b);
+    unsigned int slot=cube_count<CUBE_COUNT?cube_count++:cube_replacement++%CUBE_COUNT;
     assert(b->signature=='bitm' && b->type==2 && b->depth==1 && b->width==b->height);
     assert(b->width>=8 && b->width<=256 && !(b->width&(b->width-1)) && b->mipmap_count>=0 && b->mipmap_count<=8);
     boolean raw=b->format==6 || b->format==10 || b->format==11;
     unsigned int pixel_bytes=b->format==6?2:4;
-    assert((raw && (b->flags&8)) || (!raw && b->format>=14 && b->format<=16 && !(b->flags&8)));
+    assert(n3ds_pc_tags_active()
+        ? (raw || (b->format>=14 && b->format<=16))
+        : ((raw && (b->flags&8)) ||
+           (!raw && b->format>=14 && b->format<=16 && !(b->flags&8))));
     assert(b->flags&0x80);
     unsigned int block=b->format==14?8:16,chain=0,skip=0,side=b->width,level=0;
     for(int mip=0;mip<=b->mipmap_count;++mip) {
         unsigned int n=MAX(1,b->width>>mip);
         chain+=raw?n*n*pixel_bytes:((n+3)/4)*((n+3)/4)*block;
     }
-    unsigned int face_stride=(chain+127)&~127u;
+    /* PC retail stores the six mip chains back to back. Xbox cache images
+     * align each face to 128 bytes. Both layouts are validated below. */
+    unsigned int face_stride=n3ds_pc_tags_active()?chain:(chain+127)&~127u;
     assert(b->pixels_size==(long)(face_stride*6) && b->pixels_offset>=2048);
     while(side>CUBE_SIZE && level<(unsigned int)b->mipmap_count) {
         skip+=raw?side*side*pixel_bytes:((side+3)/4)*((side+3)/4)*block;side>>=1;++level;
@@ -71,13 +79,14 @@ const byte *n3ds_cube_load(long tag,short permutation)
     unsigned int bytes=raw?side*side*pixel_bytes:((side+3)/4)*((side+3)/4)*block;
     assert(skip+bytes<=face_stride);
     byte *encoded=malloc(bytes),*decoded=malloc(side*side*4);assert(encoded && decoded);
-    byte *destination=cubes[cube_count].rgba;
+    byte *destination=cubes[slot].rgba;
     for(unsigned int face=0;face<6;++face) {
         assert(n3ds_engine_cache_read(b->pixels_offset+face*face_stride+skip,bytes,encoded));
         if(raw) {
             for(unsigned int y=0;y<side;++y) for(unsigned int x=0;x<side;++x) {
                 long address[2];bitmap_swizzle_vector2d(side,side,x,y,address);
-                unsigned int pixel=n3ds_bitmap_decode_pixel(encoded+pixel_bytes*(address[0]|address[1]),b->format);
+                unsigned int at=n3ds_pc_tags_active()?y*side+x:(unsigned int)(address[0]|address[1]);
+                unsigned int pixel=n3ds_bitmap_decode_pixel(encoded+pixel_bytes*at,b->format);
                 for(int c=0;c<4;++c) decoded[(y*side+x)*4+c]=pixel>>(24-c*8);
             }
         } else assert(!halo_s3tc_decode(b->format==14?0xc:b->format==15?0xe:0xf,
@@ -86,12 +95,12 @@ const byte *n3ds_cube_load(long tag,short permutation)
             memcpy(destination+((face*CUBE_SIZE+y)*CUBE_SIZE+x)*4,
                 decoded+((y*side/CUBE_SIZE)*side+x*side/CUBE_SIZE)*4,4);
     }
-    free(decoded);free(encoded);cubes[cube_count++].bitmap=b;
-    char text[160];snprintf(text,sizeof(text),"NATIVE CUBE: tag=%08lx format=%d faces=6 size=32 level=%u stride=%u",tag,b->format,level,face_stride);n3ds_log(text);
-    /* Read-only decode evidence, captured once per resource generation. */
-    snprintf(text,sizeof(text),"z:\\native-cube-%08lx.bin",tag);
-    FILE *proof=fopen(text,"wb");assert(proof);
-    assert(fwrite(destination,6*CUBE_SIZE*CUBE_SIZE*4,1,proof)==1);assert(!fclose(proof));
+    free(decoded);free(encoded);cubes[slot].bitmap=b;
+    if (cube_log_count++<16) {
+        char text[160];
+        snprintf(text,sizeof(text),"NATIVE CUBE: tag=%08lx format=%d faces=6 size=32 level=%u stride=%u",tag,b->format,level,face_stride);
+        n3ds_log(text);
+    }
     return destination;
 }
 void n3ds_cube_sample(const byte *pixels,const float direction[3],float rgb[4])
@@ -178,7 +187,7 @@ static int glass_native(const struct glass_shader *g,short permutation,
 
 void n3ds_glass_model_draw(const struct shader *shader,short permutation,
     const struct rasterizer_model_begin_parameters *p,const void *data,unsigned int count,
-    short type,const unsigned short *indices,unsigned int index_count)
+    short type,const unsigned short *indices,unsigned int index_count,const struct native_model_view *frame_view)
 {
     const struct n3ds_cache_view *view=n3ds_engine_cache_view(0);
     const struct glass_shader *g=(const void *)shader;
@@ -230,7 +239,7 @@ void n3ds_glass_model_draw(const struct shader *shader,short permutation,
                     for(int c=0;c<3;++c) normal.n[c]+=n.n[c]*vertex->node_weights[k];
                 }
                 for(int c=0;c<3;++c) {
-                    eye.n[c]=global_window_parameters.camera.position.n[c]-v[i].position[c];
+                    eye.n[c]=frame_view->camera_position.n[c]-v[i].position[c];
                     n2+=normal.n[c]*normal.n[c];e2+=eye.n[c]*eye.n[c];
                 }
                 assert(n2>1e-12f && e2>1e-12f);

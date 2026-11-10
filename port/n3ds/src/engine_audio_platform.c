@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /* 24 DSP voices, four bounded PCM buffers each. Pure decoding can run on a
  * second core. Voice ownership and all DSP submissions remain on the game
  * thread, joined before any source sample may be unpinned or map unloaded. */
@@ -8,10 +9,12 @@
 #include <math.h>
 #include "engine_audio.h"
 #include "engine_parallel.h"
+#define STB_VORBIS_HEADER_ONLY
+#include "../vendor/stb_vorbis.c"
 #define VOICES 24
 #define PACKETS 4
 #define FRAMES 2048
-struct clip {const unsigned char *data;unsigned int bytes,offset;int channels,compression;};
+struct clip {const unsigned char *data;unsigned int bytes,offset;int channels,compression;stb_vorbis *vorbis;};
 struct voice {struct clip current,next;ndspWaveBuf wave[PACKETS];short *pcm[PACKETS];int outstanding;};
 static struct voice voices[VOICES];
 static short *storage;
@@ -19,6 +22,17 @@ static int ready,count,paused;
 static unsigned int decoded_frames,underruns,submitted;
 static int exit_registered;
 void n3ds_log(const char *);
+#ifdef HALO_N3DS_AUDIO_TRACE
+static unsigned int audio_trace_lines;
+/* Kevin Boggs: audio_trace - New3DS integration. */
+static void audio_trace(const char *event,int channel,unsigned int detail,float a,float b)
+{
+    if(audio_trace_lines++>=100) return;
+    char text[180];snprintf(text,sizeof(text),"AUDIO TRACE: %s ch=%d detail=%u a=%.5f b=%.5f paused=%d dsp_paused=%d",event,channel,detail,a,b,paused,
+        ready && channel>=0 && channel<count ? (int)ndspChnIsPaused(channel) : -1);
+    n3ds_log(text);
+}
+#endif
 static void audio_exit(void)
 {
     if(!ready) return;
@@ -48,7 +62,12 @@ int n3ds_audio_initialize(int channels)
 void n3ds_audio_stop(int channel)
 {
     if(!ready || channel<0 || channel>=count) return;
+#ifdef HALO_N3DS_AUDIO_TRACE
+    audio_trace("stop",channel,voices[channel].outstanding,0,0);
+#endif
     struct voice *v=voices+channel;ndspChnWaveBufClear(channel);
+    if(v->current.vorbis) stb_vorbis_close(v->current.vorbis);
+    if(v->next.vorbis) stb_vorbis_close(v->next.vorbis);
     memset(v->wave,0,sizeof(v->wave));memset(&v->current,0,sizeof(v->current));memset(&v->next,0,sizeof(v->next));v->outstanding=0;
 }
 /* Also called by libctru on abort/_exit, which can bypass atexit. Do not use
@@ -86,14 +105,26 @@ int n3ds_audio_state(int i)
 }
 int n3ds_audio_queue(int i,const void *data,unsigned int bytes,int channels,int compression)
 {
-    if(!ready || i<0 || i>=count || !data || !bytes || channels<1 || channels>2 || compression<0 || compression>1 || bytes%(channels*(compression?36:2))) return 0;
-    struct voice *v=voices+i;struct clip c={data,bytes,0,channels,compression};
-    if(v->current.data) v->next=c;else {v->current=c;ndspChnSetFormat(i,channels==2?NDSP_FORMAT_STEREO_PCM16:NDSP_FORMAT_MONO_PCM16);}
+    if(!ready || i<0 || i>=count || !data || !bytes || channels<1 || channels>2 ||
+       (compression!=0 && compression!=1 && compression!=3) ||
+       (compression==3 ? (bytes<27 || bytes>1024*1024 || memcmp(data,"OggS",4)) :
+        bytes%(channels*(compression?36:2)))) return 0;
+#ifdef HALO_N3DS_AUDIO_TRACE
+    audio_trace("queue",i,bytes,(float)channels,(float)compression);
+#endif
+    struct voice *v=voices+i;struct clip c={data,bytes,0,channels,compression,NULL};
+    if(v->current.data) {
+        if(v->next.vorbis) stb_vorbis_close(v->next.vorbis);
+        v->next=c;
+    } else {v->current=c;ndspChnSetFormat(i,channels==2?NDSP_FORMAT_STEREO_PCM16:NDSP_FORMAT_MONO_PCM16);}
     return 1;
 }
 void n3ds_audio_properties(int i,float rate,float left,float right)
 {
     if(!ready || i<0 || i>=count) return;
+#ifdef HALO_N3DS_AUDIO_TRACE
+    audio_trace("mix",i,(unsigned int)rate,left,right);
+#endif
     float mix[12]={0};mix[0]=left;mix[1]=right;
     ndspChnSetRate(i,rate);ndspChnSetMix(i,mix);
 }
@@ -106,6 +137,7 @@ struct audio_decode_job {
     short *pcm;
     unsigned int bytes,frames;
     int channels,compression,voice,packet;
+    stb_vorbis *vorbis;
 };
 static struct audio_decode_job decode_jobs[VOICES*PACKETS];
 static int decode_range(void *context,unsigned int begin,unsigned int end)
@@ -113,7 +145,8 @@ static int decode_range(void *context,unsigned int begin,unsigned int end)
     struct audio_decode_job *jobs=context;
     for(unsigned int i=begin;i<end;++i) {
         struct audio_decode_job *j=jobs+i;
-        if(j->compression) j->frames=n3ds_xbox_adpcm_decode(j->source,j->bytes,j->channels,j->pcm,FRAMES*2);
+        if(j->compression==3) j->frames=stb_vorbis_get_samples_short_interleaved(j->vorbis,j->channels,j->pcm,FRAMES*j->channels);
+        else if(j->compression) j->frames=n3ds_xbox_adpcm_decode(j->source,j->bytes,j->channels,j->pcm,FRAMES*2);
         else {memcpy(j->pcm,j->source,j->bytes);j->frames=j->bytes/(2*j->channels);}
     }
     return 1;
@@ -126,18 +159,29 @@ void n3ds_audio_update(void)
         struct voice *v=voices+i;
         for(int p=0;p<PACKETS;++p) if(v->wave[p].status==NDSP_WBUF_DONE) {v->wave[p].status=NDSP_WBUF_FREE;--v->outstanding;}
         if(v->current.data && v->current.offset==v->current.bytes && !v->outstanding) {
+            if(v->current.vorbis) stb_vorbis_close(v->current.vorbis);
             v->current=v->next;memset(&v->next,0,sizeof(v->next));
             if(v->current.data) ndspChnSetFormat(i,v->current.channels==2?NDSP_FORMAT_STEREO_PCM16:NDSP_FORMAT_MONO_PCM16);
         }
         struct clip *c=&v->current;
         if(!c->data) continue;
+        if(c->compression==3 && !c->vorbis) {
+            int error=0;
+            c->vorbis=stb_vorbis_open_memory(c->data,(int)c->bytes,&error,NULL);
+            if(!c->vorbis) {n3ds_log("AUDIO ERROR: Ogg stream could not be opened");n3ds_audio_stop(i);continue;}
+            stb_vorbis_info info=stb_vorbis_get_info(c->vorbis);
+            if(info.channels!=c->channels || info.sample_rate!=(unsigned int)(i>=22?44100:22050)) {
+                n3ds_log("AUDIO ERROR: Ogg channel or sample rate mismatch");n3ds_audio_stop(i);continue;
+            }
+        }
         if(c->offset && c->offset<c->bytes && !v->outstanding) ++underruns;
         for(int p=0;p<PACKETS && c->offset<c->bytes;++p) if(v->wave[p].status==NDSP_WBUF_FREE) {
-            unsigned int bytes=c->compression?(FRAMES/64)*36*c->channels:FRAMES*2*c->channels;
+            unsigned int bytes=c->compression==3?0:c->compression?(FRAMES/64)*36*c->channels:FRAMES*2*c->channels;
             if(bytes>c->bytes-c->offset) bytes=c->bytes-c->offset;
-            decode_jobs[jobs++]=(struct audio_decode_job){c->data+c->offset,v->pcm[p],bytes,0,c->channels,c->compression,i,p};
-            if(c->compression) compressed_bytes+=bytes;
-            c->offset+=bytes;
+            decode_jobs[jobs++]=(struct audio_decode_job){c->data+c->offset,v->pcm[p],bytes,0,c->channels,c->compression,i,p,c->vorbis};
+            if(c->compression==1) compressed_bytes+=bytes;
+            c->offset+=c->compression==3?1:bytes;
+            if(c->compression==3) break;
         }
     }
     /* The codec lookup was initialized by initialize's codec tests before the
@@ -148,15 +192,21 @@ void n3ds_audio_update(void)
     if(compressed_bytes>=8192) n3ds_parallel_range(decode_range,decode_jobs,jobs,4,0);
     else decode_range(decode_jobs,0,jobs);
     unsigned int bad=0;
-    for(unsigned int i=0;i<jobs;++i) if(!decode_jobs[i].frames) bad|=1u<<decode_jobs[i].voice;
+    for(unsigned int i=0;i<jobs;++i) if(!decode_jobs[i].frames) {
+        if(decode_jobs[i].compression==3) voices[decode_jobs[i].voice].current.offset=voices[decode_jobs[i].voice].current.bytes;
+        else bad|=1u<<decode_jobs[i].voice;
+    }
     for(int i=0;i<count;++i) if(bad&(1u<<i)) {n3ds_log("AUDIO ERROR: malformed encoded block; voice stopped");n3ds_audio_stop(i);}
     for(unsigned int i=0;i<jobs;++i) {
         struct audio_decode_job *j=decode_jobs+i;
-        if(bad&(1u<<j->voice)) continue;
+        if((bad&(1u<<j->voice)) || !j->frames) continue;
         struct voice *v=voices+j->voice;ndspWaveBuf *wave=v->wave+j->packet;
         decoded_frames+=j->frames;++submitted;
         memset(wave,0,sizeof(*wave));wave->data_pcm16=j->pcm;wave->nsamples=j->frames;
         DSP_FlushDataCache(j->pcm,j->frames*j->channels*2);ndspChnWaveBufAdd(j->voice,wave);++v->outstanding;
+#ifdef HALO_N3DS_AUDIO_TRACE
+        audio_trace("submit",j->voice,j->frames,(float)j->channels,(float)wave->status);
+#endif
     }
 }
 int n3ds_audio_parallel_tests(void)

@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 #ifdef HALO_N3DS
 #include "engine_hud.h"
 #endif
@@ -1689,7 +1690,6 @@ static void render_weapon_hud(
 			TEST_FLAG(map_type_flags, element->header.use_on_map_type))
 		{
 			byte value;
-
 			state_index = element->header.state_type;
 			value = (byte)number_values[state_index];
 			hud_draw_meter(

@@ -234,6 +234,25 @@ unsigned long point_physics_update(
 	return result;
 }
 
+#ifdef HALO_N3DS
+/* Kevin Boggs: n3ds_point_physics_cosmetic
+ * Original-model overflow decoration only: air drag and gravity, no wind,
+ * water or surface collision response. Never used by gameplay projectiles. */
+unsigned long n3ds_point_physics_cosmetic(const struct point_physics_definition *definition,
+    struct location *location,real_point3d *position,real_vector3d *velocity,real radius,real dt)
+{
+    real r2=radius*radius,mass=(definition->runtime_mass_over_radius_cubed+global_air_mass_over_radius_cubed)*r2*radius;
+    real friction=definition->air_friction*r2;
+    real drag=mass>0.f?PIN((dt/mass)*friction,0.f,1.f):(friction==0.f?0.f:1.f);
+    if(!TEST_FLAG(definition->flags,_point_physics_no_gravity_bit))
+        velocity->k+=((global_gravity*TICKS_PER_SECOND)*TICKS_PER_SECOND)*definition->runtime_air_buoyancy_scale*dt;
+    velocity->i-=velocity->i*drag;velocity->j-=velocity->j*drag;velocity->k-=velocity->k*drag;
+    position->x+=velocity->i*dt;position->y+=velocity->j*dt;position->z+=velocity->k*dt;
+    scenario_location_from_point(location,position);
+    return FLAG(_point_physics_in_air_bit);
+}
+#endif
+
 struct point_physics_definition *point_physics_definition_interpolate(
 	struct point_physics_definition const *physics1,
 	struct point_physics_definition const *physics2,

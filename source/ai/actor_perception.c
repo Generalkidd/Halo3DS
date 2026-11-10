@@ -462,7 +462,7 @@ struct actor_perception_debug_info_view
 	((struct actor_perception_ai_debug_state_view *)&ai_debug)
 
 #define actor_perception_debug_get(index) \
-	((struct actor_perception_debug_info_view *)&actor_debug_array[(index)])
+	((struct actor_perception_debug_info_view *)AI_DEBUG_RECORD(index))
 
 #define actor_perception_object_get(index) \
 	((struct object_datum *)object_get_and_verify_type( \
@@ -2626,16 +2626,15 @@ short actor_visibility_at_point(
 perception_factor_ready:
 				{
 					struct actor_debug_info *debug =
-						&actor_debug_array[
-							DATUM_INDEX_TO_ABSOLUTE_INDEX(actor_index)];
+						AI_DEBUG_RECORD(DATUM_INDEX_TO_ABSOLUTE_INDEX(actor_index));
 
 					if (target_is_player)
 					{
-						debug->vision_last_time = game_time_get();
-						debug->vision_last_maximum_distance =
-							maximum_distance;
-						debug->vision_last_perception_factor =
-							perception_factor;
+						AI_DEBUG_ONLY(debug->vision_last_time = game_time_get());
+						AI_DEBUG_ONLY(debug->vision_last_maximum_distance =
+							maximum_distance);
+						AI_DEBUG_ONLY(debug->vision_last_perception_factor =
+							perception_factor);
 					}
 				}
 
@@ -2808,15 +2807,14 @@ short actor_audibility_at_point(
 
 		{
 			struct actor_debug_info *debug =
-				&actor_debug_array[
-					DATUM_INDEX_TO_ABSOLUTE_INDEX(actor_index)];
+				AI_DEBUG_RECORD(DATUM_INDEX_TO_ABSOLUTE_INDEX(actor_index));
 
-			debug->field_A8 = maximum_distance;
-			debug->field_A4 = TRUE;
-			debug->field_A6 = result;
-			debug->field_B0 = encoded_distance;
-			debug->field_AC = square_root(distance_squared);
-			debug->field_B4 = audible_distance;
+			AI_DEBUG_ONLY(debug->field_A8 = maximum_distance);
+			AI_DEBUG_ONLY(debug->field_A4 = TRUE);
+			AI_DEBUG_ONLY(debug->field_A6 = result);
+			AI_DEBUG_ONLY(debug->field_B0 = encoded_distance);
+			AI_DEBUG_ONLY(debug->field_AC = square_root(distance_squared));
+			AI_DEBUG_ONLY(debug->field_B4 = audible_distance);
 		}
 	}
 
@@ -6690,7 +6688,7 @@ void actor_perception_update(
 					new_state = _prop_state_unacknowledged;
 					if (prop->player)
 					{
-						debug->perception_awareness_speed = NONE;
+						AI_DEBUG_ONLY(debug->perception_awareness_speed = NONE);
 						if (ai_debug.print_acknowledgement)
 						{
 							char buffer[256];
@@ -6741,10 +6739,10 @@ void actor_perception_update(
 						break;
 					}
 
-					if (prop->player &&
+					if (AI_DIAGNOSTICS_ENABLED && prop->player &&
 						debug->perception_awareness_speed != awareness_speed)
 					{
-						debug->perception_awareness_speed = awareness_speed;
+						AI_DEBUG_ONLY(debug->perception_awareness_speed = awareness_speed);
 						if (ai_debug.print_acknowledgement)
 						{
 							char const *awareness_speed_names[] =
@@ -6799,7 +6797,7 @@ void actor_perception_update(
 						new_state = _prop_state_acknowledged;
 						if (prop->player)
 						{
-							debug->perception_awareness_speed = NONE;
+							AI_DEBUG_ONLY(debug->perception_awareness_speed = NONE);
 							if (ai_debug.print_acknowledgement)
 							{
 								char buffer[256];
@@ -7138,45 +7136,45 @@ void actor_perception_update(
 		{
 			if (prop->state >= _prop_state_becoming_unacknowledged && prop->state <= _prop_state_acknowledged)
 			{
-				ai_profile.meters[_ai_meter_dead_props_acknowledged].accumulator++;
+				AI_PROFILE_ONLY(ai_profile.meters[_ai_meter_dead_props_acknowledged].accumulator++);
 			}
 			else if (prop->state >= _prop_state_uninspected_orphan && prop->state <= _prop_state_inspected_orphan)
 			{
-				ai_profile.meters[_ai_meter_dead_props_orphaned].accumulator++;
+				AI_PROFILE_ONLY(ai_profile.meters[_ai_meter_dead_props_orphaned].accumulator++);
 			}
 			else if (prop->state >= _prop_state_unacknowledged && prop->state <= _prop_state_becoming_acknowledged)
 			{
-				ai_profile.meters[_ai_meter_dead_props_unacknowledged].accumulator++;
+				AI_PROFILE_ONLY(ai_profile.meters[_ai_meter_dead_props_unacknowledged].accumulator++);
 			}
 		}
 		else if (prop->enemy)
 		{
 			if (prop->state >= _prop_state_becoming_unacknowledged && prop->state <= _prop_state_acknowledged)
 			{
-				ai_profile.meters[_ai_meter_enemy_props_acknowledged].accumulator++;
+				AI_PROFILE_ONLY(ai_profile.meters[_ai_meter_enemy_props_acknowledged].accumulator++);
 			}
 			else if (prop->state >= _prop_state_uninspected_orphan && prop->state <= _prop_state_inspected_orphan)
 			{
-				ai_profile.meters[_ai_meter_enemy_props_orphaned].accumulator++;
+				AI_PROFILE_ONLY(ai_profile.meters[_ai_meter_enemy_props_orphaned].accumulator++);
 			}
 			else if (prop->state >= _prop_state_unacknowledged && prop->state <= _prop_state_becoming_acknowledged)
 			{
-				ai_profile.meters[_ai_meter_enemy_props_unacknowledged].accumulator++;
+				AI_PROFILE_ONLY(ai_profile.meters[_ai_meter_enemy_props_unacknowledged].accumulator++);
 			}
 		}
 		else
 		{
 			if (prop->state >= _prop_state_becoming_unacknowledged && prop->state <= _prop_state_acknowledged)
 			{
-				ai_profile.meters[_ai_meter_friendly_props_acknowledged].accumulator++;
+				AI_PROFILE_ONLY(ai_profile.meters[_ai_meter_friendly_props_acknowledged].accumulator++);
 			}
 			else if (prop->state >= _prop_state_uninspected_orphan && prop->state <= _prop_state_inspected_orphan)
 			{
-				ai_profile.meters[_ai_meter_friendly_props_orphaned].accumulator++;
+				AI_PROFILE_ONLY(ai_profile.meters[_ai_meter_friendly_props_orphaned].accumulator++);
 			}
 			else if (prop->state >= _prop_state_unacknowledged && prop->state <= _prop_state_becoming_acknowledged)
 			{
-				ai_profile.meters[_ai_meter_friendly_props_unacknowledged].accumulator++;
+				AI_PROFILE_ONLY(ai_profile.meters[_ai_meter_friendly_props_unacknowledged].accumulator++);
 			}
 		}
 	}

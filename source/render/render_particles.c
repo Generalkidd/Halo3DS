@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /*
 RENDER_PARTICLES.C
 
@@ -27,6 +28,10 @@ symbols in this file:
 #include "render_particles.h"
 #include "render_sprite.h"
 #include "tag_files/tag_groups.h"
+#include "tag_files/tag_files.h"
+#ifdef HALO_N3DS
+#include "engine_combat_fx.h"
+#endif
 #include "units/unit_definitions.h"
 #include "units/units.h"
 
@@ -250,7 +255,8 @@ void render_particles(
 							rendered_particle->definition_index);
 					short particle_count = group_particle_counts[group_index];
 #ifdef HALO_N3DS
-                    boolean native_dense=particle_count>=16 && !rendered_particle->attached_to_first_person_weapon;
+                    boolean native_combat=n3ds_combat_fx_name(tag_get_name(rendered_particle->definition_index));
+                    boolean native_dense=particle_count>=16 && !native_combat && !rendered_particle->attached_to_first_person_weapon;
 #endif
 					real total_radius = 0.0f;
 					short built_particle_count = 0;
@@ -274,15 +280,30 @@ void render_particles(
                          * simulation/damage. Keep visible omitted particles
                          * alive so the rendering budget cannot change lifetime. */
                         unsigned int native_slot=(unsigned short)rendered_particle->particle_index;
-                        if(particle->object_index==NONE && ((native_dense &&
+                        if(particle->object_index==NONE && !native_combat && ((native_dense &&
                            (native_original?(native_slot&3)!=0:(native_slot&3)==3)) || native_draw_count>=native_draw_cap)) {
                             particle->last_rendered_frame_index=render.frame_index;
                             ++native_omitted;++rendered_particle;continue;
                         }
-                        ++native_selected;if(particle->object_index==NONE)++native_draw_count;
 #endif
 						real radius =
 							particle_get_radius(rendered_particle->particle_index);
+#ifdef HALO_N3DS
+                        /* Cluster visibility includes particles beyond the
+                         * camera. Cull detached sprites before transforms and
+                         * batching, with a conservative half-meter margin for
+                         * screen-sized sprites at the edge of the view. */
+                        if(particle->object_index==NONE) {
+                            if(!render_frustum_sphere_visible(&render.frustum,
+                                &particle->position,radius+0.5f)) {
+                                particle->last_rendered_frame_index=render.frame_index;
+                                ++native_omitted;
+                                ++rendered_particle;continue;
+                            }
+                            ++native_draw_count;
+                        }
+                        ++native_selected;
+#endif
 
 						if (particle->object_index != NONE)
 						{
@@ -334,7 +355,16 @@ void render_particles(
 									&position,
 									radius);
 
-							if (diameter > definition->lod_cutoff)
+#ifdef HALO_N3DS
+							if (diameter > 0.f && (native_combat ||
+#else
+							if (
+#endif
+                                diameter > definition->lod_cutoff
+#ifdef HALO_N3DS
+                                )
+#endif
+                                )
 							{
 								real fade;
 								real scale;

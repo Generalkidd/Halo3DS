@@ -63,6 +63,9 @@ int n3ds_mission_target_step(long unit_index,long time)
 }
 void n3ds_mission_combat_trace(long unit_index,long time)
 {
+#ifdef HALO_N3DS_STRIP_DIAGNOSTICS
+    return;
+#endif
     static long last_fired=NONE,last_projectiles=NONE;
     static int last_charging;
     struct unit_datum *unit=unit_get(unit_index);

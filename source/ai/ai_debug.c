@@ -303,7 +303,10 @@ void ai_debug_initialize(
 	ai_debug.selected_actor_index = NONE;
 	ai_debug.selected_squad_index = NONE;
 	ai_debug.last_render_id = 1;
-	ai_debug.render = TRUE;
+	ai_debug.render = AI_DIAGNOSTICS_ENABLED;
+#ifdef HALO_N3DS_STRIP_DIAGNOSTICS
+    return;
+#endif
 
 	actor_debug_array = actor_debug_array==NULL ? (struct actor_debug_info *)debug_malloc(sizeof(*actor_debug_array) * MAXIMUM_NUMBER_OF_ACTORS, FALSE, "c:\\halo\\SOURCE\\ai\\ai_debug.c", 147) : actor_debug_array;
 #ifndef HALO_N3DS_FRONTEND
@@ -365,6 +368,9 @@ void ai_debug_dispose_from_old_map(
 void ai_debug_clear_storage(
 	void)
 {
+#ifdef HALO_N3DS_STRIP_DIAGNOSTICS
+    return;
+#endif
 	match_assert("c:\\halo\\SOURCE\\ai\\ai_debug.c", 208, actor_debug_array);
 
 	memset(actor_debug_array, 0, sizeof(*actor_debug_array) * MAXIMUM_NUMBER_OF_ACTORS);
@@ -467,6 +473,9 @@ boolean ai_debug_highlight_cluster(
 void ai_debug_render(
 	void)
 {
+#ifdef HALO_N3DS_STRIP_DIAGNOSTICS
+    return;
+#endif
 	if (ai_globals->initialized_for_new_map)
 	{
 		global_ai_debug_string_position = rasterizer_globals.reserved04.frame_bounds.y1 - 20;
@@ -4624,6 +4633,9 @@ void ai_debug_select_actor(
 void ai_debug_initialize_for_new_map(
 	void)
 {
+#ifdef HALO_N3DS_STRIP_DIAGNOSTICS
+    return;
+#endif
 	long encounter_index = encounter_get_by_name(ai_debug.selected_squad_name);
 
 	ai_debug_clear_storage();
@@ -4636,6 +4648,9 @@ void ai_debug_initialize_for_new_map(
 void ai_debug_update(
 	void)
 {
+#ifdef HALO_N3DS_STRIP_DIAGNOSTICS
+    return;
+#endif
 	if (ai_debug.render_lineofsight)
 	{
 		ai_debug.lineofsight_point_count = 0;
@@ -4672,7 +4687,7 @@ void ai_debug_update(
 				struct collision_result collision;
 				real_vector3d down_vector;
 
-				ai_profile.meters[_ai_meter_collisions].accumulator++;
+				AI_PROFILE_ONLY(ai_profile.meters[_ai_meter_collisions].accumulator++);
 
 				down_vector.i = global_down3d->i*1000.f;
 				down_vector.j = global_down3d->j*1000.f;

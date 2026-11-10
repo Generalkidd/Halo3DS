@@ -1,3 +1,4 @@
+# New3DS integration additions by Kevin Boggs.
 """Build the playable Halo3DS frontend from source. Python 3.10+.
 
 Run --help for dependency paths and diagnostic options. No previous objects,
@@ -11,6 +12,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 from tools.compat import prepare
 from tools.shaders import generate, verify_linked
 
@@ -36,6 +38,7 @@ def run(command, out, label):
 
 
 def main():
+    subprocess.run([sys.executable, str(PORT/'tools/check_attribution.py')], cwd=ROOT, check=True)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, default=ROOT/'build/n3ds')
     defaults = {'devkitarm': 'C:/devkitPro/devkitARM', 'libctru': ROOT.parent/'libctru/libctru',
@@ -47,11 +50,86 @@ def main():
     parser.add_argument('--packer', default=os.environ.get('THREEDSXTOOL') or str(ROOT.parent/'3dsxtool.exe'))
     parser.add_argument('--jobs', type=int, default=2, choices=range(1, 9))
     parser.add_argument('--test-frames', type=int, default=0, help='0 produces the playable release; positive values stop after that many frames')
-    parser.add_argument('--diagnostics', action='store_true', help='Enable renderer checks; requires --test-frames')
+    parser.add_argument('--experimental-physics-15hz', action='store_true', help='Offline test: grounded AI/ground vehicles at 15 Hz; players, airborne motion, cinematics and networking remain 30 Hz')
+    parser.add_argument('--experimental-render-packets', choices=['serial','parallel','batch','combined'], help='Research only: immutable opaque packets, optional pose-row worker or repeated skinned-mesh batching; not a full concurrent renderer')
+    parser.add_argument('--experimental-render-commands', action='store_true', help='Research only: owned backend draw commands with serial replay and explicit state/resource fences; not yet concurrent')
+    parser.add_argument('--experimental-render-worker', action='store_true', help='Research only: implies owned commands; replay model and environment spans on New 3DS core2 while main-thread preparation continues, not full simulation/frame overlap')
+    parser.add_argument('--experimental-collision-layout', action='store_true', help='Research only: compiled collision-node lists and exact inverse-transform reuse')
+    parser.add_argument('--release', action='store_true', help='Experimental: remove assertions, AI debug records, profiler sampling and routine logging; retain fatal errors and required assertion side effects')
+    parser.add_argument('--diagnostics', action='store_true', help='Enable renderer checks and material profile; use with --test-frames or --diagnostic-pc-play')
+    parser.add_argument('--diagnostic-audio-trace', action='store_true', help='Trace bounded DSP queue and playback state; use with --test-frames or --diagnostic-pc-play')
+    parser.add_argument('--diagnostic-particle-profile', action='store_true', help='Trace original particle animation and physics time in a diagnostic match')
+    parser.add_argument('--diagnostic-high-textures', action='store_true', help='PC map comparison: New-model 128-pixel world textures with an 8 MiB cache; requires --diagnostic-pc-play')
+    parser.add_argument('--diagnostic-texture-clip', action='store_true', help='Capture a repeatable Timberland walk as raw top-screen frames; requires --diagnostic-pc-play timberland')
+    parser.add_argument('--diagnostic-respawn-texture-clip', action='store_true', help='Capture PC menu death/respawn fixture frames and frame work timing')
+    parser.add_argument('--diagnostic-scenic-texture', action='store_true', help='Hold a bot-free Timberland base view for a settled texture comparison')
+    parser.add_argument('--diagnostic-near-world', type=int, choices=[256, 512], help='With the respawn clip, retain one Timberland ground material at this width')
+    parser.add_argument('--diagnostic-smooth-near', action='store_true', help='Ramp a selected ground material from its low mip after load and respawn')
     parser.add_argument('--original-memory', action='store_true', help='Constrain heap sizes for original-model emulator tests')
+    parser.add_argument('--probe-a10', action='store_true', help='Diagnostic only: request the a10 campaign map from the menu')
+    parser.add_argument('--probe-solo-bots', type=int, default=0, help='Diagnostic only: request Blood Gulch solo multiplayer with 1-15 bots')
+    parser.add_argument('--probe-solo-mode', choices=['slayer','ctf','oddball','king','race'], default='slayer')
+    parser.add_argument('--probe-pc-map', choices=['ui','bloodgulch'], help='Diagnostic only: validate an owner-supplied PC retail map on ARM')
+    parser.add_argument('--diagnostic-pc-ui', action='store_true', help='Experimental only: hand PC retail ui.map to the original engine')
+    pc_multiplayer_maps = ['beavercreek','bloodgulch','boardingaction','carousel','chillout',
+                           'damnation','dangercanyon','deathisland','gephyrophobia',
+                           'hangemhigh','icefields','infinity','longest','prisoner',
+                           'putput','ratrace','sidewinder','timberland','wizard']
+    parser.add_argument('--diagnostic-pc-play', choices=pc_multiplayer_maps, help='Experimental only: load PC retail UI then enter a PC multiplayer map')
+    parser.add_argument('--diagnostic-pc-mode', choices=['slayer','ctf','oddball','king','race'], default='slayer', help='Game variant for --diagnostic-pc-play')
+    parser.add_argument('--diagnostic-pc-bots', type=int, default=0, help='With --diagnostic-pc-play, use 1-15 local bot players')
+    parser.add_argument('--diagnostic-pc-fire', action='store_true', help='With --diagnostic-pc-play, exercise the original local weapon input path')
+    parser.add_argument('--diagnostic-postgame-return', action='store_true', help='With --diagnostic-pc-play, end a bot match and touch Return to Lobby')
+    parser.add_argument('--diagnostic-pc-arsenal', action='store_true', help='Experimental only: exercise map-owned PC weapons and Rocket Warthog through original input and render paths')
+    parser.add_argument('--diagnostic-pc-rocket-warthog', action='store_true', help='Experimental only: isolate the PC Rocket Warthog gunner firing fixture')
+    parser.add_argument('--diagnostic-pc-matrix', action='store_true', help='Experimental only: read map and mode from isolated sdmc:/halo-source/pc-matrix.txt for repeated smoke runs with two bots')
+    parser.add_argument('--diagnostic-pc-menu-keys', action='store_true', help='Experimental only: replay bounded menu inputs from isolated sdmc:/halo-source/menu-keys.txt')
+    parser.add_argument('--diagnostic-pc-campaign', choices=['a10'], help='Experimental only: load PC retail UI then request a PC campaign map')
+    parser.add_argument('--experimental-pc-runtime', action='store_true', help='Experimental only: enable explicit PC retail map choices; no forced map or capture')
+    parser.add_argument('--unified-ui', action='store_true', help='With a PC runtime or menu fixture, use the Xbox main menu and campaign alongside PC multiplayer maps')
     args = parser.parse_args()
-    if args.test_frames<0 or (args.diagnostics and not args.test_frames):
-        parser.error('diagnostics require a positive frame limit')
+    if args.release and (args.diagnostics or args.diagnostic_audio_trace or args.diagnostic_particle_profile):
+        parser.error('--release cannot be combined with debug instrumentation')
+    if args.unified_ui and not (args.experimental_pc_runtime or args.diagnostic_pc_menu_keys):
+        parser.error('--unified-ui requires --experimental-pc-runtime or --diagnostic-pc-menu-keys')
+    if args.diagnostic_pc_menu_keys and (args.diagnostic_pc_ui or args.diagnostic_pc_play or args.diagnostic_pc_campaign or args.experimental_pc_runtime or args.diagnostic_pc_matrix or args.diagnostic_pc_arsenal or args.diagnostic_pc_rocket_warthog or args.probe_pc_map or args.probe_a10 or args.probe_solo_bots or args.diagnostic_pc_bots or args.diagnostic_pc_fire or args.diagnostic_pc_mode != 'slayer' or args.test_frames):
+        parser.error('--diagnostic-pc-menu-keys owns its menu and input sequence')
+    if args.diagnostic_pc_matrix and (args.diagnostic_pc_ui or args.diagnostic_pc_play or args.diagnostic_pc_campaign or args.experimental_pc_runtime or args.diagnostic_pc_arsenal or args.diagnostic_pc_rocket_warthog or args.probe_pc_map or args.probe_a10 or args.probe_solo_bots or args.diagnostic_pc_bots or args.diagnostic_pc_fire or args.diagnostic_pc_mode != 'slayer' or args.test_frames):
+        parser.error('--diagnostic-pc-matrix owns its map, mode and two-bot match')
+    if args.diagnostic_pc_arsenal or args.diagnostic_pc_rocket_warthog:
+        if (args.diagnostic_pc_arsenal and args.diagnostic_pc_rocket_warthog) or args.diagnostic_pc_play or args.diagnostic_pc_ui or args.diagnostic_pc_campaign or args.experimental_pc_runtime or args.diagnostic_pc_bots or args.diagnostic_pc_fire or args.diagnostic_pc_mode != 'slayer':
+            parser.error('PC weapon and vehicle fixtures own their Blood Gulch match and cannot be combined with other PC runtime choices')
+        args.diagnostic_pc_play = 'bloodgulch'
+    if args.test_frames<0 or (args.diagnostics and not (args.test_frames or args.diagnostic_pc_play)) or (args.diagnostic_audio_trace and not (args.test_frames or args.diagnostic_pc_play or args.diagnostic_pc_menu_keys)):
+        parser.error('diagnostics require a positive frame limit or a PC play fixture for audio tracing')
+    if args.probe_a10 and args.test_frames:
+        parser.error('--probe-a10 uses the normal startup path; omit --test-frames')
+    if args.probe_solo_bots and (not 1 <= args.probe_solo_bots <= 15 or args.probe_a10 or args.test_frames):
+        parser.error('--probe-solo-bots requires 1-15 bots, no other map probe and no frame limit')
+    if args.probe_pc_map and (args.probe_a10 or args.probe_solo_bots or args.test_frames):
+        parser.error('--probe-pc-map cannot be combined with other map probes or a frame limit')
+    if (args.diagnostic_pc_ui or args.diagnostic_pc_play or args.diagnostic_pc_campaign) and (args.probe_pc_map or args.probe_a10 or args.probe_solo_bots or args.test_frames or sum(bool(x) for x in (args.diagnostic_pc_ui,args.diagnostic_pc_play,args.diagnostic_pc_campaign)) > 1):
+        parser.error('PC runtime diagnostics cannot be combined with other probes or a frame limit')
+    if (args.diagnostic_pc_mode != 'slayer' and not args.diagnostic_pc_play) or (args.diagnostic_pc_bots and (not args.diagnostic_pc_play or not 1 <= args.diagnostic_pc_bots <= 15)):
+        parser.error('PC mode and bot options require --diagnostic-pc-play; bot count must be 1-15')
+    if args.diagnostic_pc_fire and not args.diagnostic_pc_play:
+        parser.error('--diagnostic-pc-fire requires --diagnostic-pc-play')
+    if args.diagnostic_postgame_return and not args.diagnostic_pc_play:
+        parser.error('--diagnostic-postgame-return requires --diagnostic-pc-play')
+    if args.diagnostic_high_textures and not args.diagnostic_pc_play:
+        parser.error('--diagnostic-high-textures requires --diagnostic-pc-play')
+    if args.diagnostic_texture_clip and args.diagnostic_pc_play != 'timberland':
+        parser.error('--diagnostic-texture-clip requires --diagnostic-pc-play timberland')
+    if args.diagnostic_respawn_texture_clip and not args.diagnostic_pc_menu_keys:
+        parser.error('--diagnostic-respawn-texture-clip requires --diagnostic-pc-menu-keys')
+    if args.diagnostic_scenic_texture and (not args.diagnostic_pc_menu_keys or args.diagnostic_respawn_texture_clip):
+        parser.error('--diagnostic-scenic-texture requires --diagnostic-pc-menu-keys without the respawn clip')
+    if args.diagnostic_near_world and not (args.diagnostic_respawn_texture_clip or args.diagnostic_scenic_texture):
+        parser.error('--diagnostic-near-world requires a texture clip or scenic fixture')
+    if args.diagnostic_smooth_near and not args.diagnostic_near_world:
+        parser.error('--diagnostic-smooth-near requires --diagnostic-near-world')
+    if args.experimental_pc_runtime and (args.probe_pc_map or args.probe_a10 or args.probe_solo_bots or args.test_frames or args.diagnostic_pc_ui or args.diagnostic_pc_play or args.diagnostic_pc_campaign):
+        parser.error('--experimental-pc-runtime cannot be combined with diagnostics or probes')
     out = args.output.resolve(); out.mkdir(parents=True, exist_ok=True)
     for name in defaults:
         setattr(args, name, getattr(args, name).resolve())
@@ -76,14 +154,72 @@ def main():
                 digest.update(path.name.encode()); digest.update(path.read_bytes())
     for source in sources: digest.update(source.read_bytes())
     for shader in shaders.values(): digest.update(Path(shader['binary']).read_bytes())
+    # Runtime format/layout options must also match for checkpoints and UDS.
+    digest.update(bytes([bool(args.experimental_pc_runtime), bool(args.unified_ui), bool(args.release), bool(args.experimental_physics_15hz)]))
+    digest.update(str(args.experimental_render_packets).encode())
+    digest.update(bytes([args.experimental_collision_layout]))
+    digest.update(bytes([args.experimental_render_commands]))
+    digest.update(bytes([args.experimental_render_worker]))
     build_id = int(digest.hexdigest()[:8],16)
     defines = [f'-DHALO_N3DS_CHECKPOINT_BUILD=0x{build_id:08x}u','-DHALO_N3DS_CHECKPOINT_FEATURE=1',f'-DHALO_N3DS_MISSION_TICKS={args.test_frames}']
+    if args.experimental_physics_15hz: defines.append('-DHALO_N3DS_PHYSICS_15HZ=1')
+    if args.experimental_render_packets:
+        defines.append('-DHALO_N3DS_MODEL_PACKETS=1')
+        if args.experimental_render_packets in ('parallel','combined'): defines.append('-DHALO_N3DS_PACKET_PREPARE=1')
+        if args.experimental_render_packets in ('batch','combined'): defines.append('-DHALO_N3DS_CHARACTER_BATCH=1')
+    if args.experimental_collision_layout: defines.append('-DHALO_N3DS_COLLISION_LAYOUT=1')
+    if args.experimental_render_commands or args.experimental_render_worker: defines.append('-DHALO_N3DS_RENDER_COMMANDS=1')
+    if args.experimental_render_worker: defines.append('-DHALO_N3DS_RENDER_WORKER=1')
+    if args.release: defines.extend(['-DHALO_RELEASE=1','-DHALO_N3DS_STRIP_DIAGNOSTICS=1'])
     if args.diagnostics: defines.append('-DHALO_N3DS_RENDERER_TESTS=1')
+    if args.diagnostic_audio_trace: defines.append('-DHALO_N3DS_AUDIO_TRACE=1')
+    if args.diagnostic_particle_profile: defines.append('-DHALO_N3DS_PARTICLE_PROFILE=1')
+    if args.diagnostic_high_textures: defines.append('-DHALO_N3DS_HIGH_TEXTURE_TEST=1')
+    if args.diagnostic_texture_clip: defines.append('-DHALO_N3DS_TEXTURE_CLIP=1')
+    if args.diagnostic_respawn_texture_clip: defines.append('-DHALO_N3DS_TEXTURE_CLIP_DEATH=1')
+    if args.diagnostic_scenic_texture: defines.append('-DHALO_N3DS_SCENIC_TEXTURE=1')
+    if args.diagnostic_near_world: defines.append(f'-DHALO_N3DS_NEAR_WORLD_WIDTH={args.diagnostic_near_world}')
+    if args.diagnostic_smooth_near: defines.append('-DHALO_N3DS_SMOOTH_NEAR_TEXTURE=1')
     if args.original_memory: defines.append('-DHALO_N3DS_LOW_MEMORY_TEST=1')
+    if args.probe_a10: defines.append('-DHALO_N3DS_PROBE_A10=1')
+    if args.probe_solo_bots:
+        defines.append(f'-DHALO_N3DS_BOT_TEST_COUNT={args.probe_solo_bots}')
+        mode_index=['slayer','ctf','oddball','king','race'].index(args.probe_solo_mode)
+        defines.append(f'-DHALO_N3DS_BOT_TEST_MODE={mode_index}')
+    if args.probe_pc_map:
+        defines.append(f'-DHALO_N3DS_PC_PROBE_MAP={0 if args.probe_pc_map == "ui" else 1}')
+    if args.diagnostic_pc_ui or args.diagnostic_pc_play or args.diagnostic_pc_campaign or args.experimental_pc_runtime or args.diagnostic_pc_matrix or args.diagnostic_pc_menu_keys:
+        defines.append('-DHALO_N3DS_EXPERIMENTAL_PC_UI=1')
+    if args.diagnostic_pc_matrix:
+        defines.extend(['-DHALO_N3DS_EXPERIMENTAL_PC_MATRIX=1','-DHALO_N3DS_BOT_TEST_COUNT=2'])
+    if args.experimental_pc_runtime or args.diagnostic_pc_menu_keys:
+        defines.append('-DHALO_N3DS_EXPERIMENTAL_PC_ALL_MAPS=1')
+        defines.append('-DHALO_N3DS_PC_LOCAL_MENU=1')
+    if args.diagnostic_pc_menu_keys:
+        defines.append('-DHALO_N3DS_EXPERIMENTAL_PC_MENU_KEYS=1')
+    if args.unified_ui:
+        defines.append('-DHALO_N3DS_UNIFIED_UI=1')
+    if args.diagnostic_pc_play:
+        defines.append(f'-DHALO_N3DS_EXPERIMENTAL_PC_MAP_ID={pc_multiplayer_maps.index(args.diagnostic_pc_play)}')
+        defines.append(f'-DHALO_N3DS_EXPERIMENTAL_PC_MODE={ ["slayer","ctf","oddball","king","race"].index(args.diagnostic_pc_mode) }')
+        if args.diagnostic_pc_bots:
+            defines.append(f'-DHALO_N3DS_BOT_TEST_COUNT={args.diagnostic_pc_bots}')
+        if args.diagnostic_pc_fire:
+            defines.append('-DHALO_N3DS_EXPERIMENTAL_PC_FIRE=1')
+        if args.diagnostic_postgame_return:
+            defines.extend(['-DHALO_N3DS_POSTGAME_RETURN_TEST=1','-DHALO_N3DS_PC_LOCAL_MENU=1'])
+        if args.diagnostic_pc_arsenal or args.diagnostic_pc_rocket_warthog:
+            defines.append('-DHALO_N3DS_EXPERIMENTAL_PC_ARSENAL=1')
+        if args.diagnostic_pc_rocket_warthog:
+            defines.append('-DHALO_N3DS_EXPERIMENTAL_PC_VEHICLE_ONLY=1')
+    if args.diagnostic_pc_campaign:
+        defines.append('-DHALO_N3DS_EXPERIMENTAL_PC_A10=1')
     native = [str(gcc),*COMMON,'-D__3DS__','-I',str(args.libctru/'include'),'-I',str(args.citro3d/'include')]
+    if args.release: native.append('-DNDEBUG')
     game = [args.clang,'--target=arm-none-eabi','-isystem',str(args.devkitarm/'arm-none-eabi/include'),
             *COMMON,'-std=gnu99','-D__STRICT_ANSI__','-DHALO_N3DS','-fsigned-char','-fshort-wchar',
-            '-fms-extensions','-fcommon','-ffp-contract=off','-Werror=implicit-function-declaration',
+            '-fms-extensions','-fcommon','-ffp-contract=off','-fno-builtin-wcslen',
+            '-Werror=implicit-function-declaration',
             '-Werror=incompatible-pointer-types','-Wno-multichar','-Wno-pragma-pack',
             '-Wno-ignored-attributes','-Wno-duplicate-decl-specifier']
     for folder in manifest['include_dirs']: game+=['-I',str(ROOT/folder)]
@@ -130,10 +266,37 @@ def main():
     if any(line.split()[-1] not in allowed for line in undefined.splitlines()): raise RuntimeError('Unresolved runtime symbols:\n'+undefined)
     subprocess.run([args.packer,str(elf),str(binary)],check=True)
     verify_linked(shaders,elf,[],out/'shader-verification.json')
-    report={'binary':str(binary),'sha256':sha(binary),'test_frames':args.test_frames,'diagnostics':args.diagnostics,
+    report={'binary':str(binary),'sha256':sha(binary),'test_frames':args.test_frames,'diagnostics':args.diagnostics,'release':args.release,'physics_15hz':args.experimental_physics_15hz,
+            'experimental_render_packets':args.experimental_render_packets,'experimental_collision_layout':args.experimental_collision_layout,
+            'experimental_render_commands':args.experimental_render_commands,
+            'experimental_render_worker':args.experimental_render_worker,
+            'probe_a10':args.probe_a10,
+            'probe_solo_bots':args.probe_solo_bots,'probe_solo_mode':args.probe_solo_mode,
+            'probe_pc_map':args.probe_pc_map,
+            'diagnostic_pc_ui':args.diagnostic_pc_ui,
+            'diagnostic_pc_play':args.diagnostic_pc_play,
+            'diagnostic_pc_mode':args.diagnostic_pc_mode,
+            'diagnostic_pc_bots':args.diagnostic_pc_bots,
+            'diagnostic_pc_fire':args.diagnostic_pc_fire,
+            'diagnostic_postgame_return':args.diagnostic_postgame_return,
+            'diagnostic_pc_arsenal':args.diagnostic_pc_arsenal,
+            'diagnostic_pc_rocket_warthog':args.diagnostic_pc_rocket_warthog,
+            'diagnostic_pc_matrix':args.diagnostic_pc_matrix,
+            'diagnostic_pc_menu_keys':args.diagnostic_pc_menu_keys,
+            'diagnostic_pc_campaign':args.diagnostic_pc_campaign,
+            'experimental_pc_runtime':args.experimental_pc_runtime,
+            'unified_ui':args.unified_ui,
             'checkpoint_identity':build_id,'commands':commands,'source_sha256':{e['source']:sha(ROOT/e['source']) for e in entries},
             'linked_inputs':{str(p):sha(p) for p in [*objects,archive]}}
     (out/'boot-build.json').write_text(json.dumps(report,indent=2))
+    if args.experimental_pc_runtime:
+        manifest_name='unified-runtime.json' if args.unified_ui else 'pc-runtime.json'
+        (out/manifest_name).write_text(json.dumps({
+            'Runtime':'Halo3DS-Unified' if args.unified_ui else 'Halo3DS-PC',
+            'MapFormat':'HaloCE-PC-retail-v7',
+            'LauncherSha256':report['sha256'], 'BuildCheckpoint':build_id,
+            'Experimental':True
+        },indent=2)+'\n',encoding='utf-8')
     print(f'Built {binary}\nSHA256 {report["sha256"]}')
 
 

@@ -431,6 +431,8 @@ void n3ds_render_objects_with_environment(void (*environment)(const void *),cons
             if(environment) {
 #ifdef HALO_N3DS
                 extern void n3ds_gpu_model_batch_flush(void);
+                extern void n3ds_model_packets_flush(void);
+                n3ds_model_packets_flush();
                 n3ds_gpu_model_batch_flush();
 #endif
                 environment(context);

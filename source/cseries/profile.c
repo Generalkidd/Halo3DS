@@ -268,6 +268,7 @@ symbols in this file:
 /* ---------- headers */
 
 #include "cseries.h"
+#define HALO_PROFILE_IMPLEMENTATION
 #include "profile.h"
 
 #include "math/real_math.h"
@@ -1078,7 +1079,9 @@ void profile_initialize(
 		profile_globals.sections[section_index++]->section_index = NONE;
 	}
 
-	profile_global_enable = TRUE;
+	#ifndef HALO_N3DS_STRIP_DIAGNOSTICS
+    profile_global_enable = TRUE;
+#endif
 	profile_globals.section_count = 0;
 	profile_globals.stack_depth = 0;
 	profile_globals.initialization_pending = TRUE;

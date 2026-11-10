@@ -1,9 +1,11 @@
+/* New3DS integration additions by Kevin Boggs. */
 /* Original director/observer camera through the established opaque BSP backend.
  * Original object/weapon submission is connected; HUD and full shading remain. */
 #include "cseries.h"
 #include "scenario/scenario.h"
 #include "structures/structure_bsp_definitions.h"
 #include "tag_files/tag_groups.h"
+#include "scenario/sky_definitions.h"
 #include "rasterizer/rasterizer.h"
 #include "rasterizer/rasterizer_geometry.h"
 #include "rasterizer/rasterizer_transparent_geometry.h"
@@ -12,6 +14,7 @@
 #include "engine_cache.h"
 #include "cache_reader.h"
 #include "engine_renderer.h"
+#include "engine_widgets.h"
 #include "engine_models.h"
 #include "engine_hud.h"
 #include "engine_transparent.h"
@@ -24,6 +27,16 @@
 #include "interface/first_person_weapons.h"
 #include "interface/ui_widget.h"
 #include "cache/texture_cache.h"
+#include "cache_file_format.h"
+#include "effects/particles.h"
+#include "bitmaps/bitmap_group.h"
+#include "objects/objects.h"
+#include "game/players.h"
+#include "game/game.h"
+#include "items/weapons.h"
+#include "physics/collisions.h"
+#include "engine_input.h"
+#include "engine_fog_policy.inl"
 void set_window_camera_values(struct render_window *window,const struct observer_result *observer);
 void n3ds_log(const char *message);
 void texture_cache_flush(void);
@@ -33,6 +46,8 @@ void build_sprite_prepare_for_window(void);
 void render_particles(void);
 void particle_systems_render(void);
 void render_contrails_normal(void);
+void n3ds_decals_draw_visible(void);
+boolean rasterizer_set_texture_direct(short stage,long group_index,short bitmap_index);
 void n3ds_hud_draw_screen(void);
 void n3ds_menu_draw_screen(void);
 void n3ds_cinematic_draw_screen(void);
@@ -54,20 +69,286 @@ void n3ds_object_profile(unsigned int stage,long long ticks)
 struct mission_batch {
     struct structure_material *material; const struct shader *shader;short lightmap_index;
     real_point3d center;real_vector3d extent;
+    unsigned char reject_plane[2];
     struct triangle_buffer water_triangles;
     unsigned long clusters[MAXIMUM_CLUSTERS_PER_STRUCTURE/32];int clusters_valid;
 };
 static unsigned int batch_visible,batch_culled;
+/* PC flamethrower projectiles have neither model nor attachment. Its authored
+ * jet effect only flashes at the muzzle, leaving the simulated stream invisible.
+ * Place its map-owned flame sprite along the live projectile path. No extra
+ * simulation objects or bitmap allocations are created. */
+static struct native_widget_vertex flame_vertices[64*6];
+static unsigned int flame_tag_generation;
+static long flame_bitmap=NONE;
+struct flame_sprite {short image;real_rectangle2d uv;};
+static struct flame_sprite flame_sprites[4];
+static unsigned int flame_sprite_count;
+enum { FLAME_EMISSIONS=20 };
+struct flame_emission {
+    real_point3d origin;
+    real_vector3d direction;
+    float distance;
+    unsigned int frame;
+    int valid;
+};
+static struct flame_emission flame_emissions[FLAME_EMISSIONS];
+static unsigned int flame_last_emitted=~0u;
+/* Kevin Boggs: flame_stream_flush - New3DS integration. */
+static void flame_stream_flush(unsigned int count,short image)
+{
+    if(count && rasterizer_set_texture_direct(0,flame_bitmap,image))
+        n3ds_gpu_effect_draw(flame_vertices,count,NATIVE_BLEND_ADD,0,6,0);
+}
+/* Kevin Boggs: resolve the owner's map bitmap after each tag generation change. */
+/* Kevin Boggs: flame_stream_lookup - New3DS integration. */
+static void flame_stream_lookup(void)
+{
+    unsigned int generation=n3ds_engine_tag_generation();
+    if(flame_tag_generation==generation) return;
+    flame_tag_generation=generation;flame_bitmap=NONE;flame_sprite_count=0;
+    memset(flame_emissions,0,sizeof(flame_emissions));flame_last_emitted=~0u;
+    const struct n3ds_cache_view *view=n3ds_engine_cache_view(0);
+    if(!view || !view->tag_header || !view->instances) return;
+    for(long i=0;i<view->tag_header->tag_count;++i) {
+        const struct cache_file_tag_instance *tag=view->instances+i;
+        if(tag->group_tag!=PARTICLE_TAG || !tag->name ||
+           strcmp(tag->name,"weapons\\flamethrower\\effects\\flash h flame")) continue;
+        const struct particle_definition *particle=particle_definition_get(tag->tag_index);
+        if(particle) {
+            flame_bitmap=particle->bitmap.index;
+            const struct bitmap_group *group=bitmap_group_get(flame_bitmap);
+            if(group && particle->first_sequence_index>=0 &&
+               particle->initial_sequence_count>0) {
+                for(int sequence=particle->first_sequence_index;
+                    sequence<particle->first_sequence_index+particle->initial_sequence_count &&
+                    sequence<group->sequences.count && flame_sprite_count<NUMBEROF(flame_sprites);
+                    ++sequence) {
+                    const struct bitmap_group_sequence *entry=TAG_BLOCK_GET_ELEMENT(
+                        &group->sequences,sequence,struct bitmap_group_sequence);
+                    if(!entry || entry->sprites.count<=0) continue;
+                    const struct bitmap_group_sprite *sprite=TAG_BLOCK_GET_ELEMENT(
+                        &entry->sprites,0,struct bitmap_group_sprite);
+                    if(!sprite || sprite->bitmap_index<0 ||
+                       sprite->bitmap_index>=group->bitmaps.count) continue;
+                    flame_sprites[flame_sprite_count].image=sprite->bitmap_index;
+                    flame_sprites[flame_sprite_count].uv=sprite->bounds;
+                    ++flame_sprite_count;
+                }
+            }
+        }
+        break;
+    }
+}
+/* Kevin Boggs: flame_owner_fire_age - New3DS integration. */
+static long flame_owner_fire_age(long unit_index)
+{
+    const struct unit_datum *unit=unit_index==NONE?NULL:unit_try_and_get(unit_index);
+    if(!unit || unit->unit.current_weapon_index<0 ||
+       unit->unit.current_weapon_index>=MAXIMUM_WEAPONS_PER_UNIT) return NONE;
+    long weapon_index=unit->unit.weapon_object_indices[unit->unit.current_weapon_index];
+    const struct weapon_datum *weapon=weapon_index==NONE?NULL:weapon_try_and_get(weapon_index);
+    const char *name=weapon?tag_get_name(weapon->definition_index):NULL;
+    return name && !strcmp(name,"weapons\\flamethrower\\flamethrower")?
+        game_time_get()-weapon->weapon.game_time_last_fired:NONE;
+}
+/* Keep near-plane billboards and old turn samples from splashing across the
+ * opposite edge of the first-person view. Samples within the view still keep
+ * their original world position, so the jet bends naturally on a turn. */
+static int flame_sprite_in_view(const real_point3d *center,float radius,
+    const real_vector3d *right)
+{
+    real_vector3d delta;
+    vector_from_points3d(&render.camera.position,center,&delta);
+    float depth=dot_product3d(&delta,&render.camera.forward);
+    float side=dot_product3d(&delta,right);
+    float height=dot_product3d(&delta,&render.camera.up);
+    if(depth<radius+0.15f) return 0;
+    /* Halo's top display is wider than it is high. Leave a narrow guard band
+     * for the sprite radius while avoiding out-of-frustum additive blooms. */
+    return fabsf(side)<depth*.90f+radius*.25f &&
+        fabsf(height)<depth*.55f+radius*.25f;
+}
+/* Kevin Boggs: display the original simulated flamethrower projectiles as a visible jet. */
+/* Kevin Boggs: flame_stream_draw - New3DS integration. */
+static void flame_stream_draw(void)
+{
+    flame_stream_lookup();
+    if(flame_bitmap==NONE || !flame_sprite_count) return;
+    real_vector3d right;
+    cross_product3d(&render.camera.forward,&render.camera.up,&right);
+    if(normalize3d(&right)<=0) return;
+    struct object_iterator iterator;
+    object_iterator_new(&iterator,_object_mask_projectile,0);
+    unsigned int used=0;
+    short image=NONE;
+    unsigned int flame_count=0,local_projectiles=0,remote_projectiles=0;
+    long player=local_player_get_player_index(0);
+    long local_unit=player==NONE?NONE:player_get(player)->unit_index;
+    long local_fire_age=flame_owner_fire_age(local_unit);
+    int local_firing=local_fire_age!=NONE && local_fire_age>=0 && local_fire_age<=2;
+    static const unsigned char order[6]={0,1,2,0,2,3};
+    while(object_iterator_next(&iterator)) {
+        const struct object_datum *projectile=object_get(iterator.index);
+        const char *name=tag_get_name(projectile->definition_index);
+        if(!name || strcmp(name,"weapons\\flamethrower\\flame")) continue;
+        ++flame_count;
+        long owner_index=projectile->object.owner_object_index;
+        const struct unit_datum *owner=owner_index==NONE?NULL:unit_try_and_get(owner_index);
+        long fire_age=flame_owner_fire_age(owner_index);
+        if(!owner || fire_age==NONE || fire_age<0 || fire_age>18) continue;
+        real_vector3d travel;
+        vector_from_points3d(&owner->object.position,&projectile->object.position,&travel);
+        /* The gameplay projectile may survive for seconds and travel up to
+         * 16 m. Its visible flame belongs to the short, active firing jet. */
+        if(dot_product3d(&travel,&travel)>25.f) continue;
+        if(owner_index==local_unit) {
+            ++local_projectiles;
+            /* The simulated projectile starts at the world weapon origin,
+             * which is displaced from the first-person nozzle on screen. */
+            continue;
+        }
+        const float radius=.14f;
+        if(!flame_sprite_in_view(&projectile->object.position,radius,&right))continue;
+        ++remote_projectiles;
+        const struct flame_sprite *sprite=&flame_sprites[(unsigned int)iterator.index%flame_sprite_count];
+        if(used && (image!=sprite->image || used+6>NUMBEROF(flame_vertices))) {
+            flame_stream_flush(used,image);used=0;
+        }
+        image=sprite->image;
+        for(unsigned int corner=0;corner<6;++corner) {
+            struct native_widget_vertex *v=flame_vertices+used+corner;
+            int index=order[corner];
+            float x=(index==0 || index==3)?-radius:radius;
+            float y=(index<2)?-radius:radius;
+            for(int axis=0;axis<3;++axis)
+                v->position[axis]=projectile->object.position.n[axis]+right.n[axis]*x+render.camera.up.n[axis]*y;
+            v->color[0]=1.f;v->color[1]=.70f;v->color[2]=.08f;
+            v->color[3]=owner_index==local_unit?.25f:.14f;
+            /* Rotate the authored flame sprite counterclockwise in texture
+             * space: its round ignition edge is on the atlas's left. */
+            v->uv[0]=index<2?sprite->uv.x0:sprite->uv.x1;
+            v->uv[1]=(index==0 || index==3)?sprite->uv.y0:sprite->uv.y1;
+        }
+        used+=6;
+    }
+    flame_stream_flush(used,image);
+    /* Emit at the animated first-person "spawn fire" marker on the nozzle.
+     * The world weapon's "primary trigger" belongs to the simulated shot.
+     * The aim point comes from the camera ray, so the visible jet converges on the same
+     * impact point as the reticle while preserving the real projectile logic. */
+    if(local_firing && local_projectiles && flame_last_emitted!=render.frame_index) {
+        const struct unit_datum *unit=unit_try_and_get(local_unit);
+        long weapon_index=unit && unit->unit.current_weapon_index>=0 &&
+            unit->unit.current_weapon_index<MAXIMUM_WEAPONS_PER_UNIT?
+            unit->unit.weapon_object_indices[unit->unit.current_weapon_index]:NONE;
+        struct object_marker marker;
+        short marker_count=weapon_index==NONE?0:first_person_weapon_get_marker_by_name_render(
+            weapon_index,"spawn fire",&marker,1);
+        real_point3d muzzle;
+        if(marker_count>0) muzzle=marker.matrix.position;
+        else {
+            /* A few map variants omit the marker; keep their effect aligned
+             * with the visible weapon until a marker is available. */
+            muzzle=render.camera.position;
+            for(int axis=0;axis<3;++axis)
+                muzzle.n[axis]+=render.camera.forward.n[axis]*.65f+
+                    right.n[axis]*.22f-render.camera.up.n[axis]*.16f;
+        }
+        real_vector3d aim=render.camera.forward;
+        for(int axis=0;axis<3;++axis)aim.n[axis]*=16.f;
+        struct collision_result hit;
+        real_point3d target;
+        if(collision_test_vector(_collision_test_for_line_of_sight_flags,
+            &render.camera.position,&aim,local_unit,&hit)) target=hit.point;
+        else {target=render.camera.position;
+            for(int axis=0;axis<3;++axis)target.n[axis]+=aim.n[axis];}
+        real_vector3d direction;
+        vector_from_points3d(&muzzle,&target,&direction);
+        float distance=normalize3d(&direction);
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_ARSENAL
+        if(render.frame_index%30==0){char message[192];
+            snprintf(message,sizeof(message),
+                "FLAME NOZZLE: marker=%d muzzle=%.2f,%.2f,%.2f target=%.2f,%.2f,%.2f distance=%.2f",
+                marker_count,muzzle.x,muzzle.y,muzzle.z,target.x,target.y,target.z,distance);
+            n3ds_log(message);}
+#endif
+        if(distance>0) {
+            struct flame_emission *sample=flame_emissions+render.frame_index%FLAME_EMISSIONS;
+            sample->origin=muzzle;
+            sample->direction=direction;sample->distance=distance;
+            sample->frame=render.frame_index;sample->valid=1;
+            flame_last_emitted=render.frame_index;
+        }
+    }
+    used=0;image=NONE;
+    for(unsigned int slot=0;slot<FLAME_EMISSIONS;++slot) {
+        const struct flame_emission *sample=flame_emissions+slot;
+        unsigned int age=render.frame_index-sample->frame;
+        if(!sample->valid || age>=FLAME_EMISSIONS)continue;
+        const struct flame_sprite *sprite=&flame_sprites[slot%flame_sprite_count];
+        if(used && (image!=sprite->image || used+6>NUMBEROF(flame_vertices))) {
+            flame_stream_flush(used,image);used=0;
+        }
+        image=sprite->image;
+        real_point3d center=sample->origin;
+        float travel=fminf(sample->distance,.4f+.18f*age);
+        for(int axis=0;axis<3;++axis)
+            center.n[axis]+=sample->direction.n[axis]*travel;
+        /* Twenty 30 Hz frames is a brief jet, not an endless beam. A modest
+         * downward acceleration makes spent flame visibly fall before fade. */
+        float seconds=(float)age/30.f;
+        center.z-=.5f*4.5f*seconds*seconds;
+        float fraction=(float)age/FLAME_EMISSIONS;
+        float radius=.25f+.15f*fraction;
+        float opacity=.40f*(1.f-fraction);
+        if(!flame_sprite_in_view(&center,radius,&right))continue;
+        for(unsigned int corner=0;corner<6;++corner) {
+            struct native_widget_vertex *v=flame_vertices+used+corner;
+            int index=order[corner];
+            float x=(index==0 || index==3)?-radius:radius;
+            float y=(index<2)?-radius:radius;
+            for(int axis=0;axis<3;++axis)
+                v->position[axis]=center.n[axis]+right.n[axis]*x+render.camera.up.n[axis]*y;
+            v->color[0]=1.f;v->color[1]=.70f;v->color[2]=.08f;v->color[3]=opacity;
+            v->uv[0]=index<2?sprite->uv.x0:sprite->uv.x1;
+            v->uv[1]=(index==0 || index==3)?sprite->uv.y0:sprite->uv.y1;
+        }
+        used+=6;
+    }
+    flame_stream_flush(used,image);
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_ARSENAL
+    if(flame_count && render.frame_index%15==0) {
+        char message[128];
+        snprintf(message,sizeof(message),"FLAME RAY: live=%u local_fire=%d local=%u remote=%u time=%ld",
+            flame_count,local_firing,local_projectiles,remote_projectiles,game_time_get());
+        n3ds_log(message);
+    }
+#endif
+}
 /* A box is outside only when its nearest point is beyond one side plane.
  * The per-eye rasterizer frustum already includes the stereo projection shift.
  * Large boxes spanning the frustum are retained; no centroid-only rejection. */
-static int batch_outside_plane(const struct mission_batch *batch,const struct render_frustum *frustum)
+/* Kevin Boggs: batch_plane_rejects */
+static int batch_plane_rejects(const struct mission_batch *batch,const real_plane3d *p,const real_vector3d *absolute_normal)
 {
-    for(int plane=0;plane<4;++plane) {
-        const real_plane3d *p=frustum->world_planes+plane;
-        real distance=dot_product3d(&p->n,(const real_vector3d *)&batch->center)-p->d;
-        real radius=fabsf(p->n.i)*batch->extent.i+fabsf(p->n.j)*batch->extent.j+fabsf(p->n.k)*batch->extent.k;
-        if(distance-radius>.01f) return plane;
+    real distance=dot_product3d(&p->n,(const real_vector3d *)&batch->center)-p->d;
+    real radius=absolute_normal->i*batch->extent.i+absolute_normal->j*batch->extent.j+absolute_normal->k*batch->extent.k;
+    return distance-radius>.01f;
+}
+static int batch_outside_plane(struct mission_batch *batch,const struct render_frustum *frustum,
+                               const real_vector3d absolute_normals[6],unsigned int eye)
+{
+    /* The previous rejection is only an ordering hint. Retest against this
+     * eye's current frustum, including after teleport, BSP change or camera cut. */
+    unsigned int hint=batch->reject_plane[eye];
+    if(hint<6 && hint!=4 && batch_plane_rejects(batch,frustum->world_planes+hint,absolute_normals+hint))return hint;
+    for(unsigned int plane=0;plane<6;++plane) {
+        if(plane==4 || plane==hint)continue;
+        if(batch_plane_rejects(batch,frustum->world_planes+plane,absolute_normals+plane)) {
+            batch->reject_plane[eye]=(unsigned char)plane;
+            return plane;
+        }
     }
     return NONE;
 }
@@ -101,12 +382,19 @@ static long long mission_environment_ticks;
 static void draw_mission_environment(const void *context)
 {
     const struct rasterizer_window_begin_parameters *window=context;
+    real_vector3d absolute_normals[6];
+    unsigned int eye=n3ds_gpu_stereo_view();
+    for(unsigned int plane=0;plane<6;++plane) {
+        absolute_normals[plane].i=fabsf(window->frustum.world_planes[plane].n.i);
+        absolute_normals[plane].j=fabsf(window->frustum.world_planes[plane].n.j);
+        absolute_normals[plane].k=fabsf(window->frustum.world_planes[plane].n.k);
+    }
     long long start=n3ds_engine_ticks();
     rasterizer_environment_diffuse_textures_begin();
     for(long b=0;b<count;++b) {
         struct structure_material *m=batches[b].material;
         if(!batch_cluster_visible(batches+b)) {++batch_culled;continue;}
-        int outside=batch_outside_plane(batches+b,&window->frustum);
+        int outside=batch_outside_plane(batches+b,&window->frustum,absolute_normals,eye);
         if(outside!=NONE) {
             ++batch_culled;
             if(native_visibility_verify && render.frame_index%300==0) {
@@ -174,6 +462,7 @@ static int prepare(void)
             CHECK(count<batch_capacity && m->surface_count>0 && m->first_surface_index>=0);
             CHECK(m->surface_count<=bsp->surfaces.count && m->first_surface_index<=bsp->surfaces.count-m->surface_count);
             struct mission_batch *batch=batches+count++;
+            batch->reject_plane[0]=batch->reject_plane[1]=0;
             batch->material=m;batch->shader=tag_get(group,m->shader.index);batch->lightmap_index=lightmap->bitmap_index;
             memset(&batch->water_triangles,0,sizeof(batch->water_triangles));
             if(group=='swat') {
@@ -219,6 +508,9 @@ int n3ds_engine_mission_render(long unit_index,long time)
         n3ds_log("NATIVE LIVE PACING: original30Hz loop cap; GPU queue wait retained, extra VBlank wait disabled");
     }
     long long stamp[7];static long long profile[6],service_profile[9],wait_profile;static unsigned int profile_frames;
+#ifdef HALO_N3DS_AUDIO_TRACE
+    static long long prep_detail[3];
+#endif
     stamp[0]=n3ds_engine_ticks();
     struct rasterizer_frame_begin_parameters frame={0};
     struct rasterizer_window_begin_parameters window={0};
@@ -289,6 +581,9 @@ int n3ds_engine_mission_render(long unit_index,long time)
     n3ds_gpu_flashlight_set(unit && !cinematic_in_progress()?unit->unit.integrated_light_power:0,
         center_render.position.n,center_render.forward.n);
     render.local_player_index=0; render.window_index=0;
+#ifdef HALO_N3DS_AUDIO_TRACE
+    long long prep_gpu_start=n3ds_engine_ticks();
+#endif
     n3ds_gpu_frame_sync(0);
     FRONTEND_STAGE("frame-begin");
     n3ds_gpu_world_budget(!main_menu_is_active());
@@ -299,6 +594,9 @@ int n3ds_engine_mission_render(long unit_index,long time)
     rasterizer_frame_begin(&frame);
     n3ds_gpu_frame_sync(1);
     rasterizer_windows_begin();
+#ifdef HALO_N3DS_AUDIO_TRACE
+    prep_detail[0]+=n3ds_engine_ticks()-prep_gpu_start;
+#endif
     long long services[9];n3ds_engine_frame_service_ticks(services);n3ds_engine_texture_idle_ticks(services+3);
     for(int i=0;i<9;++i) service_profile[i]+=services[i];
     wait_profile+=n3ds_gpu_frame_wait_ticks();
@@ -314,6 +612,10 @@ int n3ds_engine_mission_render(long unit_index,long time)
         for(int axis=0;axis<3;++axis) window.camera.position.n[axis]+=right.n[axis]*offset;
         ++render.scene_index;
         n3ds_gpu_stereo_eye(eye,offset);
+#ifdef HALO_N3DS_AUDIO_TRACE
+        long long prep_visibility_start=n3ds_engine_ticks();
+#endif
+        structure_visibility_find_camera(&render.camera);
         /* Original visibility/projection must agree with the off-axis GPU view. */
         real_rectangle2d bounds;
         bounds.y0=-1;bounds.y1=1;
@@ -323,7 +625,14 @@ int n3ds_engine_mission_render(long unit_index,long time)
         shift=-offset/(1.5f*tanf(window.camera.vertical_field_of_view*.5f)*(400.f/240.f));
         bounds.x0=-1+shift;bounds.x1=1+shift;
         render_camera_build_frustum(&window.camera,stereo?&bounds:NULL,&window.frustum,TRUE);
-        structure_visibility_find_camera(&render.camera);n3ds_structure_visibility_compute();
+#ifdef HALO_N3DS_AUDIO_TRACE
+        prep_detail[1]+=n3ds_engine_ticks()-prep_visibility_start;
+        prep_visibility_start=n3ds_engine_ticks();
+#endif
+        n3ds_structure_visibility_compute();
+#ifdef HALO_N3DS_AUDIO_TRACE
+        prep_detail[2]+=n3ds_engine_ticks()-prep_visibility_start;
+#endif
 #ifdef HALO_N3DS_ARCHIVE_VERIFY
         if(render.frame_index%30==0) CHECK(batch_visibility_test());
 #endif
@@ -341,6 +650,7 @@ int n3ds_engine_mission_render(long unit_index,long time)
      * glow movement. The second eye reuses the first eye's updated state. */
     render.time_delta_since_tick_sec=eye==(stereo?1:0)?frame.dt:0.f;
     render_sky();
+
     n3ds_object_profile(0,n3ds_engine_ticks()-object_stamp);object_stamp=n3ds_engine_ticks();
     if(eye==(stereo?1:0)) {
         struct render_camera eye_camera=render.camera;
@@ -356,10 +666,12 @@ int n3ds_engine_mission_render(long unit_index,long time)
     n3ds_render_objects_with_environment(draw_mission_environment,&window);
     stamp[3]=n3ds_engine_ticks();stamp[2]=stamp[3]-mission_environment_ticks;
     long long effect_stamp=stamp[3],effect_next;
+    n3ds_decals_draw_visible();
     render_particles();
     effect_next=n3ds_engine_ticks();effect_profile[0]+=effect_next-effect_stamp;effect_stamp=effect_next;
     particle_systems_render();
     effect_next=n3ds_engine_ticks();effect_profile[1]+=effect_next-effect_stamp;effect_stamp=effect_next;
+    flame_stream_draw();
     render_contrails_normal();
     effect_next=n3ds_engine_ticks();effect_profile[2]+=effect_next-effect_stamp;effect_stamp=effect_next;
     n3ds_transparent_draw_queued();
@@ -385,6 +697,7 @@ int n3ds_engine_mission_render(long unit_index,long time)
     stamp[6]=n3ds_engine_ticks();
     } /* eye views */
     render.time_delta_since_tick_sec=frame.dt;
+#ifndef HALO_N3DS_STRIP_DIAGNOSTICS
     profile[1]+=view_cost[0];profile[2]+=view_cost[1];profile[3]+=view_cost[2];
     profile[4]+=stamp[5]-stamp[4];profile[5]+=stamp[6]-stamp[5];
     profile[0]+=stamp[4]-stamp[0]-view_cost[0]-view_cost[1]-view_cost[2];
@@ -425,7 +738,14 @@ int n3ds_engine_mission_render(long unit_index,long time)
         snprintf(message,sizeof(message),"TEXTURE PIPELINE PROFILE: time=%ld read_ms=%.3f decode_ms=%.3f tile_ms=%.3f upload_ms=%.3f",time,service_profile[5]*scale,service_profile[6]*scale,service_profile[7]*scale,service_profile[8]*scale);
         n3ds_log(message);memset(service_profile,0,sizeof(service_profile));
         snprintf(message,sizeof(message),"FRAME BEGIN PROFILE: time=%ld wait_ms=%.3f other_prepare_ms=%.3f",time,wait_profile*scale,(profile[0]-wait_profile)*scale);
-        n3ds_log(message);memset(profile,0,sizeof(profile));profile_frames=0;wait_profile=0;
+        n3ds_log(message);
+#ifdef HALO_N3DS_AUDIO_TRACE
+        snprintf(message,sizeof(message),"FRAME PREP DETAIL: time=%ld gpu_begin_ms=%.3f find_camera_ms=%.3f visibility_ms=%.3f remainder_ms=%.3f",
+            time,prep_detail[0]*scale,prep_detail[1]*scale,prep_detail[2]*scale,
+            (profile[0]-prep_detail[0]-prep_detail[1]-prep_detail[2])*scale);
+        n3ds_log(message);memset(prep_detail,0,sizeof(prep_detail));
+#endif
+        memset(profile,0,sizeof(profile));profile_frames=0;wait_profile=0;
     }
     if(time==1 || time%30==0) {
         char message[256];
@@ -446,5 +766,6 @@ int n3ds_engine_mission_render(long unit_index,long time)
             window.camera.up.i,window.camera.up.j,window.camera.up.k,window.camera.vertical_field_of_view);
         n3ds_log(message);
     }
+#endif
     return 0;
 }
