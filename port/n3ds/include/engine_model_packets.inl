@@ -84,8 +84,15 @@ static struct model_packet_pose *model_packet_copy_pose(void *memory,
         source->skinning.node_matrix_count*sizeof(*pose->nodes));
     pose->parameters.skinning.node_matrices=pose->nodes;
     model_packet_copy_animation(&pose->parameters.animation,&source->animation,pose->colors,pose->values);
-    model_packet_copy_animation(&pose->parameters.effect.modifier_animation,
-        &source->effect.modifier_animation,pose->modifier_colors,pose->modifier_values);
+    /* The original renderer only initializes/reads these pointers for a
+     * modifier shader. Inactive effect storage may contain stack garbage;
+     * capturing it must not turn that unused data into a memory access. */
+    if(source->effect.type==2 && source->effect.modifier_shader)
+        model_packet_copy_animation(&pose->parameters.effect.modifier_animation,
+            &source->effect.modifier_animation,pose->modifier_colors,pose->modifier_values);
+    else
+        memset(&pose->parameters.effect.modifier_animation,0,
+            sizeof(pose->parameters.effect.modifier_animation));
     return pose;
 }
 
@@ -204,6 +211,7 @@ int n3ds_model_packets_tests(void)
     input.skinning.node_matrices=nodes;input.skinning.node_matrix_count=64;
     input.animation.colors=colors;input.animation.values=values;
     input.effect.modifier_animation=input.animation;
+    input.effect.type=2;input.effect.modifier_shader=(const struct shader *)1;
     struct model_packet_pose *pose=model_packet_copy_pose(storage.bytes,&input,&view);
     memset(&view,0,sizeof(view));
     if(memcmp(&pose->view,&expected_view,sizeof(expected_view)))return 0;
@@ -222,6 +230,17 @@ int n3ds_model_packets_tests(void)
     pose=model_packet_copy_pose(storage.bytes,&input,&view);
     if(pose->parameters.animation.colors || pose->parameters.animation.values ||
         pose->parameters.effect.modifier_animation.colors || pose->parameters.effect.modifier_animation.values)return 0;
+    /* Hardware crash regression: inactive modifier pointers are unspecified,
+     * including for cloak packets and modifier effects without a shader. */
+    input.effect.modifier_animation.colors=(const real_rgb_color *)0x3b85f69bu;
+    input.effect.modifier_animation.values=(const real *)1;
+    for(int type=0;type<3;++type) {
+        input.effect.type=type;
+        input.effect.modifier_shader=type==2?NULL:(const struct shader *)1;
+        pose=model_packet_copy_pose(storage.bytes,&input,&view);
+        if(pose->parameters.effect.modifier_animation.colors ||
+           pose->parameters.effect.modifier_animation.values)return 0;
+    }
     nodes[0]=(real_matrix4x3){.scale=2,.forward={1,2,3},.left={4,5,6},.up={7,8,9},.position={10,11,12}};
     pose=model_packet_copy_pose(storage.bytes,&input,&view);
     struct model_packet_pose *jobs[]={pose};

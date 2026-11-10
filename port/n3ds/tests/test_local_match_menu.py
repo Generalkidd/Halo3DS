@@ -6,12 +6,15 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[3]
 source = (ROOT / "port/n3ds/src/engine_controls.c").read_text()
 body = source[source.index("/* A preview owns"):source.index("int n3ds_controls_tests(void)")]
+mapping = source[source.index("static unsigned int exchange("):source.index("int n3ds_controls_active(void)")]
 prefix = r'''
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
 #include "engine_controls.h"
 #define PIN(x,a,b) ((x)<(a)?(a):(x)>(b)?(b):(x))
+#define NONE (-1)
+static struct native_control_settings settings;
 struct game_variant {
  unsigned short human_readable_game_description[12];
  long game_engine_index;
@@ -21,6 +24,11 @@ struct game_variant {
 static int wireless,menu=1,widgets=1,controls,pc,queue_ok=1,queues,bot_count,bot_difficulty=1;
 static int pc_match_weapon_override=12;
 static struct game_variant queued;
+static struct game_variant selected_variant;
+static long selected_profile=NONE;
+long n3ds_ui_local_match_profile(void){return selected_profile;}
+int playlist_profile_get(long profile,struct game_variant *v){assert(profile==selected_profile);*v=selected_variant;return 1;}
+const char *main_get_multiplayer_map_name(void){return "levels\\test\\bloodgulch\\bloodgulch";}
 static char queued_map[96];
 static int browser_selection=-1,preview_closes,preview_draws,preview_map,preview_pc,preview_ready;
 void n3ds_gpu_local_match_gear(int map,int pc_map,int w,int v,int selected){
@@ -134,6 +142,36 @@ int main(void){
 #endif
  assert(local_match_variant.universal_variant.score_limit==73 && local_match_bots==2 && local_match_difficulty==2);
  tap(NATIVE_KEY_B);wireless=1;assert(!n3ds_local_match_menu_queue_reopen());wireless=0;
+ /* Xbox layout and explicit A/B swapping must agree with the top menu.
+  * The inline panel appears without an extra confirm and leaves navigation
+  * untouched. Failed launches retain the choices rather than falling back. */
+ for(int layout=0;layout<2;++layout)for(int swap=0;swap<2;++swap){
+  settings.xbox_buttons=layout;settings.swap_ab=swap;
+  selected_variant=variant;selected_profile=0x1234;
+  sample=(struct native_input_sample){0};n3ds_local_match_menu_filter(&sample);
+  assert(local_match_open && local_match_inline);
+  unsigned confirm=n3ds_controls_buttons(NATIVE_KEY_A,0,0);
+  unsigned cancel=n3ds_controls_buttons(NATIVE_KEY_B,0,0);
+  sample.held=NATIVE_KEY_DRIGHT;n3ds_local_match_menu_filter(&sample);
+  assert(sample.held==NATIVE_KEY_DRIGHT); /* carousel, not bot count */
+  input(0,0,0);input(NATIVE_KEY_TOUCH,289,60);input(0,0,0);
+  int bots=local_match_bots;
+  ++selected_profile;selected_variant.universal_variant.score_limit=37;
+  input(0,0,0);assert(local_match_variant.universal_variant.score_limit==37 && local_match_bots==bots);
+  tap(n3ds_controls_buttons(NATIVE_KEY_X,0,0));assert(local_match_gear);
+  tap(confirm);assert(!local_match_gear && local_match_open);
+  queue_ok=0;input(confirm,0,0);assert(local_match_open && local_match_error);
+  int attempted=queues;input(confirm,0,0);assert(queues==attempted);
+  input(0,0,0); /* a held failed confirmation must not reach the Xbox widgets */
+  queue_ok=1;int before=queues;tap(confirm);assert(queues==before+1 && !local_match_open);
+  assert(queued.universal_variant.score_limit==37);
+  selected_profile=NONE;input(0,0,0); /* deferred map load */
+  selected_profile=0x1234;input(0,0,0);
+  sample.held=cancel;n3ds_local_match_menu_filter(&sample);
+  assert(!local_match_open && sample.held==cancel); /* Back reaches carousel */
+  selected_profile=NONE;sample.held=0;n3ds_local_match_menu_filter(&sample);
+ }
+ puts("PASS: inline gametype settings, touch edits, navigation, gear, retry, confirm/back under all A/B layouts");
  puts("PASS: successful match snapshot survives gameplay and cancelled edits; wireless excluded");
  puts("PASS: browser map identities, debounce, gesture isolation and cleanup on leaving the browser");
  puts("PASS: local settings, preserved gametype, touch/keys, opening debounce, Back, failed launch, wireless exclusion");
@@ -144,7 +182,7 @@ command=sys.argv[1:]
 if command and command[0]=="--":command.pop(0)
 if not command:command=["clang"]
 with tempfile.TemporaryDirectory(prefix="halo-local-match-",ignore_cleanup_errors=True) as temp:
- path=Path(temp);c=path/"test.c";c.write_text(prefix+body+tests)
+ path=Path(temp);c=path/"test.c";c.write_text(prefix+mapping+body+tests)
  for pc in (False,True):
   exe=path/("test.exe" if sys.platform=="win32" else "test")
   subprocess.run(command+["-std=c11","-I"+str(ROOT/"port/n3ds/include")]+(["-DHALO_N3DS_PC_LOCAL_MENU"] if pc else [])+[str(c),"-o",str(exe)],check=True)

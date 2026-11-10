@@ -32,6 +32,7 @@ struct native_score_row { char name[16]; long score; short kills,deaths,medals; 
 void n3ds_gpu_match_scoreboard(const struct native_score_row *rows,int count);
 void n3ds_gpu_match_postgame_lobby(void);
 struct game_variant;
+long n3ds_ui_local_match_profile(void);
 int n3ds_local_match_menu_open(const char *map,const struct game_variant *variant,int controller);
 int n3ds_local_match_menu_active(void);
 int n3ds_local_match_menu_queue_reopen(void);

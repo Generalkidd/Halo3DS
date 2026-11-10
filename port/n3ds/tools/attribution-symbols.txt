@@ -515,3 +515,4 @@ port/n3ds/preview/engine_pc_preview.c|n3ds_pc_preview_thumbnail
 
 port/n3ds/include/engine_controls_draw.inl|controls_map_thumbnail
 source/interface/ui_widget.c|n3ds_ui_map_browser_slot
+source/interface/ui_widget.c|n3ds_ui_local_match_profile

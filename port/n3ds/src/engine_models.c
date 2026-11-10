@@ -1370,6 +1370,7 @@ int n3ds_model_transparent_tests(void)
     input.skinning.node_matrices=&node;input.skinning.node_matrix_count=1;
     input.animation.colors=colors;input.animation.values=values;
     input.effect.modifier_animation=input.animation;
+    input.effect.type=2;input.effect.modifier_shader=(const struct shader *)1;
     struct native_model_view view={.game_time=17,.camera_position={3,4,5}};
     struct transparent_geometry_group *group[2];
     const struct model_packet_pose *pose[2];

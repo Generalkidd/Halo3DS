@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.ComponentModel;
 using System.Drawing;
 using System.IO;
@@ -162,7 +162,7 @@ namespace HaloSetup.Windows7
                 Data.Require(updateOnly.Checked || source.Text.Trim().Length>0 || pcSource.Text.Trim().Length>0,"Choose your Xbox XISO or dumped maps folder first.");
                 Directory.CreateDirectory(logDirectory);
                 logPath=Path.Combine(logDirectory,"windows7-"+DateTime.Now.ToString("yyyyMMdd-HHmmss")+"-"+Guid.NewGuid().ToString("N")+".txt");
-                log=new StreamWriter(logPath);log.AutoFlush=true;log.WriteLine("Halo3DS Setup Windows 7 1.20.0 | OS: "+Environment.OSVersion+" | CLR: "+Environment.Version);
+                log=new StreamWriter(logPath);log.AutoFlush=true;log.WriteLine("Halo3DS Setup Windows 7 1.20.1 | OS: "+Environment.OSVersion+" | CLR: "+Environment.Version);
                 cancellation=new CancellationTokenSource(); progress.Value=0; SetBusy(true);
                 worker.RunWorkerAsync(new SetupOptions(source.Text.Trim(),target,build.Text.Trim(),extra.Text.Trim(),updateOnly.Checked || source.Text.Trim().Length==0,pcSource.Text.Trim()));
             }

@@ -2082,6 +2082,24 @@ boolean ui_widgets_active(
 }
 
 #ifdef HALO_N3DS
+/* Kevin Boggs: n3ds_ui_local_match_profile - only the local Splitscreen carousel. */
+long n3ds_ui_local_match_profile(void)
+{
+    if(!widget_globals.initialized || !we_are_at_the_main_menu)return NONE;
+    struct widget_instance *widget=widget_globals.active_widgets[0];
+    int local=0;
+    for(int depth=0;widget && depth<32;++depth,widget=widget->focused_child){
+        if(!widget->visible)return NONE;
+        const char *path=tag_get_name(widget->definition_tag_index);
+        if(path && strstr(path,"\\split_screen\\gametype_select_screen_wrapper"))local=1;
+        if(local && path && widget->type==_ui_widget_type_spinner_list &&
+           strstr(path,"\\gametype_select\\gametype_select_list") &&
+           widget->parameters.list.list_items && widget->parameters.list.selected_index>=0 &&
+           widget->parameters.list.selected_index<widget->parameters.list.number_of_items)
+            return ((const long *)widget->parameters.list.list_items)[widget->parameters.list.selected_index];
+    }
+    return NONE;
+}
 /* Kevin Boggs: n3ds_ui_map_browser_selection - follow only the active focus chain. */
 int n3ds_ui_map_browser_selection(void)
 {

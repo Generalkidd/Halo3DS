@@ -8,6 +8,7 @@
 #include "interface/ui_widget.h"
 #include "main/main.h"
 #include "game/game_engine.h"
+#include "saved games/playlist_profile.h"
 #include "engine_bots.h"
 #include "engine_pc_preview.h"
 #ifdef HALO_N3DS_PC_LOCAL_MENU
@@ -260,7 +261,7 @@ void n3ds_pc_local_menu_queue_reopen(void){pc_menu_reopen_pending=1;}
 /* Kevin Boggs: n3ds_pc_local_menu_filter - New3DS integration. */
 void n3ds_pc_local_menu_filter(struct native_input_sample *sample)
 {
- unsigned int held=sample->held,fresh=held&~pc_menu_previous;
+ unsigned int held=n3ds_controls_buttons(sample->held,0,0),fresh=held&~pc_menu_previous;
  pc_menu_previous=held;
  if(pc_menu_reopen_pending && pc_menu_available()){
   pc_menu_reopen_pending=0;pc_menu_open=1;pc_menu_page=0;pc_menu_field=0;pc_menu_error=0;
@@ -389,6 +390,8 @@ static int local_match_open,local_match_swallow,local_match_row,local_match_erro
 static int local_match_bots,local_match_difficulty;
 static int local_match_gear,local_match_preview_map,local_match_pc,local_match_weapons;
 static unsigned int local_match_previous;
+static int local_match_inline;
+static long local_match_profile=NONE;
 static struct {
  struct game_variant variant;
  char map[96];
@@ -429,13 +432,14 @@ int n3ds_local_match_menu_open(const char *map,const struct game_variant *varian
  local_match_weapons=local_match_variant.universal_variant.weapon_set;
  local_match_bots=n3ds_bots_requested_count();local_match_difficulty=n3ds_bots_menu_difficulty();
  local_match_open=local_match_swallow=1;local_match_row=local_match_error=local_match_gear=0;
+ local_match_inline=0;local_match_profile=NONE;
  static const char *const maps[]={"beavercreek","bloodgulch","boardingaction","carousel","chillout",
   "damnation","dangercanyon","deathisland","gephyrophobia","hangemhigh","icefields","infinity",
   "longest","prisoner","putput","ratrace","sidewinder","timberland","wizard"};
  const char *name=strrchr(map,'\\');name=name?name+1:map;
  local_match_pc=!strncmp(map,"pc\\",3);local_match_preview_map=-1;
  for(int i=0;i<19;++i)if(!strcmp(name,maps[i])){local_match_preview_map=i;break;}
- n3ds_log("LOCAL MATCH: bottom-screen options opened after gametype selection");return 1;
+ n3ds_log("LOCAL MATCH: bottom-screen options opened");return 1;
 }
 /* Kevin Boggs: local_match_adjust - change only the requested match option. */
 static void local_match_adjust(int delta)
@@ -449,7 +453,33 @@ static void local_match_adjust(int delta)
 /* Kevin Boggs: n3ds_local_match_menu_filter - consume touch and keys until Start or Back. */
 void n3ds_local_match_menu_filter(struct native_input_sample *sample)
 {
- unsigned int held=sample->held,fresh=held&~local_match_previous;local_match_previous=held;
+ /* Match the original menu's logical A/B/X layout. Only interpret a mapped
+  * copy here: input that passes through is remapped by engine_input later. */
+ unsigned int held=n3ds_controls_buttons(sample->held,0,0),fresh=held&~local_match_previous;local_match_previous=held;
+ /* Show touch settings beside the original carousel. Navigation stays with
+  * the top screen; confirmation starts the selected preset immediately. */
+ long profile=n3ds_ui_local_match_profile();
+ if(local_match_inline && profile==NONE){
+  n3ds_pc_preview_close();local_match_open=local_match_inline=local_match_gear=0;
+ }
+ if(profile!=NONE && !local_match_swallow && !n3ds_wireless_active() && !n3ds_controls_active() &&
+    !last_local_match.pending && (!local_match_open || (local_match_inline && profile!=local_match_profile))){
+  struct game_variant selected;
+  if(playlist_profile_get(profile,&selected)){
+   if(!local_match_open){
+    if(n3ds_local_match_menu_open(main_get_multiplayer_map_name(),&selected,0)){
+     local_match_inline=1;local_match_swallow=0;local_match_profile=profile;
+    }
+   }else{
+    local_match_variant=selected;local_match_profile=profile;local_match_error=0;
+    local_match_weapons=PIN(selected.universal_variant.weapon_set,0,10);
+    local_match_variant.universal_variant.vehicle_set=PIN(selected.universal_variant.vehicle_set,0,4);
+    for(int i=0;i<12;++i){unsigned int c=selected.human_readable_game_description[i];
+     local_match_title[i]=c>=32 && c<=126?(char)c:c?'?':0;}
+    local_match_title[12]=0;
+   }
+  }
+ }
  if(last_local_match.pending && n3ds_wireless_active())last_local_match.pending=0;
  if(last_local_match.pending && main_menu_is_active() && ui_widgets_active() &&
     n3ds_local_match_menu_open(last_local_match.map,&last_local_match.variant,0)){
@@ -482,10 +512,12 @@ void n3ds_local_match_menu_filter(struct native_input_sample *sample)
  }
  int gear=!!(fresh&NATIVE_KEY_X);
  int start=!!(fresh&(NATIVE_KEY_A|NATIVE_KEY_START)),back=!!(fresh&NATIVE_KEY_B);
- if(fresh&NATIVE_KEY_DUP)local_match_row=(local_match_row+3)%4;
- if(fresh&NATIVE_KEY_DDOWN)local_match_row=(local_match_row+1)%4;
- if(fresh&NATIVE_KEY_DLEFT)local_match_adjust(-1);
- if(fresh&NATIVE_KEY_DRIGHT)local_match_adjust(1);
+ if(!local_match_inline){
+  if(fresh&NATIVE_KEY_DUP)local_match_row=(local_match_row+3)%4;
+  if(fresh&NATIVE_KEY_DDOWN)local_match_row=(local_match_row+1)%4;
+  if(fresh&NATIVE_KEY_DLEFT)local_match_adjust(-1);
+  if(fresh&NATIVE_KEY_DRIGHT)local_match_adjust(1);
+ }
  if(fresh&NATIVE_KEY_TOUCH){
   unsigned x=sample->touch_x,y=sample->touch_y;
   if(x>=12 && x<308 && y>=48 && y<160){
@@ -496,8 +528,13 @@ void n3ds_local_match_menu_filter(struct native_input_sample *sample)
   if(y>=202 && y<234){if(x>=16 && x<152)back=1;else if(x>=168 && x<304)start=1;}
  }
  if(gear && !back && !start){local_match_gear=1;local_match_row=local_match_row==3?3:2;local_match_swallow=1;}
+ if(local_match_inline && back){
+  n3ds_pc_preview_close();local_match_open=local_match_inline=local_match_gear=local_match_swallow=0;
+  memset(sample,0,sizeof(*sample));sample->held=n3ds_controls_buttons(NATIVE_KEY_B,0,0);return;
+ }
  if(back){n3ds_pc_preview_close();local_match_open=0;local_match_swallow=1;n3ds_log("LOCAL MATCH: returned to gametype selection");}
  else if(start){
+  local_match_swallow=1;
   struct game_variant launch=local_match_variant;
   launch.universal_variant.weapon_set=local_match_weapons<11?local_match_weapons:0;
   if(!n3ds_main_queue_solo_multiplayer(local_match_map,&launch,0)){
@@ -515,7 +552,7 @@ void n3ds_local_match_menu_filter(struct native_input_sample *sample)
    n3ds_pc_preview_close();local_match_open=0;local_match_swallow=1;
   }
  }
- memset(sample,0,sizeof(*sample));
+ if(!local_match_inline || start || back || gear || (held&NATIVE_KEY_TOUCH))memset(sample,0,sizeof(*sample));
 }
 /* Kevin Boggs: n3ds_local_match_menu_draw - present shared local bot/equipment settings. */
 void n3ds_local_match_menu_draw(void)
