@@ -18,7 +18,9 @@ You need three things:
   Download that file itself, rather than a Windows setup EXE.
 - An existing FAT32 SD card or an empty folder where setup can put the results.
   The tool never formats your card. If you use a folder, copy the resulting
-  `3ds` and `halo-source` folders to the SD card's top level afterwards.
+  `3ds` and `halo-source` folders to the SD card's top level afterwards. When
+  merging into an existing installation, keep its `halo-source/state` directory
+  rather than replacing it with saves from the prepared folder or an emulator.
 
 Packaged CLI builds include their own .NET runtime. You do not need .NET, Java,
 Python, Wine or a Windows computer to run them. Choose the package for **the
@@ -85,6 +87,7 @@ saves and unrelated files are retained.
 | PC/MCC source rejected | Select the original Xbox game as the base source. |
 | Compatibility warning | This Xbox release is unverified. Setup can continue, but gameplay compatibility is not guaranteed. |
 | Missing compatibility/HUD data | Use the full Xbox ISO, or select its matching `default.xbe` when asked. |
+| Game log reports missing `ui.map` | Run full setup with a supported Xbox dump and check that `halo-source/ui.map` is at the SD root. A launcher-only update does not install maps. |
 | Not enough destination space | Free the stated space or choose another output folder, then rerun. |
 | Sound needs DSP firmware | On your console, open Rosalina with **L + D-pad Down + SELECT**, then **Miscellaneous options â†’ Dump DSP firmware**. |
 
